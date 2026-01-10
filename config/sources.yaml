@@ -1,0 +1,29 @@
+# sources.yaml
+# Defines the allowed sources and their specific constraints
+
+sources:
+  - id: "idealista_local_test"
+    name: "Idealista Local Test"
+    base_url: "file:///Users/nirtzur/Documents/projects/property_scanner/tests/fixtures/idealista_sample.html"
+    type: "html_browser"
+    enabled: true
+    rate_limit:
+      requests: 10
+      period_seconds: 1
+    compliance:
+      robots_txt_url: ""
+      allowed_paths: []
+      disallowed_paths: []
+
+  - id: "idealista_es"
+    name: "Idealista (Spain)"
+    base_url: "https://www.idealista.com"
+    type: "html_browser"  # Will likely need browser automation
+    enabled: true
+    rate_limit:
+      requests: 1
+      period_seconds: 10 # Very conservative for MVP
+    compliance:
+      robots_txt_url: "https://www.idealista.com/robots.txt"
+      allowed_paths: ["/venta-viviendas/"]
+      disallowed_paths: ["/login", "/pro"]

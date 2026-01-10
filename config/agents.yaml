@@ -1,0 +1,20 @@
+# agents.yaml
+# Global settings for agent orchestration
+
+defaults:
+  timeout_seconds: 300
+  retries: 3
+  uastring: "PropertyScanner/1.0 (bot@example.com)"
+
+agents:
+  discovery:
+    search_depth: 2
+  
+  crawler:
+    download_delay: 2.0  # systematic delay between pages
+    user_agent_rotation: false # Keep consistent for politeness
+  
+  enrichment:
+    providers:
+      geocoding: "nominatim" # or google_maps
+      demographics: "census_bureau"

@@ -1,0 +1,15 @@
+# scoring.yaml
+# Weights and thresholds for the Deal Scoring Agent
+
+scoring_weights:
+  price_undervaluation: 0.5  # 50% importances
+  rent_yield: 0.3
+  location_score: 0.2
+
+thresholds:
+  min_deal_score: 0.7  # Only report if score > 0.7
+  max_uncertainty_interval: 0.2 # Reject if price prediction range is > 20% of value
+
+risk_penalties:
+  missing_sqft: -0.1
+  foreclosure_risk: -0.2

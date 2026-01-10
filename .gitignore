@@ -1,0 +1,28 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Data and snapshots
+data/
+*.db
+*.sqlite3
+data/snapshots/
+data/models/
+data/vector_index.faiss
+data/*.png
+data/*.html
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Environment variables
+.env
