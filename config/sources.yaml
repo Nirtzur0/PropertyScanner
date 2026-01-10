@@ -27,3 +27,16 @@ sources:
       robots_txt_url: "https://www.idealista.com/robots.txt"
       allowed_paths: ["/venta-viviendas/"]
       disallowed_paths: ["/login", "/pro"]
+
+  - id: "pisos_es"
+    name: "Pisos.com (Spain)"
+    base_url: "https://www.pisos.com"
+    type: "html_browser"
+    enabled: true
+    rate_limit:
+      requests: 1
+      period_seconds: 2
+    compliance:
+      robots_txt_url: "https://www.pisos.com/robots.txt"
+      allowed_paths: ["/comprar/"]
+      disallowed_paths: ["/login"]

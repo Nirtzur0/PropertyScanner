@@ -2,8 +2,7 @@ from typing import List
 import structlog
 from src.utils.config import ConfigLoader
 from src.utils.compliance import ComplianceManager
-from src.agents.crawlers.playwright_crawler import IdealistaCrawlerAgent
-from src.agents.processors.normalizer import IdealistaNormalizerAgent
+from src.agents.factory import AgentFactory
 from src.agents.analysts.enricher import EnrichmentAgent
 from src.core.domain.schema import CanonicalListing
 from src.services.storage import StorageService
@@ -26,35 +25,53 @@ class Orchestrator:
         self.compliance = ComplianceManager(self.user_agent)
         self.storage = StorageService() # Defaults to sqlite:///data/listings.db
         
-        # Initialize Agents
-        idealista_conf = next(s for s in self.sources['sources'] if s['id'] == 'idealista_es')
-        self.crawler = IdealistaCrawlerAgent(idealista_conf, self.compliance)
-        self.normalizer = IdealistaNormalizerAgent()
         self.enricher = EnrichmentAgent(self.compliance)
         self.valuation = ValuationService(self.storage)
         self.retriever = CompRetriever()
 
     def run_job(self, target_area: str = None):
         # Determine source.
-        source_conf = None
-        search_path = ""
+        source_id = "idealista_es" # Default
+        search_path = target_area or "/venta-viviendas/madrid/centro/"
         
-        if target_area and target_area.startswith("file://"):
-             # Local Test Mode
-             source_conf = next(s for s in self.sources['sources'] if s['id'] == 'idealista_local_test')
-             search_path = ""
-        else:
-             # Default Live Mode
-             source_conf = next(s for s in self.sources['sources'] if s['id'] == 'idealista_es')
-             search_path = target_area or "/venta-viviendas/madrid/centro/"
-        
-        logger.info("starting_job", source=source_conf['id'], target=search_path)
-        
-        # Instantiate Crawler
-        self.crawler = IdealistaCrawlerAgent(source_conf, self.compliance)
+        if target_area:
+            if "pisos.com" in target_area:
+                 source_id = "pisos_es"
+                 search_path = target_area # Full URL for pisos
+            elif target_area.startswith("file://"):
+                 source_id = "idealista_local_test"
+                 search_path = ""
 
+        # Get Source Config
+        try:
+            source_conf = next(s for s in self.sources['sources'] if s['id'] == source_id)
+        except StopIteration:
+            # Fallback or error
+            logger.error("source_config_missing", source_id=source_id)
+            return
+
+        logger.info("starting_job", source=source_id, target=search_path)
+        
+        # Instantiate Agents via Factory
+        try:
+            crawler = AgentFactory.create_crawler(source_id, source_conf, self.compliance)
+            normalizer = AgentFactory.create_normalizer(source_id)
+        except ValueError as e:
+            logger.error("factory_error", error=str(e))
+            return
+            
         # 1. Crawl
-        crawl_resp = self.crawler.run({"search_path": search_path})
+        # Different crawlers might expect slightly different inputs, but standardizing on 'start_url' or 'search_path'
+        # Idealista expects 'search_path' (appended to base), Pisos expects 'start_url' (full).
+        # We can handle this by passing both or unifying.
+        # PisosCrawler checks 'start_url'. IdealistaCrawler checks 'search_path'.
+        # Let's pass both.
+        input_payload = {
+            "search_path": search_path,
+            "start_url": search_path 
+        }
+        
+        crawl_resp = crawler.run(input_payload)
         
         if crawl_resp.status == "failure":
             logger.error("crawl_failed", errors=crawl_resp.errors)
@@ -67,7 +84,7 @@ class Orchestrator:
             return
             
         # 2. Normalize
-        norm_resp = self.normalizer.run({"raw_listings": raw_listings})
+        norm_resp = normalizer.run({"raw_listings": raw_listings})
         canonical_listings: List[CanonicalListing] = norm_resp.data
         
         if norm_resp.errors:
