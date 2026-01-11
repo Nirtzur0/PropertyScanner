@@ -37,9 +37,11 @@ class DBListing(Base):
     city = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lon = Column(Float, nullable=True)
+    geohash = Column(String, nullable=True, index=True)
     
     # Meta
     image_urls = Column(JSON, default=list)
+    vlm_description = Column(Text, nullable=True) # VLM generated text
     tags = Column(JSON, default=list)
     
     listed_at = Column(DateTime, nullable=True)

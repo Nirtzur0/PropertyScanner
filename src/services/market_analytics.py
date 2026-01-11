@@ -8,32 +8,12 @@ from src.core.domain.schema import MarketProfile, ValuationProjection, Canonical
 
 logger = structlog.get_logger(__name__)
 
-class MarketAnalyticsService:
     """
     Computes market trends, liquidity scores, and value projections.
     Implements the "Triple-Signal" approach.
     """
     def __init__(self, db_path: str = "data/listings.db"):
         self.db_path = db_path
-        self._init_stats_table()
-
-    def _init_stats_table(self):
-        """Create table for historical snapshots if not exists"""
-        # Set timeout to wait for lock to release (bg crawler might be writing)
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS market_snapshots (
-                id TEXT PRIMARY KEY, 
-                zone_id TEXT, 
-                date DATE, 
-                avg_price_sqm FLOAT, 
-                listing_count INT, 
-                median_dom INT
-            )
-        """)
-        conn.commit()
-        conn.close()
 
     def _get_listings_df(self, city: str = None) -> pd.DataFrame:
         """Load listings into a DataFrame for vectorized analysis"""
@@ -151,23 +131,8 @@ class MarketAnalyticsService:
                 # Cheaper than avg in a growing market -> High Catchup
                 catchup = 0.8
         
-        # 4. Projections
+        # 4. Projections (Handled by MarketDynamicsAgent via ForecastingService)
         projections = []
-        current_val = listing.price
-        
-        for year in [1, 3, 5]:
-            # Compound growth
-            future_val = current_val * ((1 + growth_rate) ** year)
-            projections.append(ValuationProjection(
-                years_future=year,
-                predicted_value=future_val,
-                confidence_score=confidence * (0.9 ** year), # decay confidence
-                growth_rate_annual=growth_rate,
-                scenarios={
-                    "pessimistic": future_val * 0.9,
-                    "optimistic": future_val * 1.1
-                }
-            ))
 
         return MarketProfile(
             zone_id=listing.location.city if listing.location else "unknown",

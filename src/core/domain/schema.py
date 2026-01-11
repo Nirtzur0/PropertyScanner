@@ -135,11 +135,13 @@ class ValuationProjection(BaseModel):
     """
     Projected value of a property over time.
     """
-    years_future: int
+    months_future: int
+    years_future: float # Allow 0.5, 0.25 etc
     predicted_value: float
-    confidence_score: float # 0.0 to 1.0
-    growth_rate_annual: float
-    scenarios: Dict[str, float] = Field(default_factory=dict) # "optimistic", "pessimistic"
+    confidence_interval_low: float
+    confidence_interval_high: float
+    confidence_score: float # 0.0 to 1.0 (Model confidence)
+    scenario_name: str = "baseline" # baseline, optimistic, pessimistic"
 
 class MarketProfile(BaseModel):
     """

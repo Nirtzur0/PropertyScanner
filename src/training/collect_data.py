@@ -145,10 +145,26 @@ def save_listings_to_db(listings: List[Dict], db_path: str = "data/listings.db")
                 url = str(url)
             
             cursor.execute("""
-                INSERT OR REPLACE INTO listings 
+                INSERT INTO listings 
                 (id, source_id, external_id, url, title, description, price, city, bedrooms, bathrooms,
                  surface_area_sqm, floor, lat, lon, image_urls, listed_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source_id=excluded.source_id,
+                    external_id=excluded.external_id,
+                    url=excluded.url,
+                    title=excluded.title,
+                    description=excluded.description,
+                    price=excluded.price,
+                    city=excluded.city,
+                    bedrooms=excluded.bedrooms,
+                    bathrooms=excluded.bathrooms,
+                    surface_area_sqm=excluded.surface_area_sqm,
+                    floor=excluded.floor,
+                    lat=excluded.lat,
+                    lon=excluded.lon,
+                    image_urls=excluded.image_urls,
+                    updated_at=excluded.updated_at
             """, (
                 listing_id,
                 listing.get("source_id", "pisos"),
@@ -165,8 +181,8 @@ def save_listings_to_db(listings: List[Dict], db_path: str = "data/listings.db")
                 lat,
                 lon,
                 json.dumps(image_urls),
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
+                datetime.now().isoformat(),  # listed_at (ignored on update)
+                datetime.now().isoformat()   # updated_at (updated on conflict)
             ))
             inserted += 1
         except Exception as e:

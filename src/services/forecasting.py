@@ -121,16 +121,13 @@ class ForecastingService:
             confidence = max(0.1, 1.0 - spread)
 
             projections.append(ValuationProjection(
-                years_future=h/12.0, # Approximate
+                months_future=h,
+                years_future=h/12.0, 
                 predicted_value=proj_val,
+                confidence_interval_low=current_value * growth_10,
+                confidence_interval_high=current_value * growth_90,
                 confidence_score=confidence,
-                growth_rate_annual=annual_rate,
-                scenarios={
-                    "pessimistic": current_value * growth_10,
-                    "optimistic": current_value * growth_90,
-                    "boom_regime": current_value * growth_90 * 1.05, # Simple heuristic for now
-                    "bust_regime": current_value * growth_10 * 0.95
-                }
+                scenario_name="baseline"
             ))
             
         return projections
@@ -143,13 +140,12 @@ class ForecastingService:
             # Assume 3% inflation-like growth
             growth = 1.03 ** years
             projections.append(ValuationProjection(
+                months_future=h,
                 years_future=years,
                 predicted_value=current_value * growth,
+                confidence_interval_low=current_value * (0.98 ** years),
+                confidence_interval_high=current_value * (1.08 ** years),
                 confidence_score=0.1, # Low confidence
-                growth_rate_annual=0.03,
-                scenarios={
-                    "pessimistic": current_value * (0.98 ** years),
-                    "optimistic": current_value * (1.08 ** years)
-                }
+                scenario_name="heuristic_baseline"
             ))
         return projections

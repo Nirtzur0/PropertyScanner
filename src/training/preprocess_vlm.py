@@ -5,7 +5,7 @@ import tqdm
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.training.dataset import VLMImageDescriber
-# from src.training.dataset import PropertyDataset # Unused import removed
+
 import ast
 import structlog
 
