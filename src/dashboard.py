@@ -41,7 +41,13 @@ try:
     
     for i, db_item in enumerate(listings_db):
         # Reconstruct Canonical (simplified)
-        loc = GeoLocation(lat=db_item.lat, lon=db_item.lon, address_full=db_item.address_full) if db_item.lat else None
+        loc = GeoLocation(
+            lat=db_item.lat, 
+            lon=db_item.lon, 
+            address_full=db_item.address_full,
+            city=db_item.city or "Unknown",
+            country="ES" 
+        ) if db_item.lat else None
         
         listing = CanonicalListing(
             id=db_item.id,
@@ -50,6 +56,7 @@ try:
             url=str(db_item.url),
             title=db_item.title,
             price=db_item.price,
+            property_type=db_item.property_type or "apartment",
             bedrooms=db_item.bedrooms,
             surface_area_sqm=db_item.surface_area_sqm,
             location=loc,
@@ -72,7 +79,7 @@ try:
             "Deal Score": analysis.deal_score,
             "Fair Value": analysis.fair_value_estimate,
             "Thesis": analysis.investment_thesis,
-            "URL": listing.url,
+            "URL": str(listing.url),
             "lat": listing.location.lat if listing.location else None,
             "lon": listing.location.lon if listing.location else None,
             "Image": listing.image_urls[0] if listing.image_urls else None,
@@ -152,7 +159,7 @@ else:
                 st.write(f"**Fair Value:** {item['Fair Value']:,.0f} €")
                 st.write(f"**Score:** {item['Deal Score']:.2f}")
                 st.info(item["Thesis"])
-                st.markdown(f"[View on Idealista]({item['URL']})")
+                st.markdown(f"[View Listing]({item['URL']})")
                 
                 # Show Comps
                 if item["Comps"]:

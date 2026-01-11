@@ -1,0 +1,366 @@
+"""
+LangGraph Workflow for Cognitive Property Scanner.
+Implements a supervisor-based graph with conditional routing.
+"""
+import os
+import structlog
+from typing import Literal, Dict, Any, List
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+
+from src.cognitive.state import AgentState
+from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing
+
+logger = structlog.get_logger()
+
+
+def get_llm(temperature: float = 0):
+    """
+    Get LLM instance with automatic provider detection.
+    Priority: Ollama (local, fast) > Gemini (GOOGLE_API_KEY) > OpenAI (OPENAI_API_KEY)
+    """
+    # Try Ollama first (local, no API costs)
+    try:
+        from langchain_community.llms import Ollama
+        logger.info("using_ollama_llm")
+        return Ollama(model="gpt-oss:latest", temperature=temperature)
+    except Exception as e:
+        logger.warning("ollama_init_failed", error=str(e))
+    
+    # Try Gemini
+    if os.getenv("GOOGLE_API_KEY"):
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            logger.info("using_gemini_llm")
+            # Try gemini-1.5-pro or gemini-2.0-flash-exp
+            return ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash-exp",
+                temperature=temperature,
+                google_api_key=os.getenv("GOOGLE_API_KEY")
+            )
+        except Exception as e:
+            logger.warning("gemini_init_failed", error=str(e))
+    
+    # Fallback to OpenAI
+    if os.getenv("OPENAI_API_KEY"):
+        from langchain_openai import ChatOpenAI
+        logger.info("using_openai_llm")
+        return ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
+    
+    raise RuntimeError("No LLM provider available. Install Ollama, set GOOGLE_API_KEY, or set OPENAI_API_KEY")
+
+
+
+# System prompt for the supervisor
+SUPERVISOR_PROMPT = """You are a property investment analyst agent. Your job is to help users find and evaluate real estate opportunities.
+
+You have access to the following tools:
+- crawl_listings: Fetch property listings from real estate websites
+- normalize_listings: Convert raw listings to structured format
+- evaluate_listing: Analyze a listing for investment potential
+- retrieve_comparables: Find similar properties for comparison
+
+Based on the current state, decide what action to take next.
+
+Current state:
+- Query: {query}
+- Target areas: {target_areas}
+- Sources crawled: {sources_crawled}
+- Listings found: {listings_count}
+- Evaluations completed: {evaluations_count}
+
+If you have enough data and evaluations, generate a final report.
+Otherwise, decide which tool to use next.
+
+Respond with one of: "crawl", "normalize", "evaluate", "report", or "end"
+"""
+
+
+def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
+    """Create initial state for a new agent run."""
+    return AgentState(
+        query=query,
+        target_areas=areas or [],
+        raw_listings=[],
+        canonical_listings=[],
+        evaluations=[],
+        messages=[],
+        current_stage="init",
+        next_action="crawl",
+        error_count=0,
+        sources_crawled=[],
+        listings_count=0,
+        final_report=None
+    )
+
+
+def supervisor_node(state: AgentState) -> Dict[str, Any]:
+    """
+    LLM-powered supervisor that decides the next action.
+    Uses GPT-4 to reason about what to do next.
+    """
+    try:
+        llm = get_llm(temperature=0)
+        
+        prompt = SUPERVISOR_PROMPT.format(
+            query=state["query"],
+            target_areas=state["target_areas"],
+            sources_crawled=state["sources_crawled"],
+            listings_count=state["listings_count"],
+            evaluations_count=len(state["evaluations"])
+        )
+        
+        messages = [
+            SystemMessage(content=prompt),
+            HumanMessage(content=f"What should be the next action? Current stage: {state['current_stage']}")
+        ]
+        
+        response = llm.invoke(messages)
+        
+        # Handle both ChatModel (returns AIMessage) and LLM (returns string)
+        if hasattr(response, 'content'):
+            decision = response.content.strip().lower()
+        else:
+            decision = str(response).strip().lower()
+        
+        # Parse decision
+        if "crawl" in decision:
+            next_action = "crawl"
+        elif "normalize" in decision:
+            next_action = "normalize"
+        elif "evaluate" in decision:
+            next_action = "evaluate"
+        elif "report" in decision:
+            next_action = "report"
+        else:
+            next_action = "end"
+            
+        logger.info("supervisor_decision", decision=next_action, raw=decision)
+        
+        return {
+            "next_action": next_action,
+            "current_stage": "supervisor",
+            "messages": [{"role": "supervisor", "content": decision}]
+        }
+        
+    except Exception as e:
+        logger.error("supervisor_failed", error=str(e))
+        # Fallback to simple rule-based logic
+        if not state["raw_listings"]:
+            return {"next_action": "crawl", "current_stage": "supervisor"}
+        elif not state["canonical_listings"]:
+            return {"next_action": "normalize", "current_stage": "supervisor"}
+        elif not state["evaluations"]:
+            return {"next_action": "evaluate", "current_stage": "supervisor"}
+        else:
+            return {"next_action": "report", "current_stage": "supervisor"}
+
+
+def crawl_node(state: AgentState) -> Dict[str, Any]:
+    """Execute crawling based on target areas."""
+    logger.info("crawl_node_started", areas=state["target_areas"])
+    
+    raw_listings = []
+    sources_crawled = list(state["sources_crawled"])
+    
+    # Determine search path
+    areas = state["target_areas"]
+    if not areas:
+        # Extract area from query using simple heuristics
+        query = state["query"].lower()
+        if "madrid" in query:
+            areas = ["/venta-viviendas/madrid/"]
+        elif "barcelona" in query:
+            areas = ["/venta-viviendas/barcelona/"]
+        else:
+            areas = ["/venta-viviendas/madrid/centro/"]
+    
+    for area in areas:
+        try:
+            # Determine source
+            if "pisos.com" in area:
+                source_id = "pisos_es"
+            else:
+                source_id = "idealista_es"
+                
+            result = crawl_listings.invoke({
+                "search_path": area,
+                "source_id": source_id
+            })
+            
+            if result["status"] == "success":
+                raw_listings.extend(result["data"])
+                sources_crawled.append(source_id)
+                
+        except Exception as e:
+            logger.error("crawl_failed", area=area, error=str(e))
+            
+    return {
+        "raw_listings": raw_listings,
+        "sources_crawled": sources_crawled,
+        "current_stage": "crawled",
+        "messages": [{"role": "crawl", "content": f"Crawled {len(raw_listings)} listings"}]
+    }
+
+
+def normalize_node(state: AgentState) -> Dict[str, Any]:
+    """Normalize all raw listings."""
+    logger.info("normalize_node_started", count=len(state["raw_listings"]))
+    
+    canonical_listings = []
+    
+    # Group by source
+    by_source: Dict[str, List] = {}
+    for raw in state["raw_listings"]:
+        source_id = raw.get("source_id", "idealista_es")
+        if source_id not in by_source:
+            by_source[source_id] = []
+        by_source[source_id].append(raw)
+    
+    for source_id, raws in by_source.items():
+        try:
+            result = normalize_listings.invoke({
+                "raw_listings": raws,
+                "source_id": source_id
+            })
+            
+            if result["status"] in ["success", "partial"]:
+                canonical_listings.extend(result["data"])
+                
+        except Exception as e:
+            logger.error("normalize_failed", source=source_id, error=str(e))
+            
+    return {
+        "canonical_listings": canonical_listings,
+        "listings_count": len(canonical_listings),
+        "current_stage": "normalized",
+        "messages": [{"role": "normalize", "content": f"Normalized {len(canonical_listings)} listings"}]
+    }
+
+
+def evaluate_node(state: AgentState) -> Dict[str, Any]:
+    """Evaluate listings for investment potential."""
+    logger.info("evaluate_node_started", count=len(state["canonical_listings"]))
+    
+    evaluations = []
+    
+    # Evaluate top N listings (avoid rate limits)
+    max_to_evaluate = min(len(state["canonical_listings"]), 10)
+    
+    for listing in state["canonical_listings"][:max_to_evaluate]:
+        try:
+            result = evaluate_listing.invoke({
+                "listing": listing,
+                "num_comps": 5
+            })
+            
+            if result["status"] == "success" and result["data"]:
+                evaluations.append(result["data"])
+                
+        except Exception as e:
+            logger.error("evaluate_failed", listing_id=listing.get("id"), error=str(e))
+            
+    return {
+        "evaluations": evaluations,
+        "current_stage": "evaluated",
+        "messages": [{"role": "evaluate", "content": f"Evaluated {len(evaluations)} listings"}]
+    }
+
+
+def report_node(state: AgentState) -> Dict[str, Any]:
+    """Generate final investment report using LLM."""
+    logger.info("report_node_started")
+    
+    try:
+        llm = get_llm(temperature=0.3)
+        
+        # Prepare data summary
+        top_deals = sorted(
+            state["evaluations"],
+            key=lambda x: x.get("deal_score", 0),
+            reverse=True
+        )[:5]
+        
+        deals_summary = "\n".join([
+            f"- {e.get('listing_id', 'N/A')}: Score {e.get('deal_score', 0):.2f}, {e.get('investment_thesis', 'No thesis')}"
+            for e in top_deals
+        ])
+        
+        prompt = f"""Generate a concise investment report based on the following analysis:
+
+Query: {state["query"]}
+Total listings found: {state["listings_count"]}
+Evaluations completed: {len(state["evaluations"])}
+
+Top Investment Opportunities:
+{deals_summary}
+
+Write a professional investment brief (2-3 paragraphs) summarizing:
+1. Market overview based on listings found
+2. Top opportunities and why they're interesting
+3. Recommendations for next steps
+"""
+        
+        response = llm.invoke([HumanMessage(content=prompt)])
+        
+        # Handle both ChatModel and LLM responses
+        if hasattr(response, 'content'):
+            report_text = response.content
+        else:
+            report_text = str(response)
+        
+        return {
+            "final_report": report_text,
+            "current_stage": "complete",
+            "messages": [{"role": "report", "content": "Report generated"}]
+        }
+        
+    except Exception as e:
+        logger.error("report_failed", error=str(e))
+        # Fallback to simple report
+        return {
+            "final_report": f"Analysis complete. Found {state['listings_count']} listings with {len(state['evaluations'])} evaluations.",
+            "current_stage": "complete"
+        }
+
+
+def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "evaluate", "report", "end"]:
+    """Route based on supervisor decision."""
+    return state.get("next_action", "end")
+
+
+def create_cognitive_graph():
+    """Build and compile the LangGraph workflow."""
+    graph = StateGraph(AgentState)
+    
+    # Add nodes
+    graph.add_node("supervisor", supervisor_node)
+    graph.add_node("crawl", crawl_node)
+    graph.add_node("normalize", normalize_node)
+    graph.add_node("evaluate", evaluate_node)
+    graph.add_node("report", report_node)
+    
+    # Conditional routing from supervisor
+    graph.add_conditional_edges(
+        "supervisor",
+        route_supervisor,
+        {
+            "crawl": "crawl",
+            "normalize": "normalize",
+            "evaluate": "evaluate",
+            "report": "report",
+            "end": END
+        }
+    )
+    
+    # All action nodes return to supervisor
+    graph.add_edge("crawl", "supervisor")
+    graph.add_edge("normalize", "supervisor")
+    graph.add_edge("evaluate", "supervisor")
+    graph.add_edge("report", END)
+    
+    # Entry point
+    graph.set_entry_point("supervisor")
+    
+    return graph.compile()
