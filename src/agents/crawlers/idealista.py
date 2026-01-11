@@ -79,21 +79,16 @@ class IdealistaCrawlerAgent(BaseAgent):
         
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(headless=True) # Idealista might need headless=False for some stealth checks
                 
                 # Use stealth headers as recommended
                 context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     extra_http_headers={
                         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-                        "accept-language": "en-US;en;q=0.9",
-                        "accept-encoding": "gzip, deflate, br",
-                        "cache-control": "max-age=0",
-                        "upgrade-insecure-requests": "1",
-                        "sec-fetch-dest": "document",
-                        "sec-fetch-mode": "navigate",
-                        "sec-fetch-site": "none",
-                        "sec-fetch-user": "?1"
+                        "accept-language": "es-ES,es;q=0.9,en;q=0.8",
+                        "upgrade-insecure-requests": "1"
                     }
                 )
                 page = context.new_page()
@@ -102,33 +97,89 @@ class IdealistaCrawlerAgent(BaseAgent):
                 stealth = Stealth()
                 stealth.apply_stealth_sync(page)
                 
+                listing_urls = []
+                
                 try:
                     self.logger.info("navigating", url=start_url)
-                    # Increased timeout for stealth/blocking checks
-                    page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
+                    page.goto(start_url, timeout=45000, wait_until="domcontentloaded")
+                    
+                    # Human behavior simulation
+                    page.mouse.move(100, 100)
+                    time.sleep(1)
+                    page.evaluate("window.scrollTo(0, 500)")
                     
                     # Wait for content to load
-                    page.wait_for_selector("article.item", timeout=10000)
+                    page.wait_for_selector("article.item", timeout=15000)
                     
-                    # Extract
-                    listings = self._extract_listings_from_page(page, source_id=self.config.get("id"))
-                    results.extend(listings)
+                    # Extract URLs from Search Page
+                    items = page.locator("article.item").all()
+                    self.logger.info("items_found_on_page", count=len(items))
                     
-                    self.logger.info("extracted_count", count=len(listings))
-                    
+                    for item in items:
+                        try:
+                            # Extract link
+                            link_el = item.locator("a.item-link").first
+                            href = link_el.get_attribute("href")
+                            if href:
+                                full_url = f"{self.base_url}{href}"
+                                listing_urls.append(full_url)
+                        except:
+                            pass
+                            
                 except Exception as e:
-                    self.logger.error("crawl_failed_in_context", error=str(e))
-                    timestamp = int(time.time())
+                    self.logger.error("search_page_failed", error=str(e))
+                    if "403" in str(e) or "challenge" in str(e):
+                        raise e # Fast fail if blocked immediately
+
+                # Visit Detail Pages
+                self.logger.info("visiting_details", count=len(listing_urls))
+                
+                # Limit for testing/safety in this iteration
+                for url in listing_urls[:10]:
                     try:
-                        page.screenshot(path=f"data/debug_screenshot_{timestamp}.png")
-                        with open(f"data/debug_page_{timestamp}.html", "w") as f:
-                            f.write(page.content())
-                        self.logger.info("debug_artifacts_saved", timestamp=timestamp)
-                    except Exception as save_err:
-                        self.logger.error("failed_to_save_debug", error=str(save_err))
-                    raise e
-                finally:
-                    browser.close()
+                        # Heavy random delay
+                        time.sleep(2 + (time.time() % 3))
+                        
+                        self.logger.info("visiting", url=url)
+                        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                        
+                        # Simulate reading
+                        page.mouse.move(200, 200)
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight/3)")
+                        time.sleep(1)
+                        
+                        # Extract full HTML
+                        html_content = page.content()
+                        
+                        # Extract ID
+                        # url params often have id, or from content
+                        # idealista structure: .../inmueble/{id}/
+                        try:
+                            lid = url.split("/inmueble/")[1].replace("/", "")
+                        except:
+                            lid = "unknown_" + str(int(time.time()))
+                        
+                        # PERSIST RAW SNAPSHOT
+                        snapshot_path = self.snapshot_service.save_snapshot(
+                            content=html_content,
+                            source_id=self.config.get("id", "idealista"),
+                            external_id=lid
+                        )
+                        
+                        raw_listing = RawListing(
+                            source_id="idealista",
+                            external_id=lid,
+                            url=url,
+                            html_snapshot_path=snapshot_path,
+                            raw_data={"html_snippet": html_content, "is_detail_page": True},
+                            fetched_at=datetime.now()
+                        )
+                        results.append(raw_listing)
+                        
+                    except Exception as e:
+                        self.logger.error("detail_page_failed", url=url, error=str(e))
+                        
+                browser.close()
                 
             return AgentResponse(status="success", data=results)
             

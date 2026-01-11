@@ -31,7 +31,7 @@ class PisosCrawlerAgent(BaseAgent):
         self.logger.info("pisos_crawl_start", url=start_url)
 
         with sync_playwright() as p:
-            # 1. Launch Browser (Headless is usually fine for Pisos)
+            # 1. Launch Browser
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
                 viewport={"width": 1920, "height": 1080},
@@ -39,56 +39,75 @@ class PisosCrawlerAgent(BaseAgent):
             )
             
             page = context.new_page()
-            
-            # Simple stealth
             stealth = Stealth()
             stealth.apply_stealth_sync(page)
 
+            listing_urls = []
+            
+            # --- Step 1: Get Listing URLs from Search Page ---
             try:
                 response = page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
                 
                 if response.status != 200:
                    self.logger.warning("non_200_response", status=response.status)
-                   # For Pisos, sometimes they redirect or 403 on aggressive searching, but usually ok.
                 
                 # Wait for listings
-                # Selector: div.ad-preview
-                page.wait_for_selector("div.ad-preview", timeout=10000)
-                
-                # Extract
-                items = page.locator("div.ad-preview").all()
-                self.logger.info("items_found", count=len(items))
-                
-                for item in items:
-                    try:
-                        # Get External ID
-                        lid = item.get_attribute("data-id") or item.get_attribute("id")
-                        if not lid:
-                            continue
+                try:
+                    page.wait_for_selector("div.ad-preview", timeout=10000)
+                    
+                    # Extract URLs
+                    items = page.locator("div.ad-preview").all()
+                    self.logger.info("items_found_on_page", count=len(items))
+                    
+                    for item in items:
+                        try:
+                            # Try to find the link in the title or the card itself
+                            # Usually a.ad-preview__title or similar
+                            # Using JS to extract href to be robust
+                            url = item.evaluate("el => { const a = el.querySelector('a.ad-preview__title'); return a ? a.href : null; }")
+                            if url:
+                                listing_urls.append(url)
+                        except Exception as e:
+                            pass
                             
-                        # Get HTML Snippet
-                        html_snippet = item.inner_html()
-                        # Also wrap it in the container for correct parsing structure if needed,
-                        # but BeautifulSoup usually handles fragments. 
-                        # To be safe, wrapping in a div with the class.
-                        full_html = f'<div class="ad-preview" data-id="{lid}">{html_snippet}</div>'
-                        
-                        raw = RawListing(
-                            source_id="pisos",
-                            external_id=lid,
-                            url=start_url, # Parent URL, individual URL extracted in Normalizer
-                            raw_data={"html_snippet": full_html},
-                            fetched_at=datetime.now()
-                        )
-                        listings.append(raw)
-                        
-                    except Exception as e:
-                        errors.append(f"Error extracting item: {e}")
+                except Exception as e:
+                    self.logger.warning("no_listings_found", error=str(e))
                         
             except Exception as e:
-                errors.append(f"Page load error: {e}")
-            finally:
-                browser.close()
+                errors.append(f"Search page load error: {e}")
+            
+            # --- Step 2: Visit Each Detail Page ---
+            self.logger.info("visiting_details", count=len(listing_urls))
+            
+            # Limit removed for production
+            for url in listing_urls: 
+                try:
+                    # Random small delay
+                    time.sleep(1 + (time.time() % 1)) 
+                    
+                    page.goto(url, timeout=15000, wait_until="domcontentloaded")
+                    
+                    # Extract full HTML
+                    full_html = page.content()
+                    
+                    # Extract ID from URL if possible or generate one
+                    # url structure: /comprar/piso-city-id_subid/
+                    lid = url.split("-")[-1].replace("/", "")
+                    
+                    raw = RawListing(
+                        source_id="pisos",
+                        external_id=lid,
+                        url=url,
+                        raw_data={"html_snippet": full_html, "is_detail_page": True},
+                        fetched_at=datetime.now()
+                    )
+                    listings.append(raw)
+                    
+                except Exception as e:
+                    self.logger.warning("detail_page_failed", url=url, error=str(e))
+                    errors.append(f"Detail page {url} failed: {e}")
+            
+            browser.close()
 
         return AgentResponse(
             status="success" if listings else "failure",

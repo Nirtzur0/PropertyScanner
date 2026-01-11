@@ -8,6 +8,7 @@ import time
 import structlog
 import json
 from datetime import datetime
+from typing import List, Dict
 
 from src.agents.crawlers.pisos import PisosCrawlerAgent
 from src.agents.processors.pisos import PisosNormalizerAgent

@@ -130,3 +130,28 @@ class ListingEvaluationResult(BaseModel):
     flags: List[str] = Field(default_factory=list)
     
     timestamp: datetime = Field(default_factory=datetime.now)
+
+class ValuationProjection(BaseModel):
+    """
+    Projected value of a property over time.
+    """
+    years_future: int
+    predicted_value: float
+    confidence_score: float # 0.0 to 1.0
+    growth_rate_annual: float
+    scenarios: Dict[str, float] = Field(default_factory=dict) # "optimistic", "pessimistic"
+
+class MarketProfile(BaseModel):
+    """
+    Analysis of the market conditions for a specific property/area.
+    """
+    zone_id: str
+    momentum_score: float # -1.0 to 1.0 (Growth trend)
+    liquidity_score: float # 0.0 to 1.0 (Ease of exit)
+    catchup_potential: float # 0.0 to 1.0 (Ripple effect)
+    
+    avg_price_sqm: float
+    median_dom: Optional[int] = None
+    inventory_trend: str # "increasing", "stable", "decreasing"
+    
+    projections: List[ValuationProjection] = Field(default_factory=list)

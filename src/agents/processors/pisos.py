@@ -31,7 +31,14 @@ class PisosNormalizerAgent(BaseAgent):
         json_data = {}
         if json_ld_script:
             try:
-                json_data = json.loads(json_ld_script.string)
+                # Iterate all scripts as sometimes multiple are present
+                scripts = soup.find_all('script', type='application/ld+json')
+                for s in scripts:
+                    data = json.loads(s.string)
+                    # Look for Residence type
+                    if data.get("@type") in ["SingleFamilyResidence", "Apartment", "House", "Residence"]:
+                        json_data = data
+                        break
             except:
                 pass
         
@@ -42,37 +49,90 @@ class PisosNormalizerAgent(BaseAgent):
         if json_data.get("name"):
             title = json_data["name"]
         else:
-            t_el = soup.select_one("a.ad-preview__title")
+            # Detail page: often just <h1> inside .details__block
+            t_el = soup.select_one("div.details__block h1") or soup.select_one("h1") or soup.select_one("a.ad-preview__title")
             if t_el: title = t_el.get_text(strip=True)
 
         # Price
         price = 0.0
-        p_el = soup.select_one("span.ad-preview__price")
+        p_el = soup.select_one("div.price") or soup.select_one("span.ad-preview__price")
+        # Detail page often has price in specialized container
+        if not p_el: 
+            p_el = soup.select_one(".priceBox-price") # Common class
         if p_el:
             price = self._clean_price(p_el.get_text())
 
         # URL
-        relative_url = ""
-        if json_data.get("url"):
-            relative_url = json_data["url"]
-        else:
-            url_el = soup.select_one("a.ad-preview__title")
-            if url_el: relative_url = url_el.get("href")
-        
-        full_url = f"https://www.pisos.com{relative_url}" if relative_url.startswith("/") else relative_url
+        full_url = raw.url
 
         # Components (Bedrooms, Sqm)
         bedrooms = None
         sqm = None
         
-        # DOM Parsing for details
-        chars = soup.select("p.ad-preview__char")
+        def parse_eu_float(t):
+             # Remove thousands separator (.), replace decimal separator (,) with (.)
+             # "1.200,50" -> "1200.50"
+             clean = t.replace('.', '') 
+             clean = clean.replace(',', '.')
+             # Remove non-numeric except dot
+             clean = re.sub(r'[^\d.]', '', clean)
+             return float(clean) if clean else 0.0
+
+        # Strategy 1: Summary list (e.g. "2 habs.", "78 m²")
+        chars = soup.select("ul.features-summary li")
+        
         for c in chars:
             txt = c.get_text(strip=True)
-            if "hab" in txt:
+            txt_lower = txt.lower()
+            if "hab" in txt_lower or "dorm" in txt_lower:
                 bedrooms = int(re.sub(r'[^\d]', '', txt) or 0)
-            elif "m²" in txt or "m2" in txt:
-                sqm = float(re.sub(r'[^\d]', '', txt) or 0)
+            elif "m²" in txt_lower or "m2" in txt_lower:
+                sqm = parse_eu_float(txt)
+                
+        # DOM Parsing for details
+        # Strategy 2: Detailed features block (fallback if chars didn't work or found nothing)
+        if not bedrooms and not sqm:
+             # Iterate feature blocks
+             feature_blocks = soup.select("div.features__feature")
+             for fb in feature_blocks:
+                 label = fb.select_one(".features__label")
+                 val = fb.select_one(".features__value")
+                 if label and val:
+                     l_txt = label.get_text(strip=True).lower()
+                     v_txt = val.get_text(strip=True)
+                     if "habitaciones" in l_txt:
+                         bedrooms = int(re.sub(r'[^\d]', '', v_txt) or 0)
+                     elif "superficie" in l_txt:
+                         sqm = parse_eu_float(v_txt)
+        
+        # Process chars list (from Search page fallback if still missing)
+        if not bedrooms and not sqm:
+            if not chars:
+                chars = soup.select("p.ad-preview__char")
+                
+            for c in chars:
+                txt = c.get_text(strip=True).lower()
+                if "hab" in txt or "dorm" in txt:
+                    bedrooms = int(re.sub(r'[^\d]', '', txt) or 0)
+                elif "m²" in txt or "m2" in txt:
+                    sqm = parse_eu_float(txt)
+        
+        # Description Extraction (New!)
+        description = ""
+        # 1. Try description container
+        desc_el = soup.select_one("div.description__content")
+        if desc_el:
+            description = desc_el.get_text(strip=True, separator=" ")
+        # 2. Try meta tag
+        if not description:
+            meta_desc = soup.find("meta", attrs={"name": "description"})
+            if meta_desc:
+                description = meta_desc.get("content", "")
+        # 3. JSON-LD fallback (usually just title repeated, but check)
+        if not description and json_data.get("description"):
+            # Avoid using title as description unless it's long
+            if len(json_data["description"]) > len(title) + 10:
+                description = json_data["description"]
 
         # Lat/Lon extraction from JSON-LD
         lat = None
@@ -91,16 +151,26 @@ class PisosNormalizerAgent(BaseAgent):
                 image_urls.append(json_data["image"])
             elif isinstance(json_data["image"], list):
                 image_urls.extend(json_data["image"])
-        else:
-            # Fallback DOM
-            imgs = soup.select("img")
-            for img in imgs:
-                src = img.get("data-src") or img.get("src")
-                if src and "pisos.com" in src or "imghs.net" in src:
-                    image_urls.append(src)
+        
+        # Detail page image gallery fallback
+        if not image_urls:
+            # Look for gallery (often in a JS object or specific huge-images)
+            # Try finding gallery images
+            gallery_imgs = soup.select("img.main-image") # Example
+            for img in gallery_imgs:
+                src = img.get("src")
+                if src: image_urls.append(src)
+                
+            # If not found, try all images in known CDN
+            if not image_urls:
+                imgs = soup.select("img")
+                for img in imgs:
+                    src = img.get("data-src") or img.get("src")
+                    if src and ("pisos.com" in src or "imghs.net" in src) and not "logo" in src:
+                        # Filter out thumbnails if possible by size/naming
+                        image_urls.append(src)
 
         # ID Generation
-        # Use provided ID or generate hash
         unique_string = f"pisos_{raw.external_id}"
         unique_hash = hashlib.md5(unique_string.encode()).hexdigest()
 
@@ -111,6 +181,7 @@ class PisosNormalizerAgent(BaseAgent):
             external_id=raw.external_id,
             url=full_url,
             title=title,
+            description=description, # Now populated
             price=price,
             currency=Currency.EUR,
             property_type=PropertyType.APARTMENT,
@@ -120,21 +191,15 @@ class PisosNormalizerAgent(BaseAgent):
             status=ListingStatus.ACTIVE
         )
         
-        # Hacky: Inject extracted lat/lon into extra_data for enrichment bypass if needed?
-        # Actually, if we have lat/lon here, we might want to pass it.
-        # But for now, let's let the Enricher handle it or rely on address. 
-        # Ideally, we should update CanonicalListing to accept optional lat/lon if known from source.
-        # But since CanonicalListing has 'location', let's see. 'location' is a GeoLocation object.
-        # Let's populate it partially if we have valid coords.
-        from src.core.domain.schema import GeoLocation
         if lat and lon:
+            from src.core.domain.schema import GeoLocation
             canonical.location = GeoLocation(
                 lat=lat, 
                 lon=lon, 
-                address_full=title, # Placeholder
+                address_full=title, 
                 city="Unknown", 
                 neighborhood="Unknown",
-                country="ES" # Required field
+                country="ES" 
             )
 
         return canonical
