@@ -186,9 +186,10 @@ class TabularEncoder:
         Args:
             feature_names: Ordered list of feature names to encode
         """
+        # Note: price is NOT included - it's the target variable we're predicting
         self.feature_names = feature_names or [
-            'price', 'bedrooms', 'bathrooms', 'surface_area_sqm', 
-            'year_built', 'floor', 'lat', 'lon'
+            'bedrooms', 'bathrooms', 'surface_area_sqm', 
+            'year_built', 'floor', 'lat', 'lon', 'price_per_sqm'
         ]
         self.dimension = len(self.feature_names)
         

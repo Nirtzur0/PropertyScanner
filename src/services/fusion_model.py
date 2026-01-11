@@ -64,8 +64,8 @@ if TORCH_AVAILABLE:
             tabular_dim: int = 8,
             text_dim: int = 384,
             image_dim: int = 512,
-            hidden_dim: int = 256,
-            num_heads: int = 4,
+            hidden_dim: int = 64,  # Reduced from 256 for smaller model
+            num_heads: int = 2,    # Reduced from 4
             num_quantiles: int = 3  # 0.1, 0.5, 0.9
         ):
             super().__init__()
@@ -73,17 +73,21 @@ if TORCH_AVAILABLE:
             self.hidden_dim = hidden_dim
             self.num_quantiles = num_quantiles
             
-            # Modality Projectors
-            self.tab_proj = TabularMLP(tabular_dim, 64, hidden_dim)
+            # Modality Projectors (simplified)
+            self.tab_proj = nn.Sequential(
+                nn.Linear(tabular_dim, hidden_dim),
+                nn.ReLU(),
+                nn.LayerNorm(hidden_dim)
+            )
             self.text_proj = nn.Linear(text_dim, hidden_dim)
+            # Note: image_proj kept for compatibility but VLM text is primary
             self.image_proj = nn.Linear(image_dim, hidden_dim)
             
-            # Modality fusion (simple concat + project)
+            # Modality fusion (simplified)
             self.modality_fusion = nn.Sequential(
-                nn.Linear(hidden_dim * 3, hidden_dim * 2),
+                nn.Linear(hidden_dim * 3, hidden_dim),
                 nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.Dropout(0.2),
                 nn.LayerNorm(hidden_dim)
             )
             
@@ -91,15 +95,15 @@ if TORCH_AVAILABLE:
             self.cross_attention = nn.MultiheadAttention(
                 embed_dim=hidden_dim,
                 num_heads=num_heads,
-                dropout=0.1,
+                dropout=0.2,
                 batch_first=True
             )
             
-            # Post-attention processing
+            # Post-attention processing (simplified)
             self.post_attn = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Dropout(0.1)
+                nn.Dropout(0.2)
             )
             
             # Prediction Heads (Quantile Regression)
@@ -147,6 +151,9 @@ if TORCH_AVAILABLE:
             """
             Forward pass with retrieval-augmented reasoning.
             
+            The model predicts RESIDUALS relative to the attention-weighted comp prices,
+            which anchors predictions to the actual market values of comparables.
+            
             Args:
                 target_*: Target listing features (batch_size, feature_dim)
                 comp_*: Comp features (batch_size, num_comps, feature_dim)
@@ -154,7 +161,7 @@ if TORCH_AVAILABLE:
                 return_attention: Whether to return attention weights
                 
             Returns:
-                price_quantiles: (batch_size, 3)
+                price_quantiles: (batch_size, 3) - actual price predictions
                 rent_quantiles: (batch_size, 3)
                 time_quantiles: (batch_size, 3)
                 attention_weights: Optional (batch_size, num_comps)
@@ -184,18 +191,37 @@ if TORCH_AVAILABLE:
                 value=comp_emb,
                 need_weights=True
             )
+            attn_weights = attn_weights.squeeze(1)  # (B, K)
+            
+            # Compute attention-weighted comp price as anchor
+            # This gives us a baseline prediction based on similar comps
+            price_anchor = (attn_weights * comp_prices).sum(dim=-1, keepdim=True)  # (B, 1)
+            price_std = comp_prices.std(dim=-1, keepdim=True).clamp(min=1000)  # (B, 1)
             
             # Residual connection
             reasoned = target_emb + attn_out
             reasoned = self.post_attn(reasoned.squeeze(1))  # (B, D)
             
-            # Predict quantiles
-            price_q = self.price_head(reasoned)
-            rent_q = self.rent_head(reasoned)
-            time_q = self.time_head(reasoned)
+            # Predict RESIDUALS (adjustments) as fraction of price std
+            price_residuals = self.price_head(reasoned)  # (B, 3)
+            
+            # Final price = anchor + (residual * std)
+            # This ensures predictions are in the right scale
+            price_q = price_anchor + price_residuals * price_std
+            
+            # Rent prediction: ~0.4% of price per month (European average)
+            rent_base = price_anchor * 0.004
+            rent_residuals = self.rent_head(reasoned)
+            rent_std = rent_base * 0.2  # 20% variation
+            rent_q = rent_base + rent_residuals * rent_std
+            
+            # Time to sell (days) - base ~90 days
+            time_base = torch.full_like(price_anchor, 90.0)
+            time_residuals = self.time_head(reasoned)
+            time_q = time_base + time_residuals * 30.0  # +/- 30 days adjustment
             
             if return_attention:
-                return price_q, rent_q, time_q, attn_weights.squeeze(1)
+                return price_q, rent_q, time_q, attn_weights
             return price_q, rent_q, time_q, None
 
 
@@ -283,16 +309,20 @@ class FusionModelService:
 
     def predict(
         self,
-        target_embedding: np.ndarray,
-        comp_embeddings: List[np.ndarray],
+        target_text_embedding: np.ndarray,
+        target_tabular_features: np.ndarray,
+        comp_text_embeddings: List[np.ndarray],
+        comp_tabular_features: List[np.ndarray],
         comp_prices: List[float]
     ) -> FusionOutput:
         """
         Make predictions for a target listing.
         
         Args:
-            target_embedding: Concatenated [tab, text, image] embedding
-            comp_embeddings: List of comp embeddings
+            target_text_embedding: Text embedding (384D)
+            target_tabular_features: Tabular features (8D)
+            comp_text_embeddings: List of comp text embeddings
+            comp_tabular_features: List of comp tabular features
             comp_prices: Actual prices of comparables
             
         Returns:
@@ -320,20 +350,23 @@ class FusionModelService:
                 }
             )
         
-        # Prepare tensors
-        # For now, simplified: use the full embedding as text (will refactor later)
-        target_tab = torch.zeros(1, self.config.get("tabular_dim", 8))
-        target_text = torch.from_numpy(target_embedding[:384]).unsqueeze(0).float()
+        # Prepare target tensors
+        target_tab = torch.from_numpy(target_tabular_features).unsqueeze(0).float()
+        target_text = torch.from_numpy(target_text_embedding).unsqueeze(0).float()
         
-        num_comps = min(len(comp_embeddings), 10)
+        # Prepare comp tensors
+        num_comps = min(len(comp_text_embeddings), 10)
         if num_comps == 0:
             num_comps = 1
-            comp_embeddings = [np.zeros(384)]
+            comp_text_embeddings = [np.zeros(self.config.get("text_dim", 384))]
+            comp_tabular_features = [np.zeros(self.config.get("tabular_dim", 8))]
             comp_prices = [300000.0]
             
-        comp_tab = torch.zeros(1, num_comps, self.config.get("tabular_dim", 8))
+        comp_tab = torch.stack([
+            torch.from_numpy(f).float() for f in comp_tabular_features[:num_comps]
+        ]).unsqueeze(0)
         comp_text = torch.stack([
-            torch.from_numpy(e[:384]).float() for e in comp_embeddings[:num_comps]
+            torch.from_numpy(e).float() for e in comp_text_embeddings[:num_comps]
         ]).unsqueeze(0)
         comp_prices_t = torch.tensor([comp_prices[:num_comps]])
         

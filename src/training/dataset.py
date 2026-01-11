@@ -5,6 +5,7 @@ Supports VLM image-to-text descriptions using local Ollama.
 """
 import sqlite3
 import random
+import ast
 import json
 import numpy as np
 import torch
@@ -12,8 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 from typing import List, Dict, Tuple, Optional, Any
 from collections import defaultdict
 from pathlib import Path
-
 import structlog
+from PIL import Image
+import io
 
 logger = structlog.get_logger()
 
@@ -85,23 +87,36 @@ class VLMImageDescriber:
             
             descriptions = []
             prompt = (
-                "Describe this property image in 30 words. "
-                "Focus on: room type, condition (new/renovated/old), style, key features."
+                "Analyze this property image for real estate valuation. "
+                "In 40 words describe: "
+                "1) Room type (living room, kitchen, bedroom, bathroom, exterior) "
+                "2) Condition (new/renovated/needs renovation/old) "
+                "3) Quality (luxury/modern/standard/basic) "
+                "4) Key value-affecting features (natural light, views, finishes, appliances)"
             )
             
             for url in image_urls[:max_images]:
                 try:
                     if url.startswith("http"):
                         resp = requests.get(url, timeout=10)
-                        img_data = base64.b64encode(resp.content).decode()
+                        img_bytes = resp.content
                     else:
                         with open(url, "rb") as f:
-                            img_data = base64.b64encode(f.read()).decode()
+                            img_bytes = f.read()
+                    
+                    # Standardize image to prevent Ollama runner crashes
+                    # Use 336x336 (native for Llava) or generic 512x512
+                    with Image.open(io.BytesIO(img_bytes)) as img:
+                        img = img.convert("RGB")
+                        img = img.resize((512, 512))
+                        byte_arr = io.BytesIO()
+                        img.save(byte_arr, format='PNG')
+                        standardized_b64 = base64.b64encode(byte_arr.getvalue()).decode()
                     
                     response = ollama.generate(
                         model=self.model,
                         prompt=prompt,
-                        images=[img_data]
+                        images=[standardized_b64]
                     )
                     descriptions.append(response.get('response', ''))
                 except Exception as e:
@@ -176,6 +191,9 @@ class PropertyDataset(Dataset):
                    num_listings=len(self.listings),
                    num_cities=len(self.city_index),
                    vlm_enabled=use_vlm)
+        
+        # Fit tabular encoder on the data for proper normalization
+        self._fit_tabular_encoder()
     
     def _load_listings(self) -> List[Dict[str, Any]]:
         """Load all valid listings from SQLite database."""
@@ -185,7 +203,8 @@ class PropertyDataset(Dataset):
         cursor = conn.execute("""
             SELECT id, source_id, title, description, price, city,
                    bedrooms, bathrooms, surface_area_sqm, floor,
-                   lat, lon, image_urls, vlm_description
+                   lat, lon, image_urls, vlm_description,
+                   listed_at, updated_at
             FROM listings
             WHERE price > 0
         """)
@@ -194,6 +213,48 @@ class PropertyDataset(Dataset):
         conn.close()
         
         return listings
+    
+    def _fit_tabular_encoder(self):
+        """Fit tabular encoder on all listings for proper normalization."""
+        feature_dicts = []
+        for listing in self.listings:
+            # NOTE: price is NOT included - it's the target variable
+            features = {
+                "bedrooms": listing.get("bedrooms") or 0,
+                "bathrooms": listing.get("bathrooms") or 0,
+                "surface_area_sqm": listing.get("surface_area_sqm") or 0,
+                "year_built": self._extract_year_built(listing),
+                "floor": listing.get("floor") or 0,
+                "lat": listing.get("lat") or 0,
+                "lon": listing.get("lon") or 0,
+                "price_per_sqm": (listing.get("price") or 0) / max(listing.get("surface_area_sqm") or 1, 1),
+            }
+            feature_dicts.append(features)
+        
+        self.tabular_encoder.fit(feature_dicts)
+        logger.info("tabular_encoder_fitted", num_samples=len(feature_dicts))
+    
+    def _extract_year_built(self, listing: Dict) -> int:
+        """Extract year_built from listing, with fallback estimation."""
+        # Try direct field first (if it exists in the DB)
+        if listing.get("year_built"):
+            return int(listing["year_built"])
+        
+        # Estimate from listed_at date (assume ~10 years old on average)
+        listed_at = listing.get("listed_at")
+        if listed_at:
+            try:
+                from datetime import datetime
+                if isinstance(listed_at, str):
+                    year = datetime.fromisoformat(listed_at.replace('Z', '+00:00')).year
+                else:
+                    year = listed_at.year
+                return year - 10  # Estimate built 10 years before listing
+            except:
+                pass
+        
+        # Default to 2015 (reasonable modern estimate)
+        return 2015
     
     def _save_vlm_description(self, listing_id: str, description: str):
         """Cache VLM description to database."""
@@ -225,7 +286,13 @@ class PropertyDataset(Dataset):
             # Try to generate from images
             image_urls_raw = listing.get("image_urls") or "[]"
             try:
-                image_urls = json.loads(image_urls_raw) if isinstance(image_urls_raw, str) else image_urls_raw
+                if isinstance(image_urls_raw, str):
+                    try:
+                        image_urls = json.loads(image_urls_raw)
+                    except json.JSONDecodeError:
+                        image_urls = ast.literal_eval(image_urls_raw)
+                else:
+                    image_urls = image_urls_raw
                 if image_urls:
                     vlm_desc = self.vlm.describe_images(image_urls)
                     if vlm_desc:
@@ -250,16 +317,16 @@ class PropertyDataset(Dataset):
         return embedding
     
     def _get_tabular_features(self, listing: Dict) -> np.ndarray:
-        """Extract normalized tabular features."""
+        """Extract normalized tabular features (excluding price - that's the target)."""
         features = {
-            "price": listing.get("price") or 0,
             "bedrooms": listing.get("bedrooms") or 0,
             "bathrooms": listing.get("bathrooms") or 0,
             "surface_area_sqm": listing.get("surface_area_sqm") or 0,
-            "year_built": 2000,  # Default
+            "year_built": self._extract_year_built(listing),
             "floor": listing.get("floor") or 0,
             "lat": listing.get("lat") or 0,
             "lon": listing.get("lon") or 0,
+            "price_per_sqm": 0,  # Will be computed from comps during inference
         }
         return self.tabular_encoder.encode(features)
     

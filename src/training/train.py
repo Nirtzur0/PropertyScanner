@@ -99,13 +99,15 @@ class Trainer:
         return total_loss / max(num_batches, 1)
     
     @torch.no_grad()
-    def validate(self) -> float:
-        """Validate on val set."""
+    def validate(self) -> Tuple[float, Dict[str, float]]:
+        """Validate on val set with metrics."""
         if not self.val_loader:
-            return 0.0
+            return 0.0, {}
             
         self.model.eval()
         total_loss = 0.0
+        all_predictions = []
+        all_targets = []
         num_batches = 0
         
         for batch in self.val_loader:
@@ -129,8 +131,28 @@ class Trainer:
             loss = self.criterion(price_q, target_price)
             total_loss += loss.item()
             num_batches += 1
+            
+            # Collect predictions (median = quantile 0.5)
+            all_predictions.extend(price_q[:, 1].cpu().numpy())
+            all_targets.extend(target_price.cpu().numpy())
         
-        return total_loss / max(num_batches, 1)
+        avg_loss = total_loss / max(num_batches, 1)
+        
+        # Compute metrics
+        predictions = np.array(all_predictions)
+        targets = np.array(all_targets)
+        
+        mae = np.mean(np.abs(predictions - targets))
+        mape = np.mean(np.abs((predictions - targets) / np.maximum(targets, 1))) * 100
+        median_error = np.median(np.abs(predictions - targets))
+        
+        metrics = {
+            "mae": mae,
+            "mape": mape,
+            "median_error": median_error
+        }
+        
+        return avg_loss, metrics
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         """Save model checkpoint."""
@@ -170,13 +192,19 @@ class Trainer:
         """
         logger.info("training_started", epochs=epochs, patience=patience)
         
+        best_metrics = {}
+        
         for epoch in range(epochs):
             # Train
             train_loss = self.train_epoch()
             self.train_losses.append(train_loss)
             
-            # Validate
-            val_loss = self.validate() if self.val_loader else train_loss
+            # Validate with metrics
+            if self.val_loader:
+                val_loss, metrics = self.validate()
+            else:
+                val_loss = train_loss
+                metrics = {}
             self.val_losses.append(val_loss)
             
             # Check improvement
@@ -185,20 +213,24 @@ class Trainer:
                 self.best_val_loss = val_loss
                 self.epochs_without_improvement = 0
                 is_best = True
+                best_metrics = metrics
             else:
                 self.epochs_without_improvement += 1
             
             # Save checkpoint
             self.save_checkpoint(epoch, is_best)
             
-            # Log progress
-            logger.info(
-                "epoch_completed",
-                epoch=epoch + 1,
-                train_loss=f"{train_loss:.4f}",
-                val_loss=f"{val_loss:.4f}",
-                best=is_best
-            )
+            # Log progress with metrics
+            log_data = {
+                "epoch": epoch + 1,
+                "train_loss": f"{train_loss:.4f}",
+                "val_loss": f"{val_loss:.4f}",
+                "best": is_best
+            }
+            if metrics:
+                log_data["mape"] = f"{metrics.get('mape', 0):.1f}%"
+                log_data["mae"] = f"€{metrics.get('mae', 0):,.0f}"
+            logger.info("epoch_completed", **log_data)
             
             # Early stopping
             if self.epochs_without_improvement >= patience:
@@ -209,7 +241,8 @@ class Trainer:
             "train_losses": self.train_losses,
             "val_losses": self.val_losses,
             "best_val_loss": self.best_val_loss,
-            "total_epochs": len(self.train_losses)
+            "total_epochs": len(self.train_losses),
+            "best_metrics": best_metrics
         }
 
 
@@ -247,13 +280,13 @@ def train_model(
         val_split=val_split
     )
     
-    # Create model
+    # Create compact model (92k params)
     model = PropertyFusionModel(
         tabular_dim=8,
         text_dim=384,
-        image_dim=512,  # Unused but kept for compatibility
-        hidden_dim=256,
-        num_heads=4
+        image_dim=512,
+        hidden_dim=64,
+        num_heads=2
     )
     
     logger.info("model_created", params=sum(p.numel() for p in model.parameters()))
@@ -279,7 +312,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train PropertyFusionModel")
     parser.add_argument("--db", default="data/listings.db", help="SQLite database path")
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--val-split", type=float, default=0.1)
