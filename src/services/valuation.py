@@ -4,14 +4,22 @@ from sqlalchemy import func
 from src.services.storage import StorageService
 from src.services.modeling import ValuationModel
 from src.core.domain.schema import CanonicalListing, DealAnalysis
+from src.services.modeling import ValuationModel
+from src.core.domain.schema import CanonicalListing, DealAnalysis
 from src.core.domain.models import DBListing
+from src.services.forecasting import ForecastingService
+from src.services.market_analytics import MarketAnalyticsService
 
 logger = structlog.get_logger()
 
 class ValuationService:
     def __init__(self, storage: StorageService):
         self.storage = storage
+    def __init__(self, storage: StorageService):
+        self.storage = storage
         self.ml_model = ValuationModel()
+        self.forecasting = ForecastingService()
+        self.analytics = MarketAnalyticsService()
 
     def _get_market_average_sqm(self, city: str = None) -> Tuple[float, int]:
         """
@@ -95,11 +103,40 @@ class ValuationService:
         if comps:
              thesis += f"Verified against {len(comps)} comps."
 
+        # 5. Get Market Signals & Projections
+        projections = []
+        market_signals = {}
+        
+        try:
+            # Market Signals
+            if listing.location and listing.location.city:
+                profile = self.analytics.analyze_listing(listing)
+                if profile:
+                    market_signals = {
+                        "momentum": profile.momentum_score,
+                        "liquidity": profile.liquidity_score,
+                        "catchup": profile.catchup_potential
+                    }
+                    
+            # 1-5 Year Projections
+            if listing.price > 0:
+                # Use city or just default region
+                region_id = listing.location.city if listing.location and listing.location.city else "unknown"
+                projections = self.forecasting.forecast_property(
+                    region_id=region_id,
+                    current_value=listing.price,
+                    horizons_months=[12, 36, 60]
+                )
+        except Exception as e:
+            logger.warning("projection_failed", error=str(e))
+
         return DealAnalysis(
             listing_id=listing.id,
             fair_value_estimate=fair_value,
             fair_value_uncertainty_pct=uncertainty,
             deal_score=score,
             flags=flags,
-            investment_thesis=thesis
+            investment_thesis=thesis,
+            projections=projections,
+            market_signals=market_signals
         )

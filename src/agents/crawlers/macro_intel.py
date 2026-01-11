@@ -11,6 +11,7 @@ from src.agents.base import BaseAgent, AgentResponse
 
 logger = structlog.get_logger(__name__)
 
+class MacroIntelligenceAgent(BaseAgent):
     """
     LLM-driven agent that scrapes the web for real-world economic consensus.
     Extracts scenarios (Bull/Bear/Base) for Euribor, Inflation, and GDP.

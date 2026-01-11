@@ -83,6 +83,10 @@ try:
             "lat": listing.location.lat if listing.location else None,
             "lon": listing.location.lon if listing.location else None,
             "Image": listing.image_urls[0] if listing.image_urls else None,
+            "Images": listing.image_urls,
+            "VLM Desc": listing.vlm_description,
+            "Projections": analysis.projections,
+            "Signals": analysis.market_signals,
             "Comps": comps # Store for UI
         })
         
@@ -149,17 +153,50 @@ else:
             c_left, c_right = st.columns([1, 2])
             
             with c_left:
-                if item["Image"]:
-                    st.image(item["Image"], use_column_width=True)
+                if item["Images"]:
+                    # Create a carousel-like experience using tabs or just a list of images
+                    # Or just the main image for now with an expander for more
+                    st.image(item["Images"][0], use_column_width=True, caption="Main Image")
+                    with st.expander(f"📷 See {len(item['Images'])} Photos"):
+                        for img in item["Images"]:
+                            st.image(img, use_column_width=True)
                 else:
                     st.markdown("📷 *No Image Available*")
-                    
+                
+                # Market Signals
+                if item["Signals"]:
+                    st.markdown("### 📡 Market Signals")
+                    s1, s2 = st.columns(2)
+                    mom = item["Signals"].get("momentum", 0)
+                    liq = item["Signals"].get("liquidity", 0)
+                    s1.metric("Momentum", f"{mom:+.2f}", delta_color="normal")
+                    s2.metric("Liquidity", f"{liq:.2f}")
+
             with c_right:
                 st.write(f"**Price:** {item['Price']:,.0f} €")
                 st.write(f"**Fair Value:** {item['Fair Value']:,.0f} €")
                 st.write(f"**Score:** {item['Deal Score']:.2f}")
-                st.info(item["Thesis"])
+                
+                st.info(f"**Thesis:** {item['Thesis']}")
+                
+                # VLM Description
+                if item["VLM Desc"]:
+                    st.markdown(f"**👁️ AI Vision Analysis:**\n> *{item['VLM Desc']}*")
+                
                 st.markdown(f"[View Listing]({item['URL']})")
+                
+                # Future Projections Chart
+                if item["Projections"]:
+                    st.markdown("### 📈 Future Value Projection")
+                    proj_data = []
+                    # Add current
+                    proj_data.append({"Month": 0, "Value": item["Price"], "Type": "Current"})
+                    for p in item["Projections"]:
+                        proj_data.append({"Month": p.months_future, "Value": p.predicted_value, "Type": "Forecast"})
+                        # Add bounds?
+                    
+                    chart_df = pd.DataFrame(proj_data)
+                    st.line_chart(chart_df, x="Month", y="Value")
                 
                 # Show Comps
                 if item["Comps"]:

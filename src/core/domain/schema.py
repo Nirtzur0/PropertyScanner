@@ -99,6 +99,10 @@ class DealAnalysis(BaseModel):
     
     flags: List[str] = Field(default_factory=list) # e.g. "under_market_value", "missing_data"
     investment_thesis: Optional[str] = None
+    
+    # Forward-looking Logic
+    projections: List["ValuationProjection"] = Field(default_factory=list)
+    market_signals: Dict[str, float] = Field(default_factory=dict) # e.g. {"momentum": 0.8, "liquidity": 0.5}
 
 class CompListing(BaseModel):
     id: str
