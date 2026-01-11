@@ -1,8 +1,14 @@
 """
-Conformal Calibrator
+Conformal Calibrator (SOTA V3)
 
 Implements adaptive conformal prediction for calibrated prediction intervals.
 Ensures that the prediction intervals have valid coverage over time.
+
+Key Features:
+- Per-horizon calibration (spot, 12m, 36m, 60m)
+- Asymmetric widening (lower/upper separate)
+- Monotonicity enforcement (q10 <= q50 <= q90)
+- Coverage diagnostics per horizon
 
 References:
 - Conformal Time-Series Forecasting (NeurIPS 2021)
@@ -10,19 +16,32 @@ References:
 """
 
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from collections import deque
+from dataclasses import dataclass, field
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 
+@dataclass
+class CalibrationDiagnostics:
+    """Diagnostics for a single calibrator"""
+    coverage_rate: float
+    target_coverage: float
+    avg_interval_width: float
+    n_samples: int
+    lower_avg_error: float
+    upper_avg_error: float
+
+
 class ConformalCalibrator:
     """
-    Adaptive conformal prediction for time series forecasting.
+    Adaptive conformal prediction for a single horizon.
     
-    Maintains a rolling window of residuals and computes calibrated
-    prediction intervals that guarantee coverage.
+    Maintains rolling windows of ASYMMETRIC residuals:
+    - Lower errors: max(0, pred_q10 - actual)  # How much q10 was too high
+    - Upper errors: max(0, actual - pred_q90)  # How much q90 was too low
     """
     
     def __init__(
@@ -30,18 +49,21 @@ class ConformalCalibrator:
         alpha: float = 0.1,  # Target miscoverage rate (1-alpha = coverage)
         window_size: int = 50,  # Rolling calibration window
         adapt_rate: float = 0.01,  # Learning rate for adaptive threshold
+        horizon_name: str = "spot",  # For logging
     ):
         self.alpha = alpha
         self.window_size = window_size
         self.adapt_rate = adapt_rate
+        self.horizon_name = horizon_name
         
-        # Rolling residuals for each quantile
-        self.residuals_q10: deque = deque(maxlen=window_size)
-        self.residuals_q50: deque = deque(maxlen=window_size)
-        self.residuals_q90: deque = deque(maxlen=window_size)
+        # ASYMMETRIC residuals
+        self.lower_errors: deque = deque(maxlen=window_size)  # q10 too high
+        self.upper_errors: deque = deque(maxlen=window_size)  # q90 too low
+        self.median_errors: deque = deque(maxlen=window_size)  # |actual - q50|
         
-        # Adaptive threshold
-        self.threshold = 1.0
+        # Adaptive thresholds (separate for lower/upper)
+        self.lower_threshold = 1.0
+        self.upper_threshold = 1.0
     
     def update(
         self,
@@ -59,24 +81,34 @@ class ConformalCalibrator:
             pred_q50: Predicted median
             pred_q90: Predicted 90th percentile
         """
-        # Compute residuals (non-conformity scores)
-        # For quantile regression, we use the pinball loss as score
-        self.residuals_q10.append(max(0, pred_q10 - actual))
-        self.residuals_q50.append(abs(actual - pred_q50))
-        self.residuals_q90.append(max(0, actual - pred_q90))
+        # Compute ASYMMETRIC non-conformity scores
+        lower_error = max(0, pred_q10 - actual)  # q10 was too high
+        upper_error = max(0, actual - pred_q90)  # q90 was too low
+        median_error = abs(actual - pred_q50)
+        
+        self.lower_errors.append(lower_error)
+        self.upper_errors.append(upper_error)
+        self.median_errors.append(median_error)
         
         # Check if actual was within interval
         covered = pred_q10 <= actual <= pred_q90
         
-        # Adaptive update (online learning)
-        # If not covered, increase threshold; if covered, decrease slightly
-        if covered:
-            self.threshold -= self.adapt_rate * self.alpha
+        # Adaptive update (online learning) - SEPARATE for lower/upper
+        if lower_error > 0:
+            # q10 was too high, need to lower it
+            self.lower_threshold += self.adapt_rate * (1 - self.alpha)
         else:
-            self.threshold += self.adapt_rate * (1 - self.alpha)
+            self.lower_threshold -= self.adapt_rate * self.alpha * 0.5
         
-        # Clamp threshold
-        self.threshold = max(0.5, min(2.0, self.threshold))
+        if upper_error > 0:
+            # q90 was too low, need to raise it
+            self.upper_threshold += self.adapt_rate * (1 - self.alpha)
+        else:
+            self.upper_threshold -= self.adapt_rate * self.alpha * 0.5
+        
+        # Clamp thresholds
+        self.lower_threshold = max(0.5, min(3.0, self.lower_threshold))
+        self.upper_threshold = max(0.5, min(3.0, self.upper_threshold))
     
     def calibrate(
         self,
@@ -85,7 +117,7 @@ class ConformalCalibrator:
         pred_q90: float
     ) -> Tuple[float, float, float]:
         """
-        Calibrate prediction interval to ensure coverage.
+        Calibrate prediction interval with ASYMMETRIC widening.
         
         Args:
             pred_q10: Predicted 10th percentile
@@ -95,56 +127,176 @@ class ConformalCalibrator:
         Returns:
             Tuple of (calibrated_q10, calibrated_q50, calibrated_q90)
         """
-        if len(self.residuals_q50) < 10:
-            # Not enough data, return uncalibrated
-            return pred_q10, pred_q50, pred_q90
+        if len(self.lower_errors) < 10:
+            # Not enough data, return with monotonicity enforcement only
+            return self._enforce_monotonicity(pred_q10, pred_q50, pred_q90)
         
-        # Compute calibration factor from historical residuals
-        residuals = np.array(list(self.residuals_q50))
+        # Compute ASYMMETRIC calibration widths
+        lower_errors_arr = np.array(list(self.lower_errors))
+        upper_errors_arr = np.array(list(self.upper_errors))
         
-        # Get the (1-alpha) quantile of residuals
-        calibration_width = np.quantile(residuals, 1 - self.alpha)
+        # Get the (1-alpha) quantile of each error distribution
+        lower_calibration = np.quantile(lower_errors_arr, 1 - self.alpha)
+        upper_calibration = np.quantile(upper_errors_arr, 1 - self.alpha)
         
-        # Apply adaptive threshold
-        calibration_width *= self.threshold
+        # Apply adaptive thresholds
+        lower_calibration *= self.lower_threshold
+        upper_calibration *= self.upper_threshold
         
-        # Widen interval symmetrically
-        half_width = (pred_q90 - pred_q10) / 2
-        center = pred_q50
+        # Widen interval ASYMMETRICALLY
+        calibrated_q10 = pred_q10 - lower_calibration
+        calibrated_q90 = pred_q90 + upper_calibration
         
-        # New width ensures coverage
-        new_half_width = max(half_width, calibration_width)
+        # Enforce monotonicity
+        return self._enforce_monotonicity(calibrated_q10, pred_q50, calibrated_q90)
+    
+    def _enforce_monotonicity(
+        self,
+        q10: float,
+        q50: float,
+        q90: float
+    ) -> Tuple[float, float, float]:
+        """
+        Ensure q10 <= q50 <= q90 after calibration.
+        """
+        # If q10 > q50, set q10 = q50 - small margin
+        if q10 > q50:
+            q10 = q50 - abs(q50) * 0.01
         
-        calibrated_q10 = center - new_half_width
-        calibrated_q90 = center + new_half_width
+        # If q90 < q50, set q90 = q50 + small margin
+        if q90 < q50:
+            q90 = q50 + abs(q50) * 0.01
         
-        return calibrated_q10, pred_q50, calibrated_q90
+        # Final check
+        if q10 > q90:
+            center = (q10 + q90) / 2
+            half_range = max(abs(q90 - q10) / 2, abs(center) * 0.05)
+            q10 = center - half_range
+            q90 = center + half_range
+        
+        return q10, q50, q90
     
     def get_coverage_rate(self) -> float:
         """Compute empirical coverage rate"""
-        if len(self.residuals_q10) < 5:
+        if len(self.lower_errors) < 5:
             return 0.0
         
-        # Coverage is when q10 <= actual <= q90
-        # Which means residual_q10 == 0 AND residual_q90 == 0
-        r10 = np.array(list(self.residuals_q10))
-        r90 = np.array(list(self.residuals_q90))
+        # Coverage is when both lower_error == 0 AND upper_error == 0
+        lower = np.array(list(self.lower_errors))
+        upper = np.array(list(self.upper_errors))
         
-        covered = (r10 == 0) & (r90 == 0)
-        return covered.mean()
+        covered = (lower == 0) & (upper == 0)
+        return float(covered.mean())
     
-    def get_diagnostics(self) -> dict:
+    def get_diagnostics(self) -> CalibrationDiagnostics:
         """Return calibration diagnostics"""
+        lower_arr = np.array(list(self.lower_errors)) if self.lower_errors else np.array([0])
+        upper_arr = np.array(list(self.upper_errors)) if self.upper_errors else np.array([0])
+        median_arr = np.array(list(self.median_errors)) if self.median_errors else np.array([0])
+        
+        return CalibrationDiagnostics(
+            coverage_rate=self.get_coverage_rate(),
+            target_coverage=1 - self.alpha,
+            avg_interval_width=float(np.mean(lower_arr + upper_arr)),
+            n_samples=len(self.lower_errors),
+            lower_avg_error=float(np.mean(lower_arr)),
+            upper_avg_error=float(np.mean(upper_arr)),
+        )
+
+
+class HorizonCalibratorRegistry:
+    """
+    Registry managing per-horizon conformal calibrators.
+    
+    Each horizon (spot, 12m, 36m, 60m) has its own calibrator because
+    forecast uncertainty typically increases with horizon.
+    """
+    
+    def __init__(
+        self,
+        horizons: List[int] = [0, 12, 36, 60],  # 0 = spot
+        alpha: float = 0.1,
+        window_size: int = 50,
+    ):
+        self.horizons = horizons
+        self.alpha = alpha
+        self.window_size = window_size
+        
+        # Create calibrator per horizon
+        self._calibrators: Dict[int, ConformalCalibrator] = {}
+        for h in horizons:
+            horizon_name = "spot" if h == 0 else f"{h}m"
+            self._calibrators[h] = ConformalCalibrator(
+                alpha=alpha,
+                window_size=window_size,
+                horizon_name=horizon_name
+            )
+    
+    def get_calibrator(self, horizon_months: int) -> ConformalCalibrator:
+        """
+        Get calibrator for a specific horizon.
+        
+        Args:
+            horizon_months: Forecast horizon in months (0 = spot/today)
+            
+        Returns:
+            ConformalCalibrator for that horizon
+        """
+        # Find closest registered horizon
+        if horizon_months in self._calibrators:
+            return self._calibrators[horizon_months]
+        
+        # Find nearest
+        closest = min(self.horizons, key=lambda h: abs(h - horizon_months))
+        return self._calibrators[closest]
+    
+    def update(
+        self,
+        horizon_months: int,
+        actual: float,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float
+    ):
+        """Update calibrator for specific horizon with new observation"""
+        calibrator = self.get_calibrator(horizon_months)
+        calibrator.update(actual, pred_q10, pred_q50, pred_q90)
+    
+    def calibrate_interval(
+        self,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float,
+        horizon_months: int = 0,
+        region_id: str = None  # For future regional calibration
+    ) -> Tuple[float, float, float]:
+        """
+        Calibrate prediction interval for a specific horizon.
+        
+        Args:
+            pred_q10: Raw predicted 10th percentile
+            pred_q50: Raw predicted median
+            pred_q90: Raw predicted 90th percentile
+            horizon_months: Forecast horizon (0 = spot)
+            region_id: Optional region for future regional calibration
+            
+        Returns:
+            Tuple of (calibrated_q10, calibrated_q50, calibrated_q90)
+        """
+        calibrator = self.get_calibrator(horizon_months)
+        return calibrator.calibrate(pred_q10, pred_q50, pred_q90)
+    
+    def get_all_diagnostics(self) -> Dict[str, CalibrationDiagnostics]:
+        """Get diagnostics for all horizons"""
         return {
-            "coverage_rate": self.get_coverage_rate(),
-            "target_coverage": 1 - self.alpha,
-            "adaptive_threshold": self.threshold,
-            "residual_count": len(self.residuals_q50),
-            "mean_interval_width": np.mean([
-                max(0, q90 - q10) 
-                for q10, q90 in zip(self.residuals_q10, self.residuals_q90)
-            ]) if self.residuals_q10 else 0
+            f"{'spot' if h == 0 else f'{h}m'}": cal.get_diagnostics()
+            for h, cal in self._calibrators.items()
         }
+    
+    def is_calibrated(self, horizon_months: int = 0, min_samples: int = 20) -> bool:
+        """Check if we have enough data for reliable calibration"""
+        calibrator = self.get_calibrator(horizon_months)
+        return len(calibrator.lower_errors) >= min_samples
 
 
 class HierarchicalReconciler:
@@ -164,14 +316,6 @@ class HierarchicalReconciler:
                        e.g. {"madrid": ["ezjmgu", "ezjmgv", ...]}
         """
         self.hierarchy = hierarchy
-        
-        # Build summing matrix
-        self._build_summing_matrix()
-    
-    def _build_summing_matrix(self):
-        """Build the S matrix for reconciliation"""
-        # For simplicity, we store hierarchy and reconcile on-the-fly
-        pass
     
     def reconcile(
         self,
@@ -189,7 +333,7 @@ class HierarchicalReconciler:
         Returns:
             Reconciled forecasts
         """
-        reconciled = forecasts.copy()
+        reconciled = {k: dict(v) for k, v in forecasts.items()}  # Deep copy
         
         for parent, children in self.hierarchy.items():
             if parent not in forecasts:
@@ -212,29 +356,57 @@ class HierarchicalReconciler:
                     # Scale children proportionally to match parent
                     scale = parent_val / child_sum
                     
-                    for child, cf in zip(children, child_forecasts):
-                        if child in reconciled and q in cf:
-                            reconciled[child][q] = cf[q] * scale
+                    for i, child in enumerate(children):
+                        if child in reconciled and q in child_forecasts[i]:
+                            reconciled[child][q] = child_forecasts[i][q] * scale
         
         return reconciled
 
 
-if __name__ == "__main__":
-    # Test conformal calibrator
-    calibrator = ConformalCalibrator(alpha=0.1)
+def enforce_monotonicity(q10: float, q50: float, q90: float) -> Tuple[float, float, float]:
+    """
+    Standalone function to enforce q10 <= q50 <= q90.
     
-    # Simulate some predictions and actuals
+    Useful for post-processing any quantile predictions.
+    """
+    # Sort and reassign
+    sorted_q = sorted([q10, q50, q90])
+    return sorted_q[0], sorted_q[1], sorted_q[2]
+
+
+if __name__ == "__main__":
+    # Test per-horizon calibration
+    registry = HorizonCalibratorRegistry(horizons=[0, 12, 36, 60])
+    
+    # Simulate training data
     np.random.seed(42)
     for _ in range(100):
-        actual = np.random.normal(100, 10)
-        pred_q50 = actual + np.random.normal(0, 5)
-        pred_q10 = pred_q50 - 15
-        pred_q90 = pred_q50 + 15
+        actual = np.random.normal(300000, 30000)
+        pred_q50 = actual + np.random.normal(0, 15000)
+        pred_q10 = pred_q50 - 45000
+        pred_q90 = pred_q50 + 45000
         
-        calibrator.update(actual, pred_q10, pred_q50, pred_q90)
+        # Update spot calibrator
+        registry.update(0, actual, pred_q10, pred_q50, pred_q90)
+        
+        # Update 12m with more noise
+        actual_12m = actual * 1.03 + np.random.normal(0, 20000)
+        pred_q50_12m = actual_12m + np.random.normal(0, 25000)
+        registry.update(12, actual_12m, pred_q50_12m - 60000, pred_q50_12m, pred_q50_12m + 60000)
     
-    print("Diagnostics:", calibrator.get_diagnostics())
+    # Print diagnostics
+    print("=== Calibration Diagnostics ===")
+    for horizon, diag in registry.get_all_diagnostics().items():
+        print(f"\n{horizon}:")
+        print(f"  Coverage: {diag.coverage_rate:.1%} (target: {diag.target_coverage:.1%})")
+        print(f"  Avg width: {diag.avg_interval_width:,.0f}")
+        print(f"  Lower err: {diag.lower_avg_error:,.0f}, Upper err: {diag.upper_avg_error:,.0f}")
     
     # Test calibration
-    cal_q10, cal_q50, cal_q90 = calibrator.calibrate(85, 100, 115)
-    print(f"Calibrated: [{cal_q10:.1f}, {cal_q50:.1f}, {cal_q90:.1f}]")
+    print("\n=== Test Calibration ===")
+    raw = (255000, 300000, 345000)
+    cal = registry.calibrate_interval(*raw, horizon_months=0)
+    print(f"Spot: {raw} -> {tuple(f'{x:,.0f}' for x in cal)}")
+    
+    cal_12m = registry.calibrate_interval(*raw, horizon_months=12)
+    print(f"12m:  {raw} -> {tuple(f'{x:,.0f}' for x in cal_12m)}")

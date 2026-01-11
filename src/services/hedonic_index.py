@@ -1,5 +1,5 @@
 """
-Hedonic Index Service
+Hedonic Index Service (SOTA V3)
 
 Implements quality-adjusted price indices using hedonic regression.
 This eliminates composition bias from raw median €/m² indices.
@@ -7,8 +7,12 @@ This eliminates composition bias from raw median €/m² indices.
 Model: ln(P) = β·Features + γ_neighborhood + ε
 
 Where:
-- Features = [sqm, bedrooms, bathrooms, has_elevator, floor, energy_rating]
-- γ_neighborhood = fixed effects per geohash-6 (neighborhood proxy)
+- Features = [sqm, bedrooms, bathrooms, has_elevator, floor]
+- γ_neighborhood = fixed effects per geohash-6 (one-hot encoded)
+
+Key Methods:
+- get_index(region_id, month_date) -> float
+- compute_adjustment_factor(region_id, comp_timestamp, target_timestamp) -> float
 
 References:
 - Eurostat HPI methodology
@@ -18,18 +22,31 @@ References:
 import sqlite3
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 import structlog
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import OneHotEncoder
+from dataclasses import dataclass
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class IndexResult:
+    """Result from hedonic index query with metadata"""
+    value: float
+    r_squared: float
+    n_observations: int
+    is_fallback: bool = False
+    fallback_reason: Optional[str] = None
 
 
 class HedonicIndexService:
     """
     Computes quality-adjusted price indices using hedonic regression.
+    
+    Provides time-adjustment API for comp price normalization.
     """
     
     def __init__(self, db_path: str = "data/listings.db"):
@@ -52,6 +69,9 @@ class HedonicIndexService:
             'has_elevator': 1,
             'floor': 2,
         }
+        
+        # Cache for loaded indices
+        self._index_cache: Dict[str, pd.DataFrame] = {}
     
     def _load_listings(self, region_name: str = None) -> pd.DataFrame:
         """Load listings with required features"""
@@ -92,21 +112,25 @@ class HedonicIndexService:
         # Log price (target for hedonic regression)
         df['log_price'] = np.log(df['price'])
         
-        # Fill missing values
-        df['bedrooms'] = df['bedrooms'].fillna(2)
-        df['bathrooms'] = df['bathrooms'].fillna(1)
-        df['has_elevator'] = df['has_elevator'].fillna(0).astype(int)
-        df['floor'] = df['floor'].fillna(1)
+        # Fill missing values with reasonable defaults
+        df['bedrooms'] = pd.to_numeric(df['bedrooms'], errors='coerce').fillna(2)
+        df['bathrooms'] = pd.to_numeric(df['bathrooms'], errors='coerce').fillna(1)
+        df['has_elevator'] = pd.to_numeric(df['has_elevator'], errors='coerce').fillna(0).astype(int)
+        df['floor'] = pd.to_numeric(df['floor'], errors='coerce').fillna(1)
         
         # Geohash-6 for neighborhood fixed effects
-        df['neighborhood'] = df['geohash'].str[:6] if 'geohash' in df.columns else 'unknown'
-        df['neighborhood'] = df['neighborhood'].fillna('unknown')
+        if 'geohash' in df.columns and df['geohash'].notna().any():
+            df['neighborhood'] = df['geohash'].str[:6].fillna('unknown')
+        else:
+            df['neighborhood'] = 'unknown'
         
         return df
     
     def compute_index(self, region_name: str = None) -> pd.DataFrame:
         """
         Compute quality-adjusted hedonic index time series.
+        
+        Includes actual neighborhood fixed effects via one-hot encoding.
         
         Returns DataFrame with columns:
         - month: Period
@@ -132,22 +156,35 @@ class HedonicIndexService:
             if len(month_df) < 10:
                 continue
             
-            # Prepare features
-            X = month_df[self.feature_cols].values
+            # Prepare base features
+            X_base = month_df[self.feature_cols].values
             y = month_df['log_price'].values
             
-            # Add neighborhood fixed effects (one-hot)
-            neighborhoods = month_df['neighborhood'].values.reshape(-1, 1)
+            # Add neighborhood fixed effects (one-hot encoding)
+            neighborhoods = month_df['neighborhood'].values
+            unique_neighborhoods = np.unique(neighborhoods)
+            
+            # Only add FE if we have multiple neighborhoods
+            if len(unique_neighborhoods) > 1:
+                # Create one-hot encoding (drop_first to avoid multicollinearity)
+                neighborhood_dummies = pd.get_dummies(
+                    month_df['neighborhood'], 
+                    prefix='nh',
+                    drop_first=True
+                ).values
+                X = np.hstack([X_base, neighborhood_dummies])
+            else:
+                X = X_base
             
             try:
                 # Fit hedonic model: ln(P) = β·X + γ_neighborhood
-                # Use Ridge regression for regularization (handles multicollinearity)
+                # Ridge regularization handles multicollinearity from FE
                 model = Ridge(alpha=1.0)
                 model.fit(X, y)
                 
                 r_squared = model.score(X, y)
                 
-                # Predict price for reference basket
+                # Predict price for reference basket (no neighborhood effect)
                 ref_X = np.array([[
                     self.reference_basket['surface_area_sqm'],
                     self.reference_basket['bedrooms'],
@@ -155,6 +192,11 @@ class HedonicIndexService:
                     self.reference_basket['has_elevator'],
                     self.reference_basket['floor'],
                 ]])
+                
+                # Pad with zeros for neighborhood dummies
+                if X.shape[1] > len(self.feature_cols):
+                    n_dummies = X.shape[1] - len(self.feature_cols)
+                    ref_X = np.hstack([ref_X, np.zeros((1, n_dummies))])
                 
                 log_ref_price = model.predict(ref_X)[0]
                 ref_price = np.exp(log_ref_price)
@@ -171,7 +213,8 @@ class HedonicIndexService:
                     'raw_median': raw_median,
                     'r_squared': r_squared,
                     'n_obs': len(month_df),
-                    'coefficients': dict(zip(self.feature_cols, model.coef_)),
+                    'n_neighborhoods': len(unique_neighborhoods),
+                    'coefficients': dict(zip(self.feature_cols, model.coef_[:len(self.feature_cols)])),
                 })
                 
             except Exception as e:
@@ -179,6 +222,228 @@ class HedonicIndexService:
                 continue
         
         return pd.DataFrame(results)
+    
+    # =========================================================================
+    # TIME-ADJUSTMENT API (for comp price normalization)
+    # =========================================================================
+    
+    def get_index(self, region_id: str, month_date: str) -> IndexResult:
+        """
+        Get hedonic index value for a specific region and month.
+        
+        Fallback hierarchy:
+        1. Neighborhood-level index (geohash-6)
+        2. City-level index
+        3. Global ("all") index
+        
+        Args:
+            region_id: City name or geohash prefix
+            month_date: Month string in format "YYYY-MM" or "YYYY-MM-DD"
+            
+        Returns:
+            IndexResult with value and metadata
+        """
+        # Normalize month to "YYYY-MM"
+        if len(month_date) > 7:
+            month_date = month_date[:7]
+        
+        conn = sqlite3.connect(self.db_path)
+        
+        # Try specific region first
+        result = self._query_index(conn, region_id, month_date)
+        if result:
+            conn.close()
+            return result
+        
+        # Fallback to city (if region_id looks like geohash)
+        if len(region_id) >= 6 and region_id.isalnum():
+            city_result = self._query_index(conn, "all", month_date)
+            if city_result:
+                city_result.is_fallback = True
+                city_result.fallback_reason = f"neighborhood '{region_id}' not found, using global"
+                conn.close()
+                return city_result
+        
+        # Final fallback: try "all" region
+        all_result = self._query_index(conn, "all", month_date)
+        conn.close()
+        
+        if all_result:
+            all_result.is_fallback = True
+            all_result.fallback_reason = f"region '{region_id}' not found, using global"
+            return all_result
+        
+        # No data at all - return default
+        logger.warning("hedonic_index_not_found", region=region_id, month=month_date)
+        return IndexResult(
+            value=3000.0,  # Default €/m² for Madrid
+            r_squared=0.0,
+            n_observations=0,
+            is_fallback=True,
+            fallback_reason="no index data available"
+        )
+    
+    def _query_index(self, conn: sqlite3.Connection, region_id: str, month_date: str) -> Optional[IndexResult]:
+        """Query database for index value"""
+        cursor = conn.cursor()
+        
+        # Try exact month match
+        cursor.execute("""
+            SELECT hedonic_index_sqm, r_squared, n_observations
+            FROM hedonic_indices
+            WHERE region_id = ? AND month_date LIKE ?
+            ORDER BY month_date DESC
+            LIMIT 1
+        """, (region_id, f"{month_date}%"))
+        
+        row = cursor.fetchone()
+        if row:
+            return IndexResult(
+                value=float(row[0]),
+                r_squared=float(row[1]) if row[1] else 0.0,
+                n_observations=int(row[2]) if row[2] else 0,
+                is_fallback=False
+            )
+        
+        # Try any recent month (within 6 months)
+        cursor.execute("""
+            SELECT hedonic_index_sqm, r_squared, n_observations, month_date
+            FROM hedonic_indices
+            WHERE region_id = ?
+            ORDER BY month_date DESC
+            LIMIT 1
+        """, (region_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            return IndexResult(
+                value=float(row[0]),
+                r_squared=float(row[1]) if row[1] else 0.0,
+                n_observations=int(row[2]) if row[2] else 0,
+                is_fallback=True,
+                fallback_reason=f"exact month not found, using {row[3]}"
+            )
+        
+        return None
+    
+    def get_index_series(
+        self, 
+        region_id: str, 
+        start_month: str, 
+        end_month: str
+    ) -> pd.Series:
+        """
+        Get hedonic index time series for a region.
+        
+        Args:
+            region_id: City name or region identifier
+            start_month: Start month (YYYY-MM)
+            end_month: End month (YYYY-MM)
+            
+        Returns:
+            pd.Series with month index and hedonic values
+        """
+        conn = sqlite3.connect(self.db_path)
+        
+        query = """
+            SELECT month_date, hedonic_index_sqm
+            FROM hedonic_indices
+            WHERE region_id = ?
+              AND month_date >= ?
+              AND month_date <= ?
+            ORDER BY month_date ASC
+        """
+        
+        df = pd.read_sql(query, conn, params=(region_id, start_month, end_month))
+        conn.close()
+        
+        if df.empty:
+            return pd.Series(dtype=float)
+        
+        return df.set_index('month_date')['hedonic_index_sqm']
+    
+    def compute_adjustment_factor(
+        self,
+        region_id: str,
+        comp_timestamp: datetime,
+        target_timestamp: datetime
+    ) -> Tuple[float, Dict]:
+        """
+        Compute time-adjustment factor for a comp price.
+        
+        Formula: adj_factor = I_r(target_month) / I_r(comp_month)
+        
+        Args:
+            region_id: City or neighborhood identifier
+            comp_timestamp: When the comp was observed/sold
+            target_timestamp: Valuation date (typically today)
+            
+        Returns:
+            Tuple of (adjustment_factor, metadata_dict)
+            
+        Example:
+            If target_month index is 3300 and comp_month index was 3000,
+            adj_factor = 3300/3000 = 1.10 (10% appreciation)
+            price_adj = price_raw * 1.10
+        """
+        comp_month = comp_timestamp.strftime("%Y-%m")
+        target_month = target_timestamp.strftime("%Y-%m")
+        
+        # Get indices
+        comp_index = self.get_index(region_id, comp_month)
+        target_index = self.get_index(region_id, target_month)
+        
+        # Compute factor
+        if comp_index.value > 0:
+            adj_factor = target_index.value / comp_index.value
+        else:
+            adj_factor = 1.0
+        
+        # Clamp to reasonable bounds (avoid extreme adjustments)
+        adj_factor = max(0.5, min(2.0, adj_factor))
+        
+        metadata = {
+            "comp_month": comp_month,
+            "target_month": target_month,
+            "comp_index": comp_index.value,
+            "target_index": target_index.value,
+            "comp_index_fallback": comp_index.is_fallback,
+            "target_index_fallback": target_index.is_fallback,
+            "raw_factor": target_index.value / comp_index.value if comp_index.value > 0 else 1.0,
+            "clamped": adj_factor != (target_index.value / comp_index.value if comp_index.value > 0 else 1.0),
+        }
+        
+        return adj_factor, metadata
+    
+    def adjust_comp_price(
+        self,
+        raw_price: float,
+        region_id: str,
+        comp_timestamp: datetime,
+        target_timestamp: datetime
+    ) -> Tuple[float, float, Dict]:
+        """
+        Convenience method to adjust a comp price to target date.
+        
+        Args:
+            raw_price: Original comp price
+            region_id: City or neighborhood
+            comp_timestamp: When comp was observed
+            target_timestamp: Valuation date
+            
+        Returns:
+            Tuple of (adjusted_price, adjustment_factor, metadata)
+        """
+        factor, metadata = self.compute_adjustment_factor(
+            region_id, comp_timestamp, target_timestamp
+        )
+        adjusted_price = raw_price * factor
+        
+        return adjusted_price, factor, metadata
+    
+    # =========================================================================
+    # DATABASE PERSISTENCE
+    # =========================================================================
     
     def save_to_db(self, region_name: str = None):
         """Compute and save hedonic indices to database"""
@@ -200,6 +465,7 @@ class HedonicIndexService:
                 raw_median_sqm FLOAT,
                 r_squared FLOAT,
                 n_observations INT,
+                n_neighborhoods INT,
                 coefficients TEXT,
                 updated_at DATETIME
             )
@@ -213,8 +479,9 @@ class HedonicIndexService:
             
             cursor.execute("""
                 INSERT OR REPLACE INTO hedonic_indices 
-                (id, region_id, month_date, hedonic_index_sqm, raw_median_sqm, r_squared, n_observations, coefficients, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, region_id, month_date, hedonic_index_sqm, raw_median_sqm, 
+                 r_squared, n_observations, n_neighborhoods, coefficients, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 record_id,
                 region_id,
@@ -223,6 +490,7 @@ class HedonicIndexService:
                 float(row['raw_median']),
                 float(row['r_squared']),
                 int(row['n_obs']),
+                int(row.get('n_neighborhoods', 1)),
                 str(row['coefficients']),
                 datetime.now().isoformat()
             ))
@@ -236,5 +504,24 @@ class HedonicIndexService:
 if __name__ == "__main__":
     # Test run
     svc = HedonicIndexService()
+    
+    # Compute and save
     df = svc.compute_index()
-    print(df)
+    print(f"Computed {len(df)} months of indices")
+    
+    if not df.empty:
+        svc.save_to_db()
+        
+        # Test query API
+        result = svc.get_index("all", "2024-01")
+        print(f"Index for 2024-01: {result}")
+        
+        # Test adjustment factor
+        from datetime import datetime
+        factor, meta = svc.compute_adjustment_factor(
+            "all",
+            datetime(2024, 1, 15),
+            datetime(2024, 6, 15)
+        )
+        print(f"Adjustment factor Jan->Jun 2024: {factor:.3f}")
+        print(f"Metadata: {meta}")

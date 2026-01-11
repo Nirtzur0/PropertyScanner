@@ -8,6 +8,8 @@ from src.core.domain.schema import MarketProfile, ValuationProjection, Canonical
 
 logger = structlog.get_logger(__name__)
 
+
+class MarketAnalyticsService:
     """
     Computes market trends, liquidity scores, and value projections.
     Implements the "Triple-Signal" approach.

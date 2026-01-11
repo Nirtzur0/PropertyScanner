@@ -103,6 +103,52 @@ class DealAnalysis(BaseModel):
     # Forward-looking Logic
     projections: List["ValuationProjection"] = Field(default_factory=list)
     market_signals: Dict[str, float] = Field(default_factory=dict) # e.g. {"momentum": 0.8, "liquidity": 0.5}
+    
+    # SOTA V3: Structured evidence pack
+    evidence: Optional["EvidencePack"] = None
+
+
+class CompEvidence(BaseModel):
+    """
+    Evidence record for a single comparable used in valuation.
+    Captures time-adjustment and attention weight for auditability.
+    """
+    id: str
+    url: Optional[str] = None
+    observed_month: str  # YYYY-MM format
+    raw_price: float
+    adj_factor: float  # Time adjustment factor
+    adj_price: float  # raw_price * adj_factor
+    attention_weight: float  # From Fusion model
+    is_sold: bool = False
+    similarity_score: Optional[float] = None
+
+
+class EvidencePack(BaseModel):
+    """
+    Complete evidence pack for a valuation decision.
+    Provides full audit trail of what was used and how.
+    """
+    model_used: str  # "fusion", "tabular_ml", "heuristic"
+    
+    # Anchor computation
+    anchor_price: float  # Attention-weighted comp price
+    anchor_std: float  # Comp price standard deviation
+    
+    # Comps used (ordered by attention weight)
+    top_comps: List[CompEvidence] = Field(default_factory=list)
+    
+    # Fallback indicators
+    hedonic_fallback: bool = False
+    hedonic_fallback_reason: Optional[str] = None
+    
+    # Calibration status
+    calibration_status: str = "uncalibrated"  # "calibrated", "uncalibrated", "partial"
+    calibration_diagnostics: Optional[Dict[str, float]] = None
+    
+    # Timestamps
+    valuation_date: Optional[str] = None
+    comp_date_range: Optional[str] = None  # e.g. "2024-01 to 2024-06"
 
 class CompListing(BaseModel):
     id: str
