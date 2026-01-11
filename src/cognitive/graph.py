@@ -248,11 +248,23 @@ def evaluate_node(state: AgentState) -> Dict[str, Any]:
     # Evaluate top N listings (avoid rate limits)
     max_to_evaluate = min(len(state["canonical_listings"]), 10)
     
+    # Deduce strategy from query
+    query = state["query"].lower()
+    strategy = "balanced"
+    
+    if "airbnb" in query or "rental" in query or "income" in query or "cash flow" in query or "yield" in query:
+        strategy = "cash_flow_investor"
+    elif "cheap" in query or "deal" in query or "undervalued" in query or "bargain" in query or "flip" in query:
+        strategy = "bargain_hunter"
+    elif "safe" in query or "consistent" in query or "premium" in query:
+        strategy = "safe_bet"
+
     for listing in state["canonical_listings"][:max_to_evaluate]:
         try:
             result = evaluate_listing.invoke({
                 "listing": listing,
-                "num_comps": 5
+                "num_comps": 5,
+                "strategy": strategy
             })
             
             if result["status"] == "success" and result["data"]:

@@ -75,6 +75,8 @@ class CanonicalListing(BaseModel):
     
     # Media
     image_urls: List[HttpUrl] = Field(default_factory=list)
+    vlm_description: Optional[str] = None
+    image_embeddings: Optional[List[List[float]]] = None # Cached vector embeddings
     
     # Metadata
     listed_at: Optional[datetime] = None

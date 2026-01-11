@@ -311,8 +311,10 @@ class FusionModelService:
         self,
         target_text_embedding: np.ndarray,
         target_tabular_features: np.ndarray,
+        target_image_embedding: Optional[np.ndarray],
         comp_text_embeddings: List[np.ndarray],
         comp_tabular_features: List[np.ndarray],
+        comp_image_embeddings: List[np.ndarray],
         comp_prices: List[float]
     ) -> FusionOutput:
         """
@@ -321,8 +323,10 @@ class FusionModelService:
         Args:
             target_text_embedding: Text embedding (384D)
             target_tabular_features: Tabular features (8D)
+            target_image_embedding: Optional image embedding (512D)
             comp_text_embeddings: List of comp text embeddings
             comp_tabular_features: List of comp tabular features
+            comp_image_embeddings: List of comp image embeddings
             comp_prices: Actual prices of comparables
             
         Returns:
@@ -353,6 +357,9 @@ class FusionModelService:
         # Prepare target tensors
         target_tab = torch.from_numpy(target_tabular_features).unsqueeze(0).float()
         target_text = torch.from_numpy(target_text_embedding).unsqueeze(0).float()
+        target_image = None
+        if target_image_embedding is not None:
+            target_image = torch.from_numpy(target_image_embedding).unsqueeze(0).float()
         
         # Prepare comp tensors
         num_comps = min(len(comp_text_embeddings), 10)
@@ -360,6 +367,7 @@ class FusionModelService:
             num_comps = 1
             comp_text_embeddings = [np.zeros(self.config.get("text_dim", 384))]
             comp_tabular_features = [np.zeros(self.config.get("tabular_dim", 8))]
+            comp_image_embeddings = [np.zeros(self.config.get("image_dim", 512))]
             comp_prices = [300000.0]
             
         comp_tab = torch.stack([
@@ -368,12 +376,28 @@ class FusionModelService:
         comp_text = torch.stack([
             torch.from_numpy(e).float() for e in comp_text_embeddings[:num_comps]
         ]).unsqueeze(0)
+        
+        comp_image = None
+        if comp_image_embeddings and any(x is not None for x in comp_image_embeddings):
+            # Handle potentially mixed None/Array list
+            valid_emb = np.zeros(self.config.get("image_dim", 512))
+            clean_list = []
+            for item in comp_image_embeddings[:num_comps]:
+                if item is not None:
+                    clean_list.append(torch.from_numpy(item).float())
+                    valid_emb = item # Keep for shape
+                else:
+                    # Pad with zeros if missing
+                    dim = valid_emb.shape[0] if hasattr(valid_emb, 'shape') else 512
+                    clean_list.append(torch.zeros(dim).float())
+            comp_image = torch.stack(clean_list).unsqueeze(0)
+
         comp_prices_t = torch.tensor([comp_prices[:num_comps]])
         
         with torch.no_grad():
             price_q, rent_q, time_q, attn = self.model(
-                target_tab, target_text, None,
-                comp_tab, comp_text, None,
+                target_tab, target_text, target_image,
+                comp_tab, comp_text, comp_image,
                 comp_prices_t,
                 return_attention=True
             )

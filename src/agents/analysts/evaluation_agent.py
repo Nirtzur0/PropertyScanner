@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from src.agents.base import BaseAgent, AgentResponse
 from src.core.domain.schema import CanonicalListing, CompListing
+import numpy as np
 
 logger = structlog.get_logger()
 
@@ -22,6 +23,7 @@ class EvaluationRequest(BaseModel):
     forced_comps: Optional[List[CompListing]] = None
     num_comps: int = 10
     geo_radius_km: float = 5.0
+    strategy: str = "balanced"
 
 
 class ScoreBreakdown(BaseModel):
@@ -62,6 +64,59 @@ class EvaluationResult(BaseModel):
     # Metadata
     model_version: str = "fusion_v1"
     evaluated_at: datetime = Field(default_factory=datetime.now)
+    strategy_used: str = "balanced"
+
+class ScoringWeights(BaseModel):
+    """Weights for the deal scoring algorithm."""
+    undervaluation: float = 1.0
+    yield_proxy: float = 0.5
+    uncertainty_penalty: float = 0.3
+    data_quality_penalty: float = 0.2
+
+class ScoringStrategy(BaseModel):
+    """Defines a persona/strategy for evaluating deals."""
+    name: str
+    description: str
+    weights: ScoringWeights
+
+# Preset Strategies
+PRESET_STRATEGIES = {
+    "balanced": ScoringStrategy(
+        name="balanced",
+        description="Balanced approach between value and reliability.",
+        weights=ScoringWeights()
+    ),
+    "bargain_hunter": ScoringStrategy(
+        name="bargain_hunter",
+        description="Aggressively seeks undervalued properties, tolerant of updates needed.",
+        weights=ScoringWeights(
+            undervaluation=2.0,
+            yield_proxy=0.2,
+            uncertainty_penalty=0.1,
+            data_quality_penalty=0.1
+        )
+    ),
+    "cash_flow_investor": ScoringStrategy(
+        name="cash_flow_investor",
+        description="Optimizes for rental yield and immediate income (Airbnb/Rental).",
+        weights=ScoringWeights(
+            undervaluation=0.5,
+            yield_proxy=2.0,
+            uncertainty_penalty=0.5, # Dislike risk/vacancy
+            data_quality_penalty=0.3
+        )
+    ),
+    "safe_bet": ScoringStrategy(
+        name="safe_bet",
+        description="Prioritizes certainty and high data quality.",
+        weights=ScoringWeights(
+            undervaluation=0.8,
+            yield_proxy=0.4,
+            uncertainty_penalty=1.0,
+            data_quality_penalty=1.0
+        )
+    )
+}
 
 
 # ============ Agent ============
@@ -85,6 +140,10 @@ class EvaluationAgent(BaseAgent):
         # Lazy imports to avoid slow startup
         self._retriever = None
         self._encoder = None
+        self._retriever = None
+        self._encoder = None
+        self._tab_encoder = None
+        self._vision_encoder = None
         self._fusion = None
         self._enable_vision = enable_vision
 
@@ -98,9 +157,53 @@ class EvaluationAgent(BaseAgent):
             from src.services.encoders import TextEncoder
             self._encoder = TextEncoder()
             
+        if self._tab_encoder is None:
+            from src.services.encoders import TabularEncoder
+            self._tab_encoder = TabularEncoder()
+            
+        if self._vision_encoder is None and self._enable_vision:
+            try:
+                from src.services.encoders import VisionEncoder
+                self._vision_encoder = VisionEncoder()
+            except ImportError:
+                logger.warning("vision_encoder_import_failed")
+            
         if self._fusion is None:
             from src.services.fusion_model import FusionModelService
             self._fusion = FusionModelService()
+
+    def _extract_features(self, item: Any) -> Dict[str, float]:
+        """Extract tabular features from Listing or CompListing."""
+        features = {}
+        
+        # Handle CanonicalListing
+        if hasattr(item, 'property_type'):
+            features['bedrooms'] = float(item.bedrooms or 0)
+            features['bathrooms'] = float(item.bathrooms or 0)
+            features['surface_area_sqm'] = float(item.surface_area_sqm or 0)
+            features['floor'] = float(item.floor or 0)
+            if item.location:
+                features['lat'] = float(item.location.lat)
+                features['lon'] = float(item.location.lon)
+            
+            # Derived
+            if item.price and item.surface_area_sqm:
+                features['price_per_sqm'] = item.price / item.surface_area_sqm
+        
+        # Handle CompListing
+        elif hasattr(item, 'features'):
+            # CompListing features are already a flat dict usually
+            # But we might need to map them if names differ
+            features['bedrooms'] = float(item.features.get('bedrooms', 0))
+            features['bathrooms'] = float(item.features.get('bathrooms', 0))
+            features['surface_area_sqm'] = float(item.features.get('sqm', 0)) # Note 'sqm' key from CompRetriever
+            features['lat'] = float(item.features.get('lat', 0))
+            features['lon'] = float(item.features.get('lon', 0))
+            
+            if item.price and features['surface_area_sqm']:
+                features['price_per_sqm'] = item.price / features['surface_area_sqm']
+                
+        return features
 
     def _compute_deal_score(
         self,
@@ -109,7 +212,8 @@ class EvaluationAgent(BaseAgent):
         fair_value_q10: float,
         fair_value_q90: float,
         rent_q50: float,
-        missing_fields: int
+        missing_fields: int,
+        weights: ScoringWeights
     ) -> tuple:
         """
         Compute deal score from predictions.
@@ -132,10 +236,10 @@ class EvaluationAgent(BaseAgent):
         
         # Weighted combination
         raw_score = (
-            1.0 * undervaluation +
-            0.5 * yield_proxy -
-            0.3 * uncertainty_penalty -
-            0.2 * data_quality_penalty
+            weights.undervaluation * undervaluation +
+            weights.yield_proxy * yield_proxy -
+            weights.uncertainty_penalty * uncertainty_penalty -
+            weights.data_quality_penalty * data_quality_penalty
         )
         
         # Sigmoid normalization to [0, 1]
@@ -178,6 +282,26 @@ class EvaluationAgent(BaseAgent):
             f"({delta_pct:+.1f}% vs ask). Confidence: {confidence}."
         )
 
+    def _get_image_embedding(self, listing: Any) -> Optional[np.ndarray]:
+        """Get or compute image embedding."""
+        if not self._vision_encoder:
+            return None
+            
+        # Check cache (schema update required listing.image_embeddings)
+        if hasattr(listing, 'image_embeddings') and listing.image_embeddings:
+            # Return mean of cached embeddings
+            return np.mean(listing.image_embeddings, axis=0)
+            
+        # Compute if local paths exist (development mode)
+        # In production this would fetch from URL or use pre-computed
+        if hasattr(listing, 'image_urls') and listing.image_urls:
+             # Basic placeholder: if URLs are local file paths
+             local_paths = [u for u in listing.image_urls if os.path.exists(str(u))]
+             if local_paths:
+                 return self._vision_encoder.encode_images(local_paths)
+                 
+        return None
+
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         """
         Perform full evaluation of a listing.
@@ -196,22 +320,43 @@ class EvaluationAgent(BaseAgent):
             )
         
         # 2. Encode target
-        text = f"{listing.title or ''} {listing.description or ''}"
+        # Mix VLM description if available
+        desc = listing.description or ""
+        if listing.vlm_description:
+            desc = f"{desc} \nVision Context: {listing.vlm_description}"
+            
+        text = f"{listing.title or ''} {desc}"
         target_emb = self._encoder.encode_single(text)
+        target_feats = self._extract_features(listing)
+        target_tab = self._tab_encoder.encode(target_feats)
+        target_img = self._get_image_embedding(listing)
         
         # 3. Encode comps and get prices
         comp_embeddings = []
+        comp_tabulars = []
+        comp_images = []
         comp_prices = []
+        
         for c in comps:
             # Note: In production, we'd cache embeddings
             comp_emb = self._encoder.encode_single(str(c.id))
+            comp_feats = self._extract_features(c)
+            comp_tab = self._tab_encoder.encode(comp_feats)
+            comp_img = self._get_image_embedding(c) # Usually None for comps unless cached
+            
             comp_embeddings.append(comp_emb)
+            comp_tabulars.append(comp_tab)
+            comp_images.append(comp_img)
             comp_prices.append(c.price)
         
         # 4. Fusion model prediction
         fusion_output = self._fusion.predict(
-            target_embedding=target_emb,
-            comp_embeddings=comp_embeddings,
+            target_text_embedding=target_emb,
+            target_tabular_features=target_tab,
+            target_image_embedding=target_img,
+            comp_text_embeddings=comp_embeddings,
+            comp_tabular_features=comp_tabulars,
+            comp_image_embeddings=comp_images,
             comp_prices=comp_prices
         )
         
@@ -227,13 +372,18 @@ class EvaluationAgent(BaseAgent):
             len(listing.image_urls or []) == 0
         ])
         
+        # Resolve strategy
+        strategy_name = request.strategy
+        strategy = PRESET_STRATEGIES.get(strategy_name, PRESET_STRATEGIES["balanced"])
+        
         score, breakdown = self._compute_deal_score(
             ask_price=listing.price,
             fair_value_q50=fv_q.get("0.5", listing.price),
             fair_value_q10=fv_q.get("0.1", listing.price * 0.9),
             fair_value_q90=fv_q.get("0.9", listing.price * 1.1),
             rent_q50=rent_q.get("0.5", listing.price * 0.004),
-            missing_fields=missing_fields
+            missing_fields=missing_fields,
+            weights=strategy.weights
         )
         
         # 6. Generate thesis
@@ -276,7 +426,8 @@ class EvaluationAgent(BaseAgent):
             score_breakdown=breakdown,
             investment_thesis=thesis,
             evidence=evidence,
-            flags=flags
+            flags=flags,
+            strategy_used=strategy_name
         )
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
@@ -293,7 +444,8 @@ class EvaluationAgent(BaseAgent):
             request = EvaluationRequest(
                 listing=listing,
                 num_comps=input_payload.get("num_comps", 10),
-                geo_radius_km=input_payload.get("geo_radius_km", 5.0)
+                geo_radius_km=input_payload.get("geo_radius_km", 5.0),
+                strategy=input_payload.get("strategy", "balanced")
             )
             
             result = self.evaluate(request)
