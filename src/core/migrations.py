@@ -68,6 +68,30 @@ def run_migrations(db_path="data/listings.db"):
         logger.info("migration_geohash_added")
     except Exception:
         pass
+    
+    # 5. Hedonic Indices (SOTA V3)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hedonic_indices (
+            id TEXT PRIMARY KEY,
+            region_id TEXT,
+            month_date DATE,
+            hedonic_index_sqm FLOAT,
+            raw_median_sqm FLOAT,
+            r_squared FLOAT,
+            n_observations INT,
+            coefficients TEXT,
+            updated_at DATETIME
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_hedonic_region_date ON hedonic_indices (region_id, month_date)")
+    
+    # 6. Update macro_scenarios schema for SOTA V3 (cite-or-drop)
+    try:
+        conn.execute("ALTER TABLE macro_scenarios ADD COLUMN source_id TEXT")
+        conn.execute("ALTER TABLE macro_scenarios ADD COLUMN horizon_year INT")
+        conn.execute("ALTER TABLE macro_scenarios ADD COLUMN retrieved_at DATETIME")
+    except Exception:
+        pass
         
     conn.commit()
     conn.close()

@@ -41,7 +41,8 @@ class TestFullPipeline(unittest.TestCase):
                 vlm_description TEXT,
                 bedrooms INT,
                 bathrooms INT,
-                has_elevator INT
+                has_elevator INT,
+                floor INT
             )
         """)
         conn.execute("""
@@ -77,16 +78,16 @@ class TestFullPipeline(unittest.TestCase):
         # Seed Data
         # 1. Listings (representing 3 months of data)
         listings = [
-            ("L1", 300000, 100, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 2, 1, 1),
-            ("L2", 310000, 100, "madrid", "ezjmgu", "2024-02-01", "2024-02-15", "active", "[]", "desc", 2, 1, 1),
-            ("L3", 320000, 100, "madrid", "ezjmgu", "2024-03-01", "2024-03-15", "active", "[]", "desc", 2, 1, 1),
+            ("L1", 300000, 100, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 2, 1, 1, 2),
+            ("L2", 310000, 100, "madrid", "ezjmgu", "2024-02-01", "2024-02-15", "active", "[]", "desc", 2, 1, 1, 3),
+            ("L3", 320000, 100, "madrid", "ezjmgu", "2024-03-01", "2024-03-15", "active", "[]", "desc", 2, 1, 1, 4),
             # Neighbor
-            ("L4", 150000, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 1, 1, 0),
+            ("L4", 150000, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 1, 1, 0, 1),
         ]
         
         conn.executemany("""
-            INSERT INTO listings (id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, image_urls, vlm_description, bedrooms, bathrooms, has_elevator)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO listings (id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, image_urls, vlm_description, bedrooms, bathrooms, has_elevator, floor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, listings)
         
         # 2. Macro Data
