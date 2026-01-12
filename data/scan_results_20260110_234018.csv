@@ -1,0 +1,3 @@
+id,source_id,external_id,url,title,description,price,currency,property_type,bedrooms,bathrooms,surface_area_sqm,plot_area_sqm,energy_rating,floor,has_elevator,location,image_urls,listed_at,updated_at,status,tags
+fd20b3d3456a1fb328eeb82d90aafe81,idealista_local_test,12345,file:///Users/nirtzur/Documents/projects/property_scanner/tests/fixtures/idealista_sample.html/inmueble/12345/,"Piso en Calle de Atocha, Madrid",,450000.0,EUR,apartment,3,,120.0,,,,,,[],,2026-01-10 23:40:18.303376,active,[]
+465c9e1976d72fafbef6003aca9dc27e,idealista_local_test,67890,file:///Users/nirtzur/Documents/projects/property_scanner/tests/fixtures/idealista_sample.html/inmueble/67890/,Ático en Barrio de las Letras,,750000.0,EUR,apartment,2,,85.0,,,,,,[],,2026-01-10 23:40:18.303642,active,[]
