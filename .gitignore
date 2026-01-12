@@ -4,6 +4,7 @@ venv/
 env/
 
 # Data and snapshots
+*.db-journal
 
 # Python
 __pycache__/
