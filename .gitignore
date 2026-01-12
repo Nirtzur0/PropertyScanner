@@ -4,12 +4,6 @@ venv/
 env/
 
 # Data and snapshots
-*.sqlite3
-data/snapshots/
-data/models/
-data/vector_index.faiss
-data/*.png
-data/*.html
 
 # Python
 __pycache__/
