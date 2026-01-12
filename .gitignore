@@ -4,10 +4,6 @@ venv/
 env/
 
 # Data and snapshots
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
 *.sqlite3
 data/snapshots/
 data/models/
