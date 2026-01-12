@@ -173,6 +173,25 @@ class ImmobiliareNormalizerAgent(BaseAgent):
             status=ListingStatus.ACTIVE
         )
 
+        # Timestamps
+        if json_data.get("datePosted"):
+            from datetime import datetime
+            try:
+                # ISO format often used in schema.org: 2023-10-25T10:00:00+02:00
+                # We'll try generic parsing or specific if needed.
+                # For safety, let's use dateutil if available or simple split
+                dt_str = json_data["datePosted"]
+                # Quick fix for basic ISO
+                if "T" in dt_str:
+                     dt_part = dt_str.split("T")[0]
+                     canonical.listed_at = datetime.strptime(dt_part, "%Y-%m-%d")
+                else:
+                     canonical.listed_at = datetime.strptime(dt_str, "%Y-%m-%d")
+            except:
+                pass # Fail silently, keep None (will be set to fetched_at in storage)
+
+        return canonical
+
         if lat and lon:
             canonical.location = GeoLocation(
                 lat=lat,

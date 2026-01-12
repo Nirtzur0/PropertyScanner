@@ -42,6 +42,11 @@ class DBListing(Base):
     # Meta
     image_urls = Column(JSON, default=list)
     vlm_description = Column(Text, nullable=True) # VLM generated text
+    
+    # AI Analysis
+    sentiment_score = Column(Float, nullable=True) # -1.0 to 1.0 from DescriptionAnalyst
+    analysis_meta = Column(JSON, default=dict) # Full output from DescriptionAnalyst
+    
     tags = Column(JSON, default=list)
     
     listed_at = Column(DateTime, nullable=True)
@@ -49,6 +54,32 @@ class DBListing(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
     
     status = Column(String, default="active")
+    sold_at = Column(DateTime, nullable=True)
+    dom = Column(Integer, nullable=True) # Days on Market
     
     def __repr__(self):
         return f"<DBListing(id={self.id}, title={self.title}, price={self.price})>"
+
+class PropertyValuation(Base):
+    """
+    Stores the result of the valuation pipeline.
+    One listing can have multiple valuations over time (history).
+    """
+    __tablename__ = "valuations"
+    
+    id = Column(String, primary_key=True) # UUID
+    listing_id = Column(String, ForeignKey("listings.id"), index=True)
+    model_version = Column(String, default="v1.0")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Core Outputs
+    fair_value = Column(Float)
+    price_range_low = Column(Float)  # p10
+    price_range_high = Column(Float) # p90
+    confidence_score = Column(Float)
+    
+    # Structured Evidence (JSON)
+    # Stores: comps used, adjustments, thesis, signals
+    evidence = Column(JSON) 
+    
+    listing = relationship("DBListing", backref="valuations")

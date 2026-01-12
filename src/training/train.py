@@ -254,7 +254,8 @@ def train_model(
     num_comps: int = 5,
     patience: int = 10,
     val_split: float = 0.1,
-    device: str = "cpu"
+    device: str = "cpu",
+    use_vlm: bool = True
 ) -> Dict[str, Any]:
     """
     High-level training function.
@@ -268,6 +269,7 @@ def train_model(
         patience: Early stopping patience
         val_split: Fraction for validation
         device: Device to train on
+        use_vlm: Whether to use VLM
     """
     if not TORCH_AVAILABLE:
         raise RuntimeError("PyTorch not available. Install with: pip install torch")
@@ -277,7 +279,8 @@ def train_model(
         db_path=db_path,
         batch_size=batch_size,
         num_comps=num_comps,
-        val_split=val_split
+        val_split=val_split,
+        use_vlm=use_vlm
     )
     
     # Create compact model (92k params)
@@ -317,6 +320,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--val-split", type=float, default=0.1)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
+    parser.add_argument("--no-vlm", action="store_true", help="Disable VLM")
     
     args = parser.parse_args()
     
@@ -327,7 +331,8 @@ if __name__ == "__main__":
         lr=args.lr,
         patience=args.patience,
         val_split=args.val_split,
-        device=args.device
+        device=args.device,
+        use_vlm=not args.no_vlm
     )
     
     print(f"\nTraining complete!")

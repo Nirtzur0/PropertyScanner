@@ -19,7 +19,7 @@ References:
 """
 
 import structlog
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
 from dataclasses import dataclass
 import numpy as np
@@ -115,7 +115,8 @@ class ValuationService:
         self, 
         listing: CanonicalListing, 
         comps: List[CanonicalListing] = None,
-        valuation_date: datetime = None
+        valuation_date: datetime = None,
+        tracer: Any = None
     ) -> DealAnalysis:
         """
         Generates a fair value estimate with full evidence pack.
@@ -130,71 +131,102 @@ class ValuationService:
         """
         valuation_date = valuation_date or datetime.now()
         
-        # Get region for index lookups
-        region_id = self._get_region_id(listing)
+        if tracer:
+            tracer.start_trace(listing.id)
+            tracer.log("input_listing", listing)
+            tracer.log("input_comps_count", len(comps) if comps else 0)
         
-        # =====================================================================
-        # STAGE 1: SPOT VALUATION ("Today's Fair Value")
-        # =====================================================================
-        
-        fair_value, uncertainty, evidence = self._compute_spot_value(
-            listing, comps, region_id, valuation_date
-        )
-        
-        # Apply conformal calibration to spot estimate
-        if evidence.model_used == "fusion" and self.calibrators.is_calibrated(0):
-            cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
-                fair_value * (1 - uncertainty),
-                fair_value,
-                fair_value * (1 + uncertainty),
-                horizon_months=0
+        try:
+            # Get region for index lookups
+            region_id = self._get_region_id(listing)
+            
+            # =====================================================================
+            # STAGE 1: SPOT VALUATION ("Today's Fair Value")
+            # =====================================================================
+            
+            fair_value, uncertainty, evidence = self._compute_spot_value(
+                listing, comps, region_id, valuation_date, tracer
             )
-            # Recalculate uncertainty from calibrated interval
-            if cal_q50 > 0:
-                uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
-            evidence.calibration_status = "calibrated"
-        
-        # =====================================================================
-        # STAGE 2: DEAL SCORING
-        # =====================================================================
-        
-        score, flags = self._compute_deal_score(
-            listing, fair_value, uncertainty, evidence
-        )
-        
-        # =====================================================================
-        # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
-        # =====================================================================
-        
-        projections = self._compute_projections(
-            fair_value, region_id, valuation_date
-        )
-        
-        # =====================================================================
-        # STAGE 4: MARKET SIGNALS
-        # =====================================================================
-        
-        market_signals = self._get_market_signals(listing)
-        
-        # =====================================================================
-        # BUILD RESULT
-        # =====================================================================
-        
-        thesis = self._generate_thesis(
-            listing, fair_value, uncertainty, evidence, score
-        )
-        
-        return DealAnalysis(
-            listing_id=listing.id,
-            fair_value_estimate=fair_value,
-            fair_value_uncertainty_pct=uncertainty,
-            deal_score=score,
-            flags=flags,
-            investment_thesis=thesis,
-            projections=projections,
-            market_signals=market_signals,
-            evidence=evidence
-        )
+            
+            if tracer:
+                tracer.log("spot_valuation_raw", {
+                    "fair_value": fair_value,
+                    "uncertainty": uncertainty,
+                    "model_used": evidence.model_used
+                })
+            
+            # Apply conformal calibration to spot estimate
+            if evidence.model_used == "fusion" and self.calibrators.is_calibrated(0):
+                if tracer:
+                    tracer.log("calibration_spot_before", {
+                        "q10": fair_value * (1 - uncertainty),
+                        "q50": fair_value,
+                        "q90": fair_value * (1 + uncertainty)
+                    })
+    
+                cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
+                    fair_value * (1 - uncertainty),
+                    fair_value,
+                    fair_value * (1 + uncertainty),
+                    horizon_months=0
+                )
+                
+                if tracer:
+                    tracer.log("calibration_spot_after", {
+                        "q10": cal_q10,
+                        "q50": cal_q50,
+                        "q90": cal_q90
+                    })
+    
+                # Recalculate uncertainty from calibrated interval
+                if cal_q50 > 0:
+                    uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
+                evidence.calibration_status = "calibrated"
+            
+            # =====================================================================
+            # STAGE 2: DEAL SCORING
+            # =====================================================================
+            
+            score, flags = self._compute_deal_score(
+                listing, fair_value, uncertainty, evidence
+            )
+            
+            # =====================================================================
+            # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
+            # =====================================================================
+            
+            projections = self._compute_projections(
+                fair_value, region_id, valuation_date
+            )
+            
+            # =====================================================================
+            # STAGE 4: MARKET SIGNALS
+            # =====================================================================
+            
+            market_signals = self._get_market_signals(listing)
+            
+            # =====================================================================
+            # BUILD RESULT
+            # =====================================================================
+            
+            thesis = self._generate_thesis(
+                listing, fair_value, uncertainty, evidence, score
+            )
+            
+            return DealAnalysis(
+                listing_id=listing.id,
+                fair_value_estimate=fair_value,
+                fair_value_uncertainty_pct=uncertainty,
+                deal_score=score,
+                flags=flags,
+                investment_thesis=thesis,
+                projections=projections,
+                market_signals=market_signals,
+                evidence=evidence
+            )
+        finally:
+            if tracer:
+                tracer.end_trace()
     
     # =========================================================================
     # SPOT VALUATION
@@ -205,7 +237,8 @@ class ValuationService:
         listing: CanonicalListing,
         comps: Optional[List[CanonicalListing]],
         region_id: str,
-        valuation_date: datetime
+        valuation_date: datetime,
+        tracer: Any = None
     ) -> Tuple[float, float, EvidencePack]:
         """
         Compute today's fair value using tiered approach.
@@ -219,7 +252,7 @@ class ValuationService:
         # Try Fusion Model first
         if comps and len(comps) >= self.config.min_comps_for_fusion:
             result = self._try_fusion_valuation(
-                listing, comps, region_id, valuation_date
+                listing, comps, region_id, valuation_date, tracer
             )
             if result:
                 return result
@@ -237,7 +270,8 @@ class ValuationService:
         listing: CanonicalListing,
         comps: List[CanonicalListing],
         region_id: str,
-        valuation_date: datetime
+        valuation_date: datetime,
+        tracer: Any = None
     ) -> Optional[Tuple[float, float, EvidencePack]]:
         """
         Attempt Fusion Model valuation with time-adjusted comps.
@@ -275,6 +309,13 @@ class ValuationService:
                     is_sold=comp.status.value == "sold" if comp.status else False
                 ))
             
+            if tracer:
+                tracer.log("fusion_time_adjustment", {
+                    "comps_count": len(adjusted_comps),
+                    "sample_adj_factors": [c['adj_factor'] for c in adjusted_comps[:5]],
+                    "sample_meta": [c['meta'] for c in adjusted_comps[:5]]
+                })
+
             # TODO: Get embeddings from cache/encode
             # For now, use fallback in fusion model
             adj_prices = [c['adj_price'] for c in adjusted_comps]
@@ -283,10 +324,16 @@ class ValuationService:
             anchor_price = np.mean(adj_prices)
             anchor_std = np.std(adj_prices) if len(adj_prices) > 1 else anchor_price * 0.1
             
+            if tracer:
+                tracer.log("fusion_anchor", {"anchor": anchor_price, "std": anchor_std})
+
             # Quantiles from comp distribution
             q10 = np.percentile(adj_prices, 10)
             q50 = np.median(adj_prices)
             q90 = np.percentile(adj_prices, 90)
+            
+            if tracer:
+                tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
             
             # Adjust for target size if different from median comp
             # TODO: Implement proper residual prediction

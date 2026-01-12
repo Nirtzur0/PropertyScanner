@@ -66,26 +66,35 @@ ollama pull llava
 ```
 
 ### Usage
+All commands below assume you're in the project root.
 
-#### 1. Collect Data
-Start the crawler agent to populate your database.
+#### 1. Collect Data (Real Listings)
+Crawl active listings from real estate portals.
 ```bash
-# Runs the full extraction pipeline for configured cities
-poetry run python src/main.py
+./venv/bin/python src/training/collect_data.py --target 50
 ```
 
-#### 2. VLM Enrichment (The Magic)
-Run the inspector to let the AI "see" the properties you've collected.
+#### 2. Train Models (Valuation + Trends)
+Train the multimodal Fusion Model (Price) and TFT Forecaster (Trends).
 ```bash
-# Processes listings missing visual descriptions
-poetry run python src/training/preprocess_vlm.py
+# 2a. Train Valuation Model (requires "ollama serve" for VLM)
+./venv/bin/python src/training/train.py --epochs 10
+
+# 2b. Train Forecasting Model
+./venv/bin/python src/training/forecasting_tft.py
 ```
 
-#### 3. Train the Brain
-Train the valuation model on your local market data.
+#### 3. Run QA Verification
+Validate the pipeline logic (monotonicity, hedonic adjustments, conformal coverage) on real data.
 ```bash
-# Trains for 100 epochs with early stopping
-poetry run python src/training/train.py
+./venv/bin/python scripts/run_e2e_realdata_test.py --size 10
+```
+> Outputs JSON/HTML reports to `qa_reports/`.
+
+#### 4. Launch Dashboard
+Visualize valuations, comps, and AI descriptions.
+```bash
+./venv/bin/streamlit run src/dashboard.py
 ```
 
 ---

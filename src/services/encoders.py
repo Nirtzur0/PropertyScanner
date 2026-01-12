@@ -189,7 +189,8 @@ class TabularEncoder:
         # Note: price is NOT included - it's the target variable we're predicting
         self.feature_names = feature_names or [
             'bedrooms', 'bathrooms', 'surface_area_sqm', 
-            'year_built', 'floor', 'lat', 'lon', 'price_per_sqm'
+            'year_built', 'floor', 'lat', 'lon', 'price_per_sqm',
+            'sentiment_score'
         ]
         self.dimension = len(self.feature_names)
         

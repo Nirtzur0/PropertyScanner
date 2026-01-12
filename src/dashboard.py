@@ -1,3 +1,12 @@
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# Prevent Mac OMP segfaults
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+
 import streamlit as st
 import pandas as pd
 from src.services.storage import StorageService
@@ -29,8 +38,19 @@ min_score = st.sidebar.slider("Min Deal Score", 0.0, 1.0, 0.5, step=0.05)
 session = storage.get_session()
 df = pd.DataFrame()
 try:
-    # Fetch all listings
-    listings_db = session.query(DBListing).all()
+    # Filter by City Strategy
+    available_cities = [c[0] for c in session.query(DBListing.city).distinct().all() if c[0]]
+    available_cities.sort()
+    
+    selected_city = st.sidebar.selectbox("Filter by City", ["All"] + available_cities)
+    
+    # Query Builder
+    query = session.query(DBListing)
+    if selected_city != "All":
+        query = query.filter(DBListing.city == selected_city)
+    
+    # Fetch filtered listings
+    listings_db = query.all()
     
     # Convert to Domain Objects & Score on the Fly
     data = []
@@ -44,7 +64,7 @@ try:
         loc = GeoLocation(
             lat=db_item.lat, 
             lon=db_item.lon, 
-            address_full=db_item.address_full,
+            address_full=db_item.address_full or "Unknown Address",
             city=db_item.city or "Unknown",
             country="ES" 
         ) if db_item.lat else None
@@ -55,6 +75,7 @@ try:
             external_id=db_item.external_id,
             url=str(db_item.url),
             title=db_item.title,
+            description=db_item.description, # Ensure description flows through
             price=db_item.price,
             property_type=db_item.property_type or "apartment",
             bedrooms=db_item.bedrooms,
@@ -63,12 +84,34 @@ try:
             image_urls=db_item.image_urls
         )
         
-        # Retrieval
-        comps = retriever.retrieve_comps(listing, k=3)
+        # Lazy Valuation Check
+        from src.services.valuation_persister import ValuationPersister
+        from src.services.valuation import DealAnalysis
+        from src.core.domain.schema import ValuationProjection, EvidencePack
         
-        # Valuation (with Comps)
-        analysis = valuation.evaluate_deal(listing, comps=comps)
+        persister = ValuationPersister(session)
+        cached_val = persister.get_latest_valuation(db_item.id)
         
+        if cached_val:
+            # Reconstruct Analysis from Cache (Lite Version)
+            projections = [ValuationProjection(**p) for p in cached_val.evidence.get("projections", [])]
+            analysis = DealAnalysis(
+                property_id=db_item.id,
+                listing_id=db_item.id,
+                fair_value_estimate=cached_val.fair_value,
+                fair_value_uncertainty_pct=0.10, # Placeholder or from price_range
+                deal_score=cached_val.confidence_score, # Mapping confidence to score for demo
+                investment_thesis=cached_val.evidence.get("thesis", "Cached Analysis"),
+                market_signals=cached_val.evidence.get("signals", {}),
+                projections=projections,
+                evidence=None # Simplified for UI
+            )
+            comps = [] # Can't easily reconstruct comps list without full deserialization
+        else:
+             # Live Valuation Fallback
+            comps = retriever.retrieve_comps(listing, k=3)
+            analysis = valuation.evaluate_deal(listing, comps=comps)
+
         data.append({
             "ID": listing.id,
             "Title": listing.title,
@@ -84,16 +127,18 @@ try:
             "lon": listing.location.lon if listing.location else None,
             "Image": listing.image_urls[0] if listing.image_urls else None,
             "Images": listing.image_urls,
+            "Desc": listing.description,
             "VLM Desc": listing.vlm_description,
             "Projections": analysis.projections,
             "Signals": analysis.market_signals,
-            "Comps": comps # Store for UI
+            "Comps": comps if comps else [] # Handle empty for cached
         })
         
         if listings_db:
             progress_bar.progress((i + 1) / len(listings_db))
         
     df = pd.DataFrame(data)
+    
     if listings_db:
         progress_bar.empty()
 
@@ -122,9 +167,54 @@ else:
 
     with tab1:
         # Streamlit Map requires lat/lon columns and no NaNs
-        map_data = filtered_df.dropna(subset=['lat', 'lon'])
+        map_data = filtered_df.dropna(subset=['lat', 'lon']).copy()
+        
         if not map_data.empty:
-            st.map(map_data, size=20, color="#00ff00") # Green dots
+            # Assign colors based on City
+            unique_cities = map_data['City'].unique()
+            # Simple palette generator (hash based or cycle)
+            import random
+            
+            # Fixed seed for consistency
+            def get_color(name):
+                random.seed(name)
+                return [random.randint(50, 255), random.randint(50, 255), random.randint(50, 255), 200]
+            
+            city_colors = {city: get_color(city) for city in unique_cities}
+            map_data['color'] = map_data['City'].map(city_colors)
+            
+            import pydeck as pdk
+            
+            st.pydeck_chart(pdk.Deck(
+                map_style='mapbox://styles/mapbox/light-v9',
+                initial_view_state=pdk.ViewState(
+                    latitude=map_data['lat'].mean(),
+                    longitude=map_data['lon'].mean(),
+                    zoom=11,
+                    pitch=50,
+                ),
+                layers=[
+                    pdk.Layer(
+                        'ScatterplotLayer',
+                        data=map_data,
+                        get_position='[lon, lat]',
+                        get_color='color',
+                        get_radius=200,
+                        pickable=True,
+                        auto_highlight=True
+                    ),
+                ],
+                tooltip={"html": "<b>{Title}</b><br/>{City}<br/>{Price:.0f}€", "style": {"backgroundColor": "steelblue", "color": "white"}}
+            ))
+            
+            # Legend
+            st.caption("City Legend:")
+            legend_cols = st.columns(len(unique_cities)) if len(unique_cities) < 6 else st.columns(6)
+            for i, city in enumerate(unique_cities):
+                col = legend_cols[i % 6]
+                c = city_colors[city]
+                col.color_picker(city, f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}", disabled=True, key=f"legend_{i}")
+                
         else:
             st.info("No geocoded listings to display on map. (Are you running 'IdealistaNormalizer' correctly?)")
 
@@ -156,10 +246,10 @@ else:
                 if item["Images"]:
                     # Create a carousel-like experience using tabs or just a list of images
                     # Or just the main image for now with an expander for more
-                    st.image(item["Images"][0], use_column_width=True, caption="Main Image")
+                    st.image(str(item["Images"][0]), use_column_width=True, caption="Main Image")
                     with st.expander(f"📷 See {len(item['Images'])} Photos"):
                         for img in item["Images"]:
-                            st.image(img, use_column_width=True)
+                            st.image(str(img), use_column_width=True)
                 else:
                     st.markdown("📷 *No Image Available*")
                 
@@ -179,9 +269,17 @@ else:
                 
                 st.info(f"**Thesis:** {item['Thesis']}")
                 
-                # VLM Description
-                if item["VLM Desc"]:
-                    st.markdown(f"**👁️ AI Vision Analysis:**\n> *{item['VLM Desc']}*")
+                # Descriptions Tab
+                tab_desc, tab_vlm = st.tabs(["📄 Original Description", "👁️ AI Vision Analysis"])
+                
+                with tab_desc:
+                    st.text_area("Source Text", item.get("Desc", "No description available."), height=150)
+                
+                with tab_vlm:
+                    if item["VLM Desc"]:
+                        st.markdown(f"> *{item['VLM Desc']}*")
+                    else:
+                        st.caption("No visual analysis available.")
                 
                 st.markdown(f"[View Listing]({item['URL']})")
                 

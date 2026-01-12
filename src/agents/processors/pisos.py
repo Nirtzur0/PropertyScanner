@@ -202,6 +202,20 @@ class PisosNormalizerAgent(BaseAgent):
                 country="ES" 
             )
 
+        # Timestamps (Source)
+        if json_data.get("datePosted"):
+            from datetime import datetime
+            try:
+                # e.g. "2023-11-15T00:00:00"
+                dt_str = json_data["datePosted"]
+                if "T" in dt_str:
+                     dt_part = dt_str.split("T")[0]
+                     canonical.listed_at = datetime.strptime(dt_part, "%Y-%m-%d")
+                else:
+                     canonical.listed_at = datetime.strptime(dt_str, "%Y-%m-%d")
+            except:
+                pass
+
         return canonical
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:

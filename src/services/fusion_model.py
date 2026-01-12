@@ -145,8 +145,10 @@ if TORCH_AVAILABLE:
             comp_tab: torch.Tensor,
             comp_text: torch.Tensor,
             comp_image: Optional[torch.Tensor],
+
             comp_prices: torch.Tensor,
-            return_attention: bool = False
+            return_attention: bool = False,
+            comp_doms: Optional[torch.Tensor] = None
         ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
             """
             Forward pass with retrieval-augmented reasoning.
@@ -215,8 +217,16 @@ if TORCH_AVAILABLE:
             rent_std = rent_base * 0.2  # 20% variation
             rent_q = rent_base + rent_residuals * rent_std
             
-            # Time to sell (days) - base ~90 days
-            time_base = torch.full_like(price_anchor, 90.0)
+            # Time to sell (days) - base depends on market velocity
+            # If we know the DOM of comps, we use their average as the baseline
+            if comp_doms is not None and len(comp_doms) > 0:
+                 # Calculate mean of valid DOMs (ignore -1 or None if passed as tensor)
+                 # Here assuming comp_doms is a tensor of shape (B, K)
+                 # Simplified: take the mean of the anchor price concept but for time
+                 time_base = comp_doms.mean(dim=-1, keepdim=True).clamp(min=10.0) # (B, 1)
+            else:
+                 time_base = torch.full_like(price_anchor, 90.0)
+            
             time_residuals = self.time_head(reasoned)
             time_q = time_base + time_residuals * 30.0  # +/- 30 days adjustment
             
@@ -315,7 +325,9 @@ class FusionModelService:
         comp_text_embeddings: List[np.ndarray],
         comp_tabular_features: List[np.ndarray],
         comp_image_embeddings: List[np.ndarray],
-        comp_prices: List[float]
+
+        comp_prices: List[float],
+        comp_doms: List[float] = None # Added inputs
     ) -> FusionOutput:
         """
         Make predictions for a target listing.
@@ -394,12 +406,21 @@ class FusionModelService:
 
         comp_prices_t = torch.tensor([comp_prices[:num_comps]])
         
+        # Prepare DOMs
+        comp_doms_t = None
+        if comp_doms:
+            # Handle potentially fewer comps
+            valid_doms = comp_doms[:num_comps]
+            if not valid_doms: valid_doms = [90.0]
+            comp_doms_t = torch.tensor([valid_doms]).float() # (1, K)
+
         with torch.no_grad():
             price_q, rent_q, time_q, attn = self.model(
                 target_tab, target_text, target_image,
                 comp_tab, comp_text, comp_image,
                 comp_prices_t,
-                return_attention=True
+                return_attention=True,
+                comp_doms=comp_doms_t
             )
         
         return FusionOutput(

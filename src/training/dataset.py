@@ -425,7 +425,8 @@ def create_dataloaders(
     batch_size: int = 32,
     num_comps: int = 5,
     val_split: float = 0.1,
-    num_workers: int = 0
+    num_workers: int = 0,
+    use_vlm: bool = True
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Create train and validation dataloaders from the database.
@@ -436,8 +437,9 @@ def create_dataloaders(
         num_comps: Number of comparables per sample
         val_split: Fraction of data to use for validation
         num_workers: Number of data loading workers
+        use_vlm: Whether to use VLM for image descriptions
     """
-    dataset = PropertyDataset(db_path=db_path, num_comps=num_comps)
+    dataset = PropertyDataset(db_path=db_path, num_comps=num_comps, use_vlm=use_vlm)
     
     # Split into train/val
     n = len(dataset)
