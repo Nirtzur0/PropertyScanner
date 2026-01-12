@@ -17,8 +17,20 @@ At the heart of the system is the **PropertyFusionModel**, a custom PyTorch arch
 *   **Text & Context**: Title and descriptions encoded into dense vectors using **SentenceTransformers** (`all-MiniLM-L6-v2`).
 *   **Visual Intelligence (VLM)**:
     *   We don't just crop images. We *read* them.
-    *   A local **Ollama** agent (running LLaVA/BakLLaVA) acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition, finishes, and architectural style.
-    *   These VLM insights are fused with the listing text before embedding.
+    *   A local **Ollama** agent (running **LLaVA**) acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition, finishes, and architectural style.
+*   **Semantic Extraction**:
+    *   **LLaMA 3** is used to parse messy crawler text into clean, structured facts (like `has_elevator`) and perform critical sentiment analysis to filter out "marketing fluff."
+
+### 🤖 The Model Stack
+The project relies on a modular set of specialized AI models:
+
+| Task | Model | Platform | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Logic/Cleaning** | `llama3` | Ollama | Parses descriptions, extracts facts, and assigns sentiment. |
+| **Visuals** | `llava` | Ollama | Transcribes property photos into descriptive text. |
+| **Encoding** | `all-MiniLM-L6-v2` | PyTorch | Converts text into 384D mathematical vectors. |
+| **Similarity** | `ViT-B-32` | OpenCLIP | (Optional) Direct image vector encoding for search. |
+| **Predictions** | `PropertyFusionModel`| PyTorch | The custom "Reasoning" model that predicts fair value. |
 
 ### 2. The Logic (Architecture)
 *   **Market Awareness**: The model doesn't look at a property in isolation. It takes standard comps (comparable listings) and learns the *relationship* between the target property and its market context using a **Transformer-based Cross-Attention** mechanism.
@@ -61,8 +73,9 @@ cd property_scanner
 # 2. Install dependencies
 poetry install
 
-# 3. Pull the VLM model
+# 3. Pull the required models
 ollama pull llava
+ollama pull llama3
 ```
 
 ### Usage
