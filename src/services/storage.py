@@ -77,6 +77,11 @@ class StorageService:
                     db_item.surface_area_sqm = item.surface_area_sqm
                     db_item.updated_at = item.updated_at
                     
+                    # Explicit field mapping
+                    if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
+                    if item.floor is not None: db_item.floor = item.floor
+                    if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
+                    
                     # Fix: Persist Description
                     if item.description:
                          db_item.description = item.description

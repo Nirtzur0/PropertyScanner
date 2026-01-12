@@ -117,6 +117,49 @@ class PisosNormalizerAgent(BaseAgent):
                 elif "m²" in txt or "m2" in txt:
                     sqm = parse_eu_float(txt)
         
+        # --- NEW: Extended Features (Bathrooms, Floor, Elevator) ---
+        bathrooms = None
+        floor = None
+        has_elevator = None
+        
+        # 1. Parse bathrooms from chars list if present (e.g. "2 baños")
+        if not bathrooms:
+             for c in chars:
+                 txt = c.get_text(strip=True).lower()
+                 if "baño" in txt:
+                     bathrooms = int(re.sub(r'[^\d]', '', txt) or 0)
+
+        # 2. Parse from Feature Blocks (Generic) if still missing
+        if not bathrooms or floor is None or has_elevator is None:
+             feature_blocks = soup.select("div.features__feature")
+             all_features_text = soup.select("div.features__value, li.features__list-item")
+             
+             # Convert all feature texts to a huge string for easy regex if structure fails
+             full_feat_text = " ".join([el.get_text(separator=" ", strip=True).lower() for el in (feature_blocks + all_features_text)])
+             
+             if not bathrooms:
+                 # "2 baños"
+                 m = re.search(r'(\d+)\s*baño', full_feat_text)
+                 if m: bathrooms = int(m.group(1))
+                 
+             if floor is None:
+                 # "Planta 3ª", "Bajo", "3er piso"
+                 if "bajo" in full_feat_text:
+                     floor = 0
+                 else:
+                     m = re.search(r'planta\s*(\d+)', full_feat_text)
+                     if m: floor = int(m.group(1))
+                     
+             if has_elevator is None:
+                 if "con ascensor" in full_feat_text:
+                     has_elevator = True
+                 elif "sin ascensor" in full_feat_text:
+                     has_elevator = False
+                 # Often just "Ascensor" listed means true
+                 elif "ascensor" in full_feat_text:
+                     has_elevator = True
+
+        
         # Description Extraction (New!)
         description = ""
         # 1. Try description container
@@ -188,6 +231,12 @@ class PisosNormalizerAgent(BaseAgent):
             bedrooms=bedrooms,
             surface_area_sqm=sqm,
             image_urls=image_urls,
+            
+            # New Extended Fields
+            bathrooms=bathrooms,
+            floor=floor,
+            has_elevator=has_elevator,
+            
             status=ListingStatus.ACTIVE
         )
         

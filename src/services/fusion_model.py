@@ -61,7 +61,7 @@ if TORCH_AVAILABLE:
         """
         def __init__(
             self,
-            tabular_dim: int = 8,
+            tabular_dim: int = 10,
             text_dim: int = 384,
             image_dim: int = 512,
             hidden_dim: int = 64,  # Reduced from 256 for smaller model
@@ -294,7 +294,7 @@ class FusionModelService:
                 self.config = json.load(f)
         else:
             self.config = {
-                "tabular_dim": 8,
+                "tabular_dim": 10,
                 "text_dim": 384,
                 "image_dim": 512,
                 "hidden_dim": 256,
