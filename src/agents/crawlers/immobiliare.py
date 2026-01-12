@@ -49,56 +49,55 @@ class ImmobiliareCrawlerAgent(BaseAgent):
 
             listing_urls = []
             
-            # --- Step 1: Search Page ---
-            try:
-                self.logger.info("navigating_search", url=start_url)
-                page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
-                
-                # Handling Cookie Consent (common in EU)
+            # --- Input Strategy ---
+            if input_payload.get("target_urls"):
+                listing_urls = input_payload["target_urls"]
+                self.logger.info("direct_crawl_mode", count=len(listing_urls))
+            else:
+                # --- Step 1: Search Page ---
                 try:
-                    # Generic guess for cookie buttons
-                    page.get_by_text("Accetta", exact=True).click(timeout=3000)
-                except:
-                    pass
-
-                # Wait for listings
-                # Immobiliare uses .in-realEstateResults__list or .nd-list
-                # Items: .in-card or .nd-mediaObject
-                try:
-                    # Wait for generally any likely container
-                    page.wait_for_selector("li.nd-list__item, div.in-card, li.in-realEstateResults__item", timeout=10000)
-                except TimeoutError:
-                    self.logger.warning("timeout_waiting_listings")
-
-                # Extract URLs
-                # We try multiple selectors to be robust
-                anchors = page.locator("li.nd-list__item a.in-card__title, li.in-realEstateResults__item a.in-card__title").all()
-                
-                if not anchors:
-                    # Fallback for updated UI
-                    anchors = page.locator("a.in-reListCard__title").all()
-                
-                self.logger.info("items_found", count=len(anchors))
-                
-                for a in anchors:
-                    href = a.get_attribute("href")
-                    if href:
-                         listing_urls.append(href)
-                         
-                # Deduplicate
-                listing_urls = list(set(listing_urls))
-
-            except Exception as e:
-                errors.append(f"Search page error: {e}")
-                self.logger.error("search_failed", error=str(e))
+                    self.logger.info("navigating_search", url=start_url)
+                    page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
+                    
+                    # Handling Cookie Consent (common in EU)
+                    try:
+                        # Generic guess for cookie buttons
+                        page.get_by_text("Accetta", exact=True).click(timeout=3000)
+                    except:
+                        pass
+    
+                    # Wait for listings
+                    try:
+                        # Wait for generally any likely container
+                        page.wait_for_selector("li.nd-list__item, div.in-card, li.in-realEstateResults__item", timeout=10000)
+                    except TimeoutError:
+                        self.logger.warning("timeout_waiting_listings")
+    
+                    # Extract URLs
+                    anchors = page.locator("li.nd-list__item a.in-card__title, li.in-realEstateResults__item a.in-card__title").all()
+                    
+                    if not anchors:
+                        # Fallback for updated UI
+                        anchors = page.locator("a.in-reListCard__title").all()
+                    
+                    self.logger.info("items_found", count=len(anchors))
+                    
+                    for a in anchors:
+                        href = a.get_attribute("href")
+                        if href:
+                             listing_urls.append(href)
+                             
+                    # Deduplicate
+                    listing_urls = list(set(listing_urls))
+    
+                except Exception as e:
+                    errors.append(f"Search page error: {e}")
+                    self.logger.error("search_failed", error=str(e))
 
             # --- Step 2: Detail Pages ---
             self.logger.info("visiting_details", count=len(listing_urls))
             
-            # Use provided limit or default
-            limit = input_payload.get("limit", 15)
-            
-            for url in listing_urls[:limit]:
+            for url in listing_urls:
                 try:
                     # Politeness delay
                     time.sleep(2 + (time.time() % 2))

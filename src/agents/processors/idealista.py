@@ -61,29 +61,67 @@ class IdealistaNormalizerAgent(BaseAgent):
             # Expand "Read more" if it was just hidden in HTML?
             # Usually Idealista puts the full text in HTML but hides it with CSS.
         
-        # --- 5. Features (Bedrooms, Sqm) ---
+        # --- 5. Features (Bedrooms, Bathrooms, Sqm, Floor, Elevator, Energy) ---
         bedrooms = None
+        bathrooms = None
         sqm = None
+        floor = None
+        has_elevator = None
+        energy_rating = None
+        
+        feature_texts = []
         
         if is_detail_page:
              # Look for "Basic features" list
              # <ul> <li class="details-property-feature-one">...</li> </ul>
              features_list = soup.select("div.details-property-feature-one ul > li")
-             for f in features_list:
-                 txt = f.get_text(strip=True).lower()
-                 if "hab" in txt or "bedroom" in txt:
-                      bedrooms = int(re.sub(r'[^\d]', '', txt) or 0)
-                 elif "m²" in txt or "construido" in txt:
-                      # "120 m² construidos"
-                      sqm = float(re.sub(r'[^\d]', '', txt) or 0)
+             feature_texts = [f.get_text(strip=True).lower() for f in features_list]
         else:
             # Fallback to search card parsing
-            details = [s.get_text(strip=True) for s in soup.select("span.item-detail")]
-            for d in details:
-                cleaned = re.sub(r'[^\d]', '', d)
-                if not cleaned: continue
-                if "hab" in d: bedrooms = int(cleaned)
-                elif "m²" in d: sqm = float(cleaned)
+            feature_texts = [s.get_text(strip=True).lower() for s in soup.select("span.item-detail")]
+            
+        for txt in feature_texts:
+            # Sqm
+            if "m²" in txt or "construido" in txt:
+                 sqm_match = re.search(r'(\d+)', txt.replace('.', ''))
+                 if sqm_match: sqm = float(sqm_match.group(1))
+            
+            # Bedrooms
+            elif "hab" in txt or "bedroom" in txt:
+                 bed_match = re.search(r'(\d+)', txt)
+                 if bed_match: bedrooms = int(bed_match.group(1))
+            
+            # Bathrooms
+            elif "baño" in txt or "bath" in txt:
+                 bath_match = re.search(r'(\d+)', txt)
+                 if bath_match: bathrooms = int(bath_match.group(1))
+
+            # Floor
+            elif "planta" in txt or "bajo" in txt:
+                # "Planta 3ª exterior" -> 3
+                # "Bajo exterior" -> 0
+                if "bajo" in txt:
+                    floor = 0
+                else:
+                    floor_match = re.search(r'planta (\d+)', txt)
+                    if floor_match: floor = int(floor_match.group(1))
+            
+            # Elevator
+            if "ascensor" in txt:
+                if "sin" in txt: has_elevator = False
+                elif "con" in txt: has_elevator = True
+            
+            # Energy Rating
+            if "certifi" in txt or "energé" in txt:
+                # "Certificación energética: E"
+                # "Certificado energético: en trámite"
+                if "trámite" in txt:
+                    energy_rating = "pending"
+                else:
+                    # Find single uppercase letter
+                    rating_match = re.search(r':\s*([A-G])', txt, re.IGNORECASE)
+                    if rating_match:
+                        energy_rating = rating_match.group(1).upper()
 
         # --- 6. Images ---
         image_urls = []
@@ -132,7 +170,11 @@ class IdealistaNormalizerAgent(BaseAgent):
             currency=Currency.EUR,
             property_type=PropertyType.APARTMENT, 
             bedrooms=bedrooms,
+            bathrooms=bathrooms,
             surface_area_sqm=sqm,
+            floor=floor,
+            has_elevator=has_elevator,
+            energy_rating=energy_rating,
             image_urls=image_urls,
             status=ListingStatus.ACTIVE
         )

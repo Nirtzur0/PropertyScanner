@@ -16,7 +16,7 @@ class EnrichmentService:
         # Trigger loading of the data on init to avoid latency later
         # passing a dummy coordinate to force load
         try:
-            rg.search((0, 0))
+            rg.search((0, 0), mode=1)
             logger.info("EnrichmentService initialized: reverse_geocoder data loaded.")
         except Exception as e:
             logger.error(f"Failed to initialize reverse_geocoder: {e}")
@@ -26,11 +26,11 @@ class EnrichmentService:
         Get the city name for a given latitude and longitude.
         Returns 'Unknown' if valid coordinates are not provided or lookup fails.
         """
-        if not lat or not lon:
+        if not lat or not lon or (lat == 0 and lon == 0):
             return "Unknown"
             
         try:
-            results = rg.search((lat, lon))
+            results = rg.search((lat, lon), mode=1)
             if results:
                 # rg returns a list of OrderedDicts. We want the 'name' (city) or 'admin1'/'admin2' fallback
                 return results[0].get('name', 'Unknown')

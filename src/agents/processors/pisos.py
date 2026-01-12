@@ -130,12 +130,13 @@ class PisosNormalizerAgent(BaseAgent):
                      bathrooms = int(re.sub(r'[^\d]', '', txt) or 0)
 
         # 2. Parse from Feature Blocks (Generic) if still missing
-        if not bathrooms or floor is None or has_elevator is None:
-             feature_blocks = soup.select("div.features__feature")
-             all_features_text = soup.select("div.features__value, li.features__list-item")
+        if not bathrooms or floor is None or has_elevator is None or energy_rating is None:
+             # Broaden search to include preview chars and feature values
+             all_features_text = soup.select("div.features__value, li.features__list-item, p.ad-preview__char, ul.features-summary li")
              
              # Convert all feature texts to a huge string for easy regex if structure fails
-             full_feat_text = " ".join([el.get_text(separator=" ", strip=True).lower() for el in (feature_blocks + all_features_text)])
+             # Use a generic join
+             full_feat_text = " ".join([el.get_text(separator=" ", strip=True).lower() for el in all_features_text])
              
              if not bathrooms:
                  # "2 baños"
@@ -158,6 +159,31 @@ class PisosNormalizerAgent(BaseAgent):
                  # Often just "Ascensor" listed means true
                  elif "ascensor" in full_feat_text:
                      has_elevator = True
+            
+             # Energy Rating
+             # "Certificado energético", "Eficiencia energética: E"
+             if "certifi" in full_feat_text or "energé" in full_feat_text:
+                 if "trámite" in full_feat_text:
+                     # e.g. "en trámite"
+                     pass 
+                 else:
+                     # Look for "Letra E", "Calificación E", ": E"
+                     # Regex for single uppercase letter after colon or 'Letra'
+                     m = re.search(r'(?:energétic[oa]|calificación|letra)[:\s]+([A-G])\b', full_feat_text, re.IGNORECASE)
+                     if m:
+                         # We'll assume the string is the energy rating
+                         # But CanonicalListing expects a string.
+                         pass # handled below if I assign it
+                         # We need to define energy_rating variable first usually?
+                         # PisosNormalizer doesn't have it defined in the block above.
+                         
+        # Define explicitly if not set in loop
+        energy_rating = None
+        m = re.search(r'(?:energétic[oa]|calificación|letra)[:\s]+([A-G])\b', full_feat_text, re.IGNORECASE)
+        if m:
+            energy_rating = m.group(1).upper()
+        elif "trámite" in full_feat_text and ("energ" in full_feat_text):
+            energy_rating = "pending"
 
         
         # Description Extraction (New!)
@@ -236,6 +262,7 @@ class PisosNormalizerAgent(BaseAgent):
             bathrooms=bathrooms,
             floor=floor,
             has_elevator=has_elevator,
+            energy_rating=energy_rating,
             
             status=ListingStatus.ACTIVE
         )
@@ -250,6 +277,26 @@ class PisosNormalizerAgent(BaseAgent):
                 neighborhood="Unknown",
                 country="ES" 
             )
+        else:
+            # Fallback: Extract city from URL
+            # https://www.pisos.com/comprar/piso-madrid_centro-id/
+            try:
+                url_parts = full_url.split('/')
+                # Usually the part before the ID: piso-madrid_centro-id
+                slug = url_parts[-2]
+                city_raw = slug.split('-')[1].split('_')[0] if '-' in slug else ""
+                if city_raw and city_raw not in ["piso", "vivienda", "casa"]:
+                    from src.core.domain.schema import GeoLocation
+                    canonical.location = GeoLocation(
+                        lat=0.0,
+                        lon=0.0,
+                        address_full=title,
+                        city=city_raw.capitalize(),
+                        neighborhood="Unknown",
+                        country="ES"
+                    )
+            except:
+                pass
 
         # Timestamps (Source)
         if json_data.get("datePosted"):

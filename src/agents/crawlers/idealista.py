@@ -99,7 +99,13 @@ class IdealistaCrawlerAgent(BaseAgent):
                 
                 listing_urls = []
                 
-                try:
+            try:
+                # Direct Crawl Mode
+                if input_payload.get("target_urls"):
+                    listing_urls = input_payload["target_urls"]
+                    self.logger.info("direct_crawl_mode", count=len(listing_urls))
+                else:
+                    # Search Mode
                     self.logger.info("navigating", url=start_url)
                     page.goto(start_url, timeout=45000, wait_until="domcontentloaded")
                     
@@ -126,16 +132,16 @@ class IdealistaCrawlerAgent(BaseAgent):
                         except:
                             pass
                             
-                except Exception as e:
-                    self.logger.error("search_page_failed", error=str(e))
-                    if "403" in str(e) or "challenge" in str(e):
-                        raise e # Fast fail if blocked immediately
+            except Exception as e:
+                self.logger.error("search_page_failed", error=str(e))
+                if "403" in str(e) or "challenge" in str(e):
+                    raise e # Fast fail if blocked immediately
 
-                # Visit Detail Pages
+            # Visit Detail Pages (Common Logic)
                 self.logger.info("visiting_details", count=len(listing_urls))
                 
                 # Limit for testing/safety in this iteration
-                for url in listing_urls[:10]:
+                for url in listing_urls:
                     try:
                         # Heavy random delay
                         time.sleep(2 + (time.time() % 3))

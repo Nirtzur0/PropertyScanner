@@ -99,7 +99,22 @@ class StorageService:
                                  if facts:
                                      if db_item.has_elevator is None: db_item.has_elevator = facts.get("has_elevator")
                                      if db_item.floor is None: db_item.floor = facts.get("floor")
-                                     # Extend with other mappings as needed
+                    
+                    # Explicit field mapping (ensure these are updated if present in item)
+                    if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
+                    if item.floor is not None: db_item.floor = item.floor
+                    if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
+                    
+                    # Energy Rating extraction (often missing but critical)
+                    # We assume it might be passed in item or needs future extraction
+                    # For now, just ensuring property copying if added to Canonical
+                    if hasattr(item, 'energy_rating') and item.energy_rating:
+                        db_item.energy_rating = item.energy_rating
+                        
+                    # Defaults for critical enums if missing
+                    if not db_item.currency: db_item.currency = "EUR"
+                    if not db_item.status: db_item.status = "active"
+                    if not db_item.property_type and item.property_type: db_item.property_type = str(item.property_type)
 
                     # Handle Location if present
                     if item.location:

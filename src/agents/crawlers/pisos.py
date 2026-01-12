@@ -23,7 +23,7 @@ class PisosCrawlerAgent(BaseAgent):
             return AgentResponse(status="failure", errors=["No start_url provided"])
 
         if not self.compliance_manager.check_and_wait(start_url, rate_limit_seconds=2.0):
-            return AgentResponse(status="failure", errors=["Rate Limited or Disallowed"])
+            return AgentResponse(status="failure", data=None, errors=["Rate Limited or Disallowed"])
 
         listings = []
         errors = []
@@ -44,37 +44,43 @@ class PisosCrawlerAgent(BaseAgent):
 
             listing_urls = []
             
-            # --- Step 1: Get Listing URLs from Search Page ---
-            try:
-                response = page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
-                
-                if response.status != 200:
-                   self.logger.warning("non_200_response", status=response.status)
-                
-                # Wait for listings
+            # --- Input Strategy ---
+            if input_payload.get("target_urls"):
+                 # Direct Crawl Mode
+                 listing_urls = input_payload["target_urls"]
+                 self.logger.info("direct_crawl_mode", count=len(listing_urls))
+            else:
+                # --- Step 1: Get Listing URLs from Search Page ---
                 try:
-                    page.wait_for_selector("div.ad-preview", timeout=10000)
+                    response = page.goto(start_url, timeout=30000, wait_until="domcontentloaded")
                     
-                    # Extract URLs
-                    items = page.locator("div.ad-preview").all()
-                    self.logger.info("items_found_on_page", count=len(items))
+                    if response.status != 200:
+                       self.logger.warning("non_200_response", status=response.status)
                     
-                    for item in items:
-                        try:
-                            # Try to find the link in the title or the card itself
-                            # Usually a.ad-preview__title or similar
-                            # Using JS to extract href to be robust
-                            url = item.evaluate("el => { const a = el.querySelector('a.ad-preview__title'); return a ? a.href : null; }")
-                            if url:
-                                listing_urls.append(url)
-                        except Exception as e:
-                            pass
+                    # Wait for listings
+                    try:
+                        page.wait_for_selector("div.ad-preview", timeout=10000)
+                        
+                        # Extract URLs
+                        items = page.locator("div.ad-preview").all()
+                        self.logger.info("items_found_on_page", count=len(items))
+                        
+                        for item in items:
+                            try:
+                                # Try to find the link in the title or the card itself
+                                # Usually a.ad-preview__title or similar
+                                # Using JS to extract href to be robust
+                                url = item.evaluate("el => { const a = el.querySelector('a.ad-preview__title'); return a ? a.href : null; }")
+                                if url:
+                                    listing_urls.append(url)
+                            except Exception as e:
+                                pass
+                                
+                    except Exception as e:
+                        self.logger.warning("no_listings_found", error=str(e))
                             
                 except Exception as e:
-                    self.logger.warning("no_listings_found", error=str(e))
-                        
-            except Exception as e:
-                errors.append(f"Search page load error: {e}")
+                    errors.append(f"Search page load error: {e}")
             
             # --- Step 2: Visit Each Detail Page ---
             self.logger.info("visiting_details", count=len(listing_urls))

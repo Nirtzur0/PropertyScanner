@@ -204,7 +204,7 @@ class PropertyDataset(Dataset):
             SELECT id, source_id, title, description, price, city,
                    bedrooms, bathrooms, surface_area_sqm, floor,
                    lat, lon, image_urls, vlm_description,
-                   listed_at, updated_at
+                   listed_at, updated_at, sentiment_score, has_elevator
             FROM listings
             WHERE price > 0
         """)
@@ -227,6 +227,8 @@ class PropertyDataset(Dataset):
                 "floor": listing.get("floor") or 0,
                 "lat": listing.get("lat") or 0,
                 "lon": listing.get("lon") or 0,
+                "sentiment_score": listing.get("sentiment_score") or 0.0,
+                "has_elevator": 1.0 if listing.get("has_elevator") else 0.0,
                 "price_per_sqm": (listing.get("price") or 0) / max(listing.get("surface_area_sqm") or 1, 1),
             }
             feature_dicts.append(features)
@@ -326,6 +328,8 @@ class PropertyDataset(Dataset):
             "floor": listing.get("floor") or 0,
             "lat": listing.get("lat") or 0,
             "lon": listing.get("lon") or 0,
+            "sentiment_score": listing.get("sentiment_score") or 0.0,
+            "has_elevator": 1.0 if listing.get("has_elevator") else 0.0,
             "price_per_sqm": 0,  # Will be computed from comps during inference
         }
         return self.tabular_encoder.encode(features)

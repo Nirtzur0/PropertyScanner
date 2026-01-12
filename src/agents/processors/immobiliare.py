@@ -128,6 +128,26 @@ class ImmobiliareNormalizerAgent(BaseAgent):
             m_bath = re.search(r'(\d+)\s*(bagni|bagno)', ftxt)
             if m_bath:
                 bathrooms = int(m_bath.group(1))
+                
+            # Floor (Piano)
+            # "piano terra", "piano 1", "3 piano"
+            floor = None
+            if "piano terra" in ftxt or "piano rialzato" in ftxt:
+                floor = 0
+            else:
+                m_floor = re.search(r'(?:piano|p\.)\s*(\d+)', ftxt)
+                if m_floor: floor = int(m_floor.group(1))
+            
+            # Elevator (Ascensore)
+            has_elevator = None
+            if "ascensore" in ftxt:
+                has_elevator = True
+                
+            # Energy Rating (Classe energetica) or APE
+            energy_rating = None
+            m_en = re.search(r'(?:classe|energetica|ape)[:\s]+([A-G])\b', ftxt, re.IGNORECASE)
+            if m_en:
+                energy_rating = m_en.group(1).upper()
 
         # Images
         image_urls = []
@@ -149,8 +169,10 @@ class ImmobiliareNormalizerAgent(BaseAgent):
         lat = None
         lon = None
         if json_data.get("geo"):
-            lat = float(json_data["geo"].get("latitude", 0))
-            lon = float(json_data["geo"].get("longitude", 0))
+            try:
+                lat = float(json_data["geo"].get("latitude", 0))
+                lon = float(json_data["geo"].get("longitude", 0))
+            except: pass
 
         # Construct
         unique_string = f"immobiliare_it_{raw.external_id}"
@@ -168,6 +190,9 @@ class ImmobiliareNormalizerAgent(BaseAgent):
             property_type=PropertyType.APARTMENT,
             bedrooms=bedrooms,
             bathrooms=bathrooms,
+            floor=floor,
+            has_elevator=has_elevator,
+            energy_rating=energy_rating,
             surface_area_sqm=sqm,
             image_urls=image_urls,
             status=ListingStatus.ACTIVE
@@ -178,19 +203,14 @@ class ImmobiliareNormalizerAgent(BaseAgent):
             from datetime import datetime
             try:
                 # ISO format often used in schema.org: 2023-10-25T10:00:00+02:00
-                # We'll try generic parsing or specific if needed.
-                # For safety, let's use dateutil if available or simple split
                 dt_str = json_data["datePosted"]
-                # Quick fix for basic ISO
                 if "T" in dt_str:
                      dt_part = dt_str.split("T")[0]
                      canonical.listed_at = datetime.strptime(dt_part, "%Y-%m-%d")
                 else:
                      canonical.listed_at = datetime.strptime(dt_str, "%Y-%m-%d")
             except:
-                pass # Fail silently, keep None (will be set to fetched_at in storage)
-
-        return canonical
+                pass 
 
         if lat and lon:
             canonical.location = GeoLocation(
@@ -200,6 +220,29 @@ class ImmobiliareNormalizerAgent(BaseAgent):
                 city="Unknown",
                 country="IT"
             )
+        else:
+             # Fallback: Extract city from URL
+             # https://www.immobiliare.it/annunci/12345/milano/
+             try:
+                 url_parts = raw.url.split('/')
+                 # Usually .../annunci/ID/CITY/ or .../REGION/CITY/
+                 # Let's try to find a known pattern or use part [-2] if it's not the ID
+                 city_raw = ""
+                 if url_parts[-1] == "": # Trailing slash
+                     city_raw = url_parts[-2]
+                 else:
+                     city_raw = url_parts[-1]
+                 
+                 if city_raw and not city_raw.isdigit() and len(city_raw) > 2:
+                     canonical.location = GeoLocation(
+                         lat=0.0,
+                         lon=0.0,
+                         address_full=title,
+                         city=city_raw.capitalize(),
+                         country="IT"
+                     )
+             except:
+                 pass
 
         return canonical
 
