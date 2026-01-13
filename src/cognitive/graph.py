@@ -53,6 +53,7 @@ def get_llm(temperature: float = 0):
 
 
 # System prompt for the supervisor
+# System prompt for the supervisor
 SUPERVISOR_PROMPT = """You are a property investment analyst agent. Your job is to help users find and evaluate real estate opportunities.
 
 You have access to the following tools:
@@ -69,7 +70,8 @@ Current state:
 - Query: {query}
 - Target areas: {target_areas}
 - Sources crawled: {sources_crawled}
-- Listings found: {listings_count}
+- Raw listings found: {raw_count}
+- Canonical Listings (Normalized): {listings_count}
 - Enriched listings: {enriched_count}
 - Enrichment status: {enrichment_status}
 - Filtered listings count: {filtered_count}
@@ -77,8 +79,11 @@ Current state:
 
 Typical flow: Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report
 
-If you have enough data and evaluations, generate a final report.
-Otherwise, decide which tool to use next.
+If you have unprocessed raw listings, choose "normalize".
+If you have normalized listings but status is pending, choose "enrich".
+If you have enriched listings, choose "filter".
+If you have filtered listings, choose "evaluate".
+If you have evaluations, generate a final report.
 
 Respond with one of: "crawl", "normalize", "enrich", "filter", "evaluate", "report", or "end"
 """
@@ -117,6 +122,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             query=state["query"],
             target_areas=state["target_areas"],
             sources_crawled=state["sources_crawled"],
+            raw_count=len(state["raw_listings"]),
             listings_count=state["listings_count"],
             enriched_count=state.get("enriched_count", 0),
             enrichment_status=state.get("enrichment_status", "pending"),
@@ -140,14 +146,26 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
         # Parse decision
         if "crawl" in decision:
             next_action = "crawl"
+            # Prevent infinite loop if we already have raw listings
+            if len(state["raw_listings"]) > 0 and state["listings_count"] == 0:
+                 next_action = "normalize"
         elif "normalize" in decision:
             next_action = "normalize"
+            # Prevent infinite loop if we already normalized
+            if state["listings_count"] > 0:
+                next_action = "enrich"
         elif "enrich" in decision:
             next_action = "enrich"
+            if state.get("enrichment_status") == "success":
+                next_action = "filter"
         elif "filter" in decision:
             next_action = "filter"
+            if state.get("filtered_count", 0) > 0:
+                next_action = "evaluate"
         elif "evaluate" in decision:
             next_action = "evaluate"
+            if len(state["evaluations"]) > 0:
+                next_action = "report"
         elif "report" in decision:
             next_action = "report"
         else:
@@ -180,6 +198,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             return {"next_action": "report", "current_stage": "supervisor"}
 
 
+
 def crawl_node(state: AgentState) -> Dict[str, Any]:
     """Execute crawling based on target areas."""
     logger.info("crawl_node_started", areas=state["target_areas"])
@@ -193,19 +212,20 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
         # Extract area from query using simple heuristics
         query = state["query"].lower()
         if "madrid" in query:
-            areas = ["/venta-viviendas/madrid/"]
+            # Fallback to Pisos as Idealista is blocking bots
+            areas = ["https://www.pisos.com/venta/pisos-madrid/"]
         elif "barcelona" in query:
-            areas = ["/venta-viviendas/barcelona/"]
+            areas = ["https://www.pisos.com/venta/pisos-barcelona/"]
         else:
-            areas = ["/venta-viviendas/madrid/centro/"]
+            areas = ["https://www.pisos.com/venta/pisos-madrid/"] # Default
     
     for area in areas:
         try:
             # Determine source
-            if "pisos.com" in area:
-                source_id = "pisos_es"
-            else:
+            if "idealista" in area:
                 source_id = "idealista_es"
+            else:
+                source_id = "pisos_es"
                 
             result = crawl_listings.invoke({
                 "search_path": area,
@@ -446,6 +466,7 @@ def create_cognitive_graph():
             "crawl": "crawl",
             "normalize": "normalize",
             "enrich": "enrich",
+            "filter": "filter",
             "evaluate": "evaluate",
             "report": "report",
             "end": END

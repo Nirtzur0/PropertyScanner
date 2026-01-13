@@ -33,7 +33,16 @@ class EnrichmentService:
             results = rg.search((lat, lon), mode=1)
             if results:
                 # rg returns a list of OrderedDicts. We want the 'name' (city) or 'admin1'/'admin2' fallback
-                return results[0].get('name', 'Unknown')
+                # Sometimes 'name' is just a neighborhood or very obscure
+                city_name = results[0].get('name', '')
+                admin1 = results[0].get('admin1', '')
+                
+                # Filter out generic country names if they somehow appear or very generic placeholders
+                if city_name.lower() in ["spain", "españa", "unknown"]:
+                    if admin1: return admin1
+                    return "Unknown"
+                    
+                return city_name
         except Exception as e:
             logger.warning(f"Error resolving city for {lat}, {lon}: {e}")
             

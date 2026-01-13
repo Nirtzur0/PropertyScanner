@@ -39,6 +39,11 @@ class DBListing(Base):
     lon = Column(Float, nullable=True)
     geohash = Column(String, nullable=True, index=True)
     
+    # Rental / Investment Data
+    listing_type = Column(String, default="sale") # "sale" or "rent"
+    estimated_rent = Column(Float, nullable=True) # For sales: inferred rent
+    gross_yield = Column(Float, nullable=True)    # For sales: (rent*12)/price
+    
     # Meta
     image_urls = Column(JSON, default=list)
     vlm_description = Column(Text, nullable=True) # VLM generated text
@@ -55,7 +60,7 @@ class DBListing(Base):
     
     status = Column(String, default="active")
     sold_at = Column(DateTime, nullable=True)
-    dom = Column(Integer, nullable=True) # Days on Market
+
     
     def __repr__(self):
         return f"<DBListing(id={self.id}, title={self.title}, price={self.price})>"

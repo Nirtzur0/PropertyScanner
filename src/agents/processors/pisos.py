@@ -232,12 +232,22 @@ class PisosNormalizerAgent(BaseAgent):
                 
             # If not found, try all images in known CDN
             if not image_urls:
-                imgs = soup.select("img")
+                # Common pattern in pisos.com: img with class "ad-preview__image" or inside swiper
+                imgs = soup.select("img.ad-preview__image, div.swiper-slide img, img.carousel-item-img")
                 for img in imgs:
                     src = img.get("data-src") or img.get("src")
-                    if src and ("pisos.com" in src or "imghs.net" in src) and not "logo" in src:
-                        # Filter out thumbnails if possible by size/naming
+                    if src and ("pisos.com" in src or "imghs.net" in src) and "logo" not in src:
                         image_urls.append(src)
+                
+                # Fallback: grab ANY large image
+                if not image_urls:
+                    all_imgs = soup.find_all("img")
+                    for img in all_imgs:
+                         src = img.get("src") or img.get("data-src")
+                         if src and src.startswith("http"):
+                             # Filter small icons
+                             if "icon" not in src and "logo" not in src and ".svg" not in src:
+                                 image_urls.append(src)
 
         # Address / City Extraction
         city = "Unknown"
@@ -250,26 +260,49 @@ class PisosNormalizerAgent(BaseAgent):
         
         # 2. Fallback to URL extraction if still Unknown
         if city == "Unknown":
+            # URL structure often: .../piso-city_neighborhood...
+            # e.g. pisos.com/comprar/piso-puerta_de_madrid_el_juncal28802...
             try:
-                # https://www.pisos.com/comprar/piso-madrid_centro-id/
-                url_parts = full_url.split('/')
-                # Find the slug part (usually 2nd to last)
-                slug = url_parts[-2] if len(url_parts) >= 2 else ""
-                if slug and '-' in slug:
-                     # "piso-madrid_centro-id" -> "madrid_centro"
-                     # Logic: remove first part (piso-), remove last part (-id)
-                     # But often ID is just at the end. 
-                     # Let's try to grab the middle chunk.
-                     parts = slug.split('-')
-                     if len(parts) >= 3:
-                        # simple heuristic: take parts[1]
-                        city_raw = parts[1]
-                        # Clean underscores
-                        city_clean = city_raw.replace('_', ' ').title()
-                        if city_clean.lower() not in ["piso", "vivienda", "casa", "comprar", "alquiler"]:
-                            city = city_clean
+                parts = full_url.split("/")
+                # usually last part, or second to last
+                slug = parts[-1] if parts[-1] else parts[-2]
+                if "-" in slug:
+                    # simplistic parse: "piso-puerta_de_madrid..."
+                    # We can assume the text *before* huge number is city-ish
+                    # But it's hard. Let's just try to grab common cities (Madrid, Barcelona) if present
+                    slug_lower = slug.lower()
+                    common_cities = ["madrid", "barcelona", "valencia", "sevilla", "zaragoza", "malaga", "alicante", "bilbao"]
+                    for c in common_cities:
+                        if c in slug_lower:
+                            city = c.capitalize()
+                            break
             except:
                 pass
+        
+        # 3. Fallback: Check Title
+        if city == "Unknown" and title:
+             # "Piso en venta en Madrid"
+             # Very naive, but better than nothing
+             # We rely heavily on enrichment later anyway
+             pass
+
+        # Elevator scan in description if missing
+        if has_elevator is None and description:
+            desc_lower = description.lower()
+            if "con ascensor" in desc_lower or "tiene ascensor" in desc_lower or "dispone de ascensor" in desc_lower:
+                has_elevator = True
+            elif "sin ascensor" in desc_lower:
+                has_elevator = False
+            elif "ascensor" in desc_lower:
+                # Ambiguous, but if mentioned often positive feature
+                has_elevator = True
+
+        # Force Location Object creation even if Lat/Lon missing, to allow enrichment
+        if city == "Unknown": 
+             city = "Spain" # Fallback to country level to avoid NoneType issues downstream? No, better keep Unknown but create object.
+
+        # Ensure we always attempt to create a Location object if we have at least a Title or City
+        # Check happens below at line 304, but let's make sure city is at least passed safely.
 
         # ID Generation
         unique_string = f"pisos_{raw.external_id}"
@@ -310,14 +343,13 @@ class PisosNormalizerAgent(BaseAgent):
                 country="ES" 
             )
         else:
-            # Fallback location (0,0) but preserve City
+            # Create location object even if incomplete, to ensure it exists for enrichment
             from src.core.domain.schema import GeoLocation
             canonical.location = GeoLocation(
-                lat=0.0,
-                lon=0.0,
+                lat=None,
+                lon=None,
                 address_full=title,
-                city=city,
-                neighborhood="Unknown",
+                city=city, # Might be "Unknown"
                 country="ES"
             )
 

@@ -6,7 +6,7 @@ import os
 import json
 import structlog
 import numpy as np
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from pathlib import Path
 
 import torch
@@ -173,24 +173,18 @@ class Trainer:
             torch.save(self.model.state_dict(), self.checkpoint_dir / "fusion_model.pt")
             logger.info("best_model_saved", epoch=epoch, val_loss=self.best_val_loss)
     
+    
     def train(
         self,
         epochs: int = 100,
         patience: int = 10,
-        min_delta: float = 1e-4
+        min_delta: float = 1e-4,
+        fold_idx: int = 0
     ) -> Dict[str, Any]:
         """
         Full training loop with early stopping.
-        
-        Args:
-            epochs: Maximum number of epochs
-            patience: Epochs without improvement before stopping
-            min_delta: Minimum improvement to count as progress
-            
-        Returns:
-            Training history dictionary
         """
-        logger.info("training_started", epochs=epochs, patience=patience)
+        logger.info("training_started", fold=fold_idx, epochs=epochs, patience=patience)
         
         best_metrics = {}
         
@@ -221,20 +215,25 @@ class Trainer:
             self.save_checkpoint(epoch, is_best)
             
             # Log progress with metrics
+            # Format loss in thousands (K) for readability
             log_data = {
+                "fold": fold_idx,
                 "epoch": epoch + 1,
-                "train_loss": f"{train_loss:.4f}",
-                "val_loss": f"{val_loss:.4f}",
+                "loss": f"{train_loss/1000:.1f}k",
+                "val_loss": f"{val_loss/1000:.1f}k",
                 "best": is_best
             }
             if metrics:
                 log_data["mape"] = f"{metrics.get('mape', 0):.1f}%"
                 log_data["mae"] = f"€{metrics.get('mae', 0):,.0f}"
-            logger.info("epoch_completed", **log_data)
+            
+            # Only log every 5 epochs or if best to reduce noise
+            if is_best or (epoch + 1) % 5 == 0:
+                logger.info("epoch_completed", **log_data)
             
             # Early stopping
             if self.epochs_without_improvement >= patience:
-                logger.info("early_stopping", epoch=epoch + 1)
+                logger.info("early_stopping", fold=fold_idx, epoch=epoch + 1)
                 break
         
         return {
@@ -255,58 +254,77 @@ def train_model(
     patience: int = 10,
     val_split: float = 0.1,
     device: str = "cpu",
-    use_vlm: bool = True
-) -> Dict[str, Any]:
+    use_vlm: bool = True,
+    k_folds: int = 1
+) -> List[Dict[str, Any]]:
     """
-    High-level training function.
-    
-    Args:
-        db_path: Path to SQLite database with listings
-        epochs: Number of training epochs
-        batch_size: Batch size
-        lr: Learning rate
-        num_comps: Number of comparables per sample
-        patience: Early stopping patience
-        val_split: Fraction for validation
-        device: Device to train on
-        use_vlm: Whether to use VLM
+    High-level training function with K-Fold support.
     """
     if not TORCH_AVAILABLE:
         raise RuntimeError("PyTorch not available. Install with: pip install torch")
     
-    # Create dataloaders directly from database
-    train_loader, val_loader = create_dataloaders(
-        db_path=db_path,
-        batch_size=batch_size,
-        num_comps=num_comps,
-        val_split=val_split,
-        use_vlm=use_vlm
-    )
+    from src.training.dataset import PropertyDataset, collate_fn
+    from torch.utils.data import DataLoader, SubsetRandomSampler
+    from sklearn.model_selection import KFold
     
-    # Create compact model (92k params)
-    model = PropertyFusionModel(
-        tabular_dim=10,
-        text_dim=384,
-        image_dim=512,
-        hidden_dim=64,
-        num_heads=2
-    )
+    # Load dataset once
+    dataset = PropertyDataset(db_path=db_path, num_comps=num_comps, use_vlm=use_vlm)
     
-    logger.info("model_created", params=sum(p.numel() for p in model.parameters()))
+    # Prepare indices
+    indices = np.arange(len(dataset))
     
-    # Create trainer
-    trainer = Trainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        lr=lr,
-        device=device
-    )
+    # Define splits
+    if k_folds > 1:
+        kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+        splits = list(kf.split(indices))
+        logger.info("kfold_training_started", k=k_folds)
+    else:
+        # Standard train/val split
+        split_idx = int(len(dataset) * (1 - val_split))
+        np.random.shuffle(indices)
+        splits = [(indices[:split_idx], indices[split_idx:])]
+        logger.info("standard_training_started", val_split=val_split)
+        
+    all_histories = []
     
-    # Train
-    history = trainer.train(epochs=epochs, patience=patience)
-    
-    return history
+    for i, (train_idx, val_idx) in enumerate(splits):
+        fold_id = i + 1
+        logger.info("starting_fold", fold=fold_id, train_size=len(train_idx), val_size=len(val_idx))
+        
+        train_loader = DataLoader(
+            dataset, batch_size=batch_size, sampler=SubsetRandomSampler(train_idx),
+            collate_fn=collate_fn, num_workers=0
+        )
+        val_loader = DataLoader(
+            dataset, batch_size=batch_size, sampler=SubsetRandomSampler(val_idx),
+            collate_fn=collate_fn, num_workers=0
+        )
+        
+        # Create fresh model for each fold
+        model = PropertyFusionModel(
+            tabular_dim=10,
+            text_dim=384,
+            image_dim=512,
+            hidden_dim=64,
+            num_heads=2
+        )
+        
+        if i == 0:
+            logger.info("model_created", params=sum(p.numel() for p in model.parameters()))
+        
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            lr=lr,
+            device=device,
+            checkpoint_dir=f"models/fold_{fold_id}" if k_folds > 1 else "models"
+        )
+        
+        history = trainer.train(epochs=epochs, patience=patience, fold_idx=fold_id)
+        all_histories.append(history)
+        
+    return all_histories
 
 
 if __name__ == "__main__":
@@ -319,12 +337,13 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--val-split", type=float, default=0.1)
+    parser.add_argument("--k-folds", type=int, default=1, help="Number of folds for Cross Validation")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     parser.add_argument("--no-vlm", action="store_true", help="Disable VLM")
     
     args = parser.parse_args()
     
-    history = train_model(
+    histories = train_model(
         db_path=args.db,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -332,9 +351,15 @@ if __name__ == "__main__":
         patience=args.patience,
         val_split=args.val_split,
         device=args.device,
-        use_vlm=not args.no_vlm
+        use_vlm=not args.no_vlm,
+        k_folds=args.k_folds
     )
     
+    # Aggregate results
+    avg_mae = np.mean([h['best_metrics'].get('mae', 0) for h in histories])
+    avg_mape = np.mean([h['best_metrics'].get('mape', 0) for h in histories])
+    
     print(f"\nTraining complete!")
-    print(f"Best validation loss: {history['best_val_loss']:.4f}")
-    print(f"Total epochs: {history['total_epochs']}")
+    print(f"Average MAE: €{avg_mae:,.0f}")
+    print(f"Average MAPE: {avg_mape:.1f}%")
+

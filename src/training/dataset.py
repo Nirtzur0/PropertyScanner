@@ -35,7 +35,9 @@ class PropertyDataset(Dataset):
         min_comps_fallback: int = 3,
         cache_embeddings: bool = True,
         text_model: str = "all-MiniLM-L6-v2",
-        use_vlm: bool = True
+        use_vlm: bool = True,
+        min_price: float = 10_000,
+        max_price: float = 15_000_000
     ):
         """
         Args:
@@ -45,6 +47,8 @@ class PropertyDataset(Dataset):
             min_comps_fallback: Minimum comps required; if not met, sample from all
             cache_embeddings: Cache text embeddings in memory
             text_model: SentenceTransformer model name
+            min_price: Minimum price to include (filter outliers)
+            max_price: Maximum price to include (filter outliers)
         """
         self.db_path = db_path
         self.num_comps = num_comps
@@ -52,6 +56,8 @@ class PropertyDataset(Dataset):
         self.min_comps_fallback = min_comps_fallback
         self.cache_embeddings = cache_embeddings
         self.use_vlm = use_vlm
+        self.min_price = min_price
+        self.max_price = max_price
         
         # Load encoder
         from src.services.encoders import TextEncoder, TabularEncoder
@@ -76,7 +82,8 @@ class PropertyDataset(Dataset):
                    db_path=db_path, 
                    num_listings=len(self.listings),
                    num_cities=len(self.city_index),
-                   vlm_enabled=use_vlm)
+                   vlm_enabled=use_vlm,
+                   price_range=(self.min_price, self.max_price))
         
         # Fit tabular encoder on the data for proper normalization
         self._fit_tabular_encoder()
@@ -86,6 +93,7 @@ class PropertyDataset(Dataset):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         
+        # We query all positive prices first, then filter in python to be safe/flexible
         cursor = conn.execute("""
             SELECT id, source_id, title, description, price, city,
                    bedrooms, bathrooms, surface_area_sqm, floor,
@@ -95,10 +103,23 @@ class PropertyDataset(Dataset):
             WHERE price > 0
         """)
         
-        listings = [dict(row) for row in cursor.fetchall()]
+        raw_listings = [dict(row) for row in cursor.fetchall()]
         conn.close()
         
-        return listings
+        # Filter outliers
+        valid_listings = []
+        dropped_count = 0
+        for l in raw_listings:
+            p = l.get("price", 0)
+            if self.min_price <= p <= self.max_price:
+                valid_listings.append(l)
+            else:
+                dropped_count += 1
+                
+        if dropped_count > 0:
+            logger.warning("outliers_dropped", count=dropped_count, min_price=self.min_price, max_price=self.max_price)
+            
+        return valid_listings
     
     def _fit_tabular_encoder(self):
         """Fit tabular encoder on all listings for proper normalization."""

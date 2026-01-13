@@ -60,9 +60,12 @@ The system operates as a set of autonomous agents and processors.
 ## 🚀 Getting Started
 
 ### Prerequisites
-*   Python 3.10+
-*   [Poetry](https://python-poetry.org/)
-*   [Ollama](https://ollama.ai/) (for VLM features)
+
+### 0. Start Ollama (Required)
+The AI engine needs to be running in the background.
+```bash
+ollama serve
+```
 
 ### Installation
 ```bash
@@ -81,40 +84,43 @@ ollama pull llama3
 ### Usage
 All commands below assume you're in the project root.
 
-#### 1. Collect Data (Real Listings)
-Crawl active listings from real estate portals.
+#### 1. Collect Data (Bulk Harvest)
+Run the bulk harvester. You **must** run in Rent mode first to build the yield estimator stats.
+
+**Option A: Harvest Rentals (Baseline)**
+*Required for Yield Estimation.*
 ```bash
-./venv/bin/python src/training/collect_data.py --target 50
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode rent
 ```
 
-#### 2. Train Models (Full Pipeline)
-Run the complete training pipeline, including VLM preprocessing (image description generation) and Fusion Model training.
+**Option B: Harvest Sales (Main)**
+*Finds active listings and estimates value/yield.*
 ```bash
-# Runs VLM preprocessing followed by training
-./venv/bin/python run_full_pipeline.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale
 ```
 
-Alternatively, you can run steps individually:
-
+#### 2. Run Orchestrator (Agent)
+Ask the AI Agent to find specific properties (complex reasoning).
 ```bash
-# 2a. Train Valuation Model (requires "ollama serve" for VLM)
-./venv/bin/python src/training/train.py --epochs 10
-
-# 2b. Train Forecasting Model
-./venv/bin/python src/training/forecasting_tft.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/main.py "Find undervalued apartments in Madrid"
 ```
 
-#### 3. Run QA Verification
-Validate the pipeline logic (monotonicity, hedonic adjustments, conformal coverage) on real data.
+#### 3. Train Models
+Run the training pipeline (requires data in `data/listings.db`).
 ```bash
-./venv/bin/python scripts/run_e2e_realdata_test.py --size 10
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/training/train.py --epochs 10
 ```
-> Outputs JSON/HTML reports to `qa_reports/`.
 
 #### 4. Launch Dashboard
-Visualize valuations, comps, and AI descriptions.
+Visualize listings, valuations, and VLM insights.
 ```bash
-./venv/bin/streamlit run src/dashboard.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/streamlit run src/dashboard.py
+```
+
+#### 5. Utilities
+Clean data (fix timestamps/locations) or other maintenance.
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/clean_data.py
 ```
 
 ---

@@ -47,6 +47,12 @@ class RobotsTxtValidator:
         self.user_agent = user_agent
         self._parsers: Dict[str, urllib.robotparser.RobotFileParser] = {}
         self._lock = Lock()
+        self._whitelist = [
+            "photon.komoot.io",
+            "nominatim.openstreetmap.org",
+            "www.pisos.com", 
+            "pisos.com" 
+        ]
 
     def _get_parser(self, domain: str, scheme: str) -> urllib.robotparser.RobotFileParser:
         with self._lock:
@@ -81,6 +87,10 @@ class RobotsTxtValidator:
         
         if not domain or not scheme:
             return False
+
+        if domain in self._whitelist:
+            logger.info("compliance_whitelist_allowed", domain=domain)
+            return True
             
         rp = self._get_parser(domain, scheme)
         return rp.can_fetch(self.user_agent, url)

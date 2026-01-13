@@ -17,9 +17,10 @@ class AgentState(TypedDict):
     target_areas: List[str]
     
     # Pipeline data (accumulated via reducer)
+    # Pipeline data (accumulated via reducer)
     raw_listings: Annotated[List[Dict[str, Any]], add]
-    canonical_listings: Annotated[List[Dict[str, Any]], add]
-    evaluations: Annotated[List[Dict[str, Any]], add]
+    canonical_listings: List[Dict[str, Any]]
+    evaluations: List[Dict[str, Any]]
     
     # Agent reasoning
     messages: Annotated[List[Dict[str, Any]], add]

@@ -221,28 +221,9 @@ class ImmobiliareNormalizerAgent(BaseAgent):
                 country="IT"
             )
         else:
-             # Fallback: Extract city from URL
-             # https://www.immobiliare.it/annunci/12345/milano/
-             try:
-                 url_parts = raw.url.split('/')
-                 # Usually .../annunci/ID/CITY/ or .../REGION/CITY/
-                 # Let's try to find a known pattern or use part [-2] if it's not the ID
-                 city_raw = ""
-                 if url_parts[-1] == "": # Trailing slash
-                     city_raw = url_parts[-2]
-                 else:
-                     city_raw = url_parts[-1]
-                 
-                 if city_raw and not city_raw.isdigit() and len(city_raw) > 2:
-                     canonical.location = GeoLocation(
-                         lat=0.0,
-                         lon=0.0,
-                         address_full=title,
-                         city=city_raw.capitalize(),
-                         country="IT"
-                     )
-             except:
-                 pass
+             # Fallback: Extract city from URL - REMOVED for strictness.
+             # The EnrichmentNode will handle this properly via geocoding.
+             pass
 
         return canonical
 

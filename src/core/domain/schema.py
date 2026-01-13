@@ -22,8 +22,8 @@ class ListingStatus(str, Enum):
     PENDING = "pending"
 
 class GeoLocation(BaseModel):
-    lat: float
-    lon: float
+    lat: Optional[float] = None
+    lon: Optional[float] = None
     address_full: str
     city: str
     zip_code: Optional[str] = None
@@ -58,6 +58,8 @@ class CanonicalListing(BaseModel):
     
     price: float
     currency: Currency = Currency.EUR
+    
+    listing_type: str = "sale" # "sale" or "rent"
     
     property_type: PropertyType
     

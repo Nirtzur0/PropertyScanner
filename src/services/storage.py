@@ -7,7 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from src.core.domain.models import Base, DBListing
 from src.core.domain.schema import CanonicalListing
 from src.services.enrichment_service import EnrichmentService
+from src.services.enrichment_service import EnrichmentService
 from src.services.description_analyst import DescriptionAnalyst
+from src.services.rent_estimator import RentEstimator
 
 logger = structlog.get_logger()
 
@@ -18,6 +20,7 @@ class StorageService:
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.enrichment_service = EnrichmentService()
         self.description_analyst = DescriptionAnalyst()
+        self.rent_estimator = RentEstimator(db_url)
 
     def get_session(self) -> Session:
         return self.SessionLocal()
@@ -51,16 +54,16 @@ class StorageService:
                             # This is more accurate than when we scraped it.
                             db_item.listed_at = item.listed_at
                             # Recalculate DOM if sold? Yes, but usually we do that on status change.
-                            # If it's already sold, we might want to update DOM here?
-                            if db_item.status == "sold" and db_item.sold_at:
-                                 delta = db_item.sold_at - db_item.listed_at
-                                 db_item.dom = (delta.days if delta.days >= 0 else 0)
+                            # DOM logic removed
+
 
                     # Update fields
                     db_item.source_id = item.source_id
                     db_item.external_id = item.external_id
                     db_item.url = str(item.url)
                     db_item.title = item.title
+                    db_item.fetched_at = datetime.utcnow()
+
                     
                     # Logic: Status Change & DOM
                     # If becoming SOLD
@@ -68,7 +71,7 @@ class StorageService:
                         db_item.sold_at = datetime.utcnow()
                         if db_item.listed_at:
                             delta = db_item.sold_at - db_item.listed_at
-                            db_item.dom = delta.days
+                            # db_item.dom = delta.days
                     
                     db_item.status = item.status # Update status
                     
@@ -81,6 +84,9 @@ class StorageService:
                     if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
                     if item.floor is not None: db_item.floor = item.floor
                     if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
+                    
+                    if item.vlm_description:
+                        db_item.vlm_description = item.vlm_description
                     
                     if item.description:
                          db_item.description = item.description
@@ -124,10 +130,26 @@ class StorageService:
                          # Fix: Persist Coordinates
                          db_item.lat = item.location.lat
                          db_item.lon = item.location.lon
+
+                    # Image URLs Mapping
+                    if item.image_urls:
+                        # Ensure we store generic JSON list, not Pydantic HttpUrl objects
+                        db_item.image_urls = [str(u) for u in item.image_urls]
                     
                     # Enrichment (Main Flow)
                     # Automatically fill missing city/data
                     self.enrichment_service.enrich_db_listing(db_item)
+
+                    # Persistence of new fields
+                    if hasattr(item, "listing_type") and item.listing_type:
+                        db_item.listing_type = item.listing_type
+                        
+                    # Rental Estimation (Only for Sales)
+                    if db_item.listing_type == "sale" and db_item.price > 0:
+                        rent = self.rent_estimator.estimate_rent(item)
+                        if rent:
+                            db_item.estimated_rent = rent
+                            db_item.gross_yield = self.rent_estimator.calculate_yield(db_item.price, rent)
                     
                 except Exception as e:
                     logger.error("db_save_item_error", id=item.id, error=str(e))
