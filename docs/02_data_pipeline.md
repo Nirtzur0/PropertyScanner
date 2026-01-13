@@ -35,33 +35,41 @@ graph LR
 
 The training pipeline prepares data for the `PropertyFusionModel`. It is unique because it handles text, images, and tabular data simultaneously.
 
+The VLM enrichment is decoupled from the training loop to improve efficiency. It runs as a preprocessing step (`src/training/preprocess_vlm.py`), storing generated descriptions in the database.
+
 ```mermaid
 sequenceDiagram
     participant DB as SQLite DB
-    participant DS as PropertyDataset
+    participant VLM_Script as Preprocess VLM
     participant VLM as "Ollama (Llava)"
+    participant DS as PropertyDataset
     participant Enc as Encoders
     participant Train as Trainer
 
-    Train->>DS: Request Batch
-    DS->>DB: Fetch Listing + Comparables
-    
-    rect rgb(240, 240, 240)
-        Note over DS, VLM: On-the-fly Enrichment
-        DS->>VLM: Describe Images (Visual Condition)
-        VLM-->>DS: "Modern kitchen, good light..."
+    rect rgb(230, 230, 255)
+        Note over VLM_Script, DB: Phase 1: Preprocessing
+        VLM_Script->>DB: Fetch Listings with Images
+        VLM_Script->>VLM: Describe Images
+        VLM-->>VLM_Script: "Modern kitchen..."
+        VLM_Script->>DB: Update vlm_description
     end
-    
-    DS->>Enc: Encode Text (Title + Desc + VLM)
-    DS->>Enc: Normalize Tabular Features
-    
-    DS-->>Train: Tensors (Target + Comps)
-    Train->>Train: Forward Pass (Quantile Loss)
-    Train->>Train: Backprop
+
+    rect rgb(240, 255, 240)
+        Note over Train, DS: Phase 2: Training
+        Train->>DS: Request Batch
+        DS->>DB: Fetch Listing + Comps + VLM Desc
+
+        DS->>Enc: Encode Text (Title + Desc + VLM)
+        DS->>Enc: Normalize Tabular Features
+
+        DS-->>Train: Tensors (Target + Comps)
+        Train->>Train: Forward Pass (Quantile Loss)
+        Train->>Train: Backprop
+    end
 ```
 
 ### Dataset Logic (`PropertyDataset`)
 - **Comparison-Based**: The model is never shown a listing in isolation. It always sees:
   - **Target Listing**: The property to value.
   - **Context Set**: 5 comparable listings from the same city/neighborhood.
-- **VLM Integration**: We use a vision-language model (Llava) to "read" images and convert them into textual descriptions of condition and quality, which are then embedded with the listing description. This avoids the high computational cost of processing raw images during training.
+- **VLM Integration**: The dataset loads pre-computed VLM descriptions from the database (`vlm_description` column). This textual description is concatenated with the listing's title and description before embedding, allowing the model to "see" the condition of the property without needing to process images during training.

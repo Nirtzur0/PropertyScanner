@@ -71,10 +71,12 @@ Real estate valuation is inherently uncertain. Instead of a single number, the m
 This is achieved using **Pinball Loss** during training.
 
 ### 3. Hyperparameters (Current Configuration)
+Defined in `src/services/fusion_model.py`.
+
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Tabular Dim | 8 | Bedrooms, Bathrooms, Sqm, Floor, Components of Loc |
-| Text Dim | 384 | SentenceTransformer embedding size |
+| Tabular Dim | 10 | bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, sentiment_score, has_elevator, price_per_sqm |
+| Text Dim | 384 | SentenceTransformer embedding size (includes VLM descriptions) |
 | Hidden Dim | 64 | Projection size (Compact for efficiency) |
 | Heads | 2 | Attention heads |
 | Parameters | ~92k | Lightweight, runs on CPU |
