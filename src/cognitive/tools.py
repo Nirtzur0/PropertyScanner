@@ -42,6 +42,11 @@ class RetrieveCompsInput(BaseModel):
     max_radius_km: float = Field(default=5.0, description="Maximum search radius in km")
 
 
+class FilterInput(BaseModel):
+    """Input for filtering tool."""
+    listings: List[Dict[str, Any]] = Field(description="List of canonical listings to filter")
+
+
 # ============ Tools ============
 
 @tool(args_schema=CrawlInput)
@@ -294,11 +299,67 @@ def retrieve_comparables(
         }
 
 
+@tool(args_schema=FilterInput)
+def filter_listings(listings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Filter out low-quality listings before evaluation.
+    
+    Removes listings with:
+    - No Price or Price = 0
+    - No Surface Area or Surface Area = 0
+    - Empty Title
+    
+    Returns a dict with 'status', 'data' (filtered listings), and 'dropped_count'.
+    """
+    try:
+        filtered_listings = []
+        dropped_count = 0
+        
+        for listing in listings:
+            # Check price
+            price = listing.get('price', 0)
+            if not price or price <= 0:
+                dropped_count += 1
+                continue
+                
+            # Check area (sqm) -> important for valuation
+            sqm = listing.get('surface_area_sqm', 0)
+            if not sqm or sqm <= 0:
+                dropped_count += 1
+                continue
+                
+            # Check title
+            title = listing.get('title', "")
+            if not title:
+                dropped_count += 1
+                continue
+                
+            filtered_listings.append(listing)
+            
+        return {
+            "status": "success",
+            "data": filtered_listings,
+            "count": len(filtered_listings),
+            "dropped_count": dropped_count
+        }
+        
+    except Exception as e:
+        logger.error("filter_tool_failed", error=str(e))
+        return {
+            "status": "failure",
+            "data": listings, # Return original on failure to be safe
+            "count": len(listings),
+            "dropped_count": 0,
+            "errors": [str(e)]
+        }
+
+
 # Tool registry
 TOOLS = [
     crawl_listings,
     normalize_listings,
     enrich_listings,
+    filter_listings,
     evaluate_listing,
     retrieve_comparables
 ]

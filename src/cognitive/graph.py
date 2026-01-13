@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from src.cognitive.state import AgentState
-from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing, enrich_listings
+from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing, enrich_listings, filter_listings
 
 logger = structlog.get_logger()
 
@@ -59,6 +59,7 @@ You have access to the following tools:
 - crawl_listings: Fetch property listings from real estate websites
 - normalize_listings: Convert raw listings to structured format
 - enrich_listings: Add location details (city) to listings
+- filter_listings: Remove low-quality listings (QC)
 - evaluate_listing: Analyze a listing for investment potential
 - retrieve_comparables: Find similar properties for comparison
 
@@ -71,14 +72,15 @@ Current state:
 - Listings found: {listings_count}
 - Enriched listings: {enriched_count}
 - Enrichment status: {enrichment_status}
+- Filtered listings count: {filtered_count}
 - Evaluations completed: {evaluations_count}
 
-Typical flow: Crawl -> Normalize -> Enrich -> Evaluate -> Report
+Typical flow: Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report
 
 If you have enough data and evaluations, generate a final report.
 Otherwise, decide which tool to use next.
 
-Respond with one of: "crawl", "normalize", "enrich", "evaluate", "report", or "end"
+Respond with one of: "crawl", "normalize", "enrich", "filter", "evaluate", "report", or "end"
 """
 
 
@@ -98,6 +100,7 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         listings_count=0,
         enriched_count=0,
         enrichment_status="pending",
+        filtered_count=0,
         final_report=None
     )
 
@@ -117,6 +120,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             listings_count=state["listings_count"],
             enriched_count=state.get("enriched_count", 0),
             enrichment_status=state.get("enrichment_status", "pending"),
+            filtered_count=state.get("filtered_count", 0),
             evaluations_count=len(state["evaluations"])
         )
         
@@ -140,6 +144,8 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             next_action = "normalize"
         elif "enrich" in decision:
             next_action = "enrich"
+        elif "filter" in decision:
+            next_action = "filter"
         elif "evaluate" in decision:
             next_action = "evaluate"
         elif "report" in decision:
@@ -165,6 +171,9 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
         elif state.get("enrichment_status", "pending") == "pending" and state["canonical_listings"]:
              # If we have listings but haven't completed enrichment, prioritize enrich
              return {"next_action": "enrich", "current_stage": "supervisor"}
+        elif state.get("filtered_count", 0) == 0 and state["canonical_listings"]:
+             # Prioritize filtering before evaluation
+             return {"next_action": "filter", "current_stage": "supervisor"}
         elif not state["evaluations"]:
             return {"next_action": "evaluate", "current_stage": "supervisor"}
         else:
@@ -284,6 +293,35 @@ def enrich_node(state: AgentState) -> Dict[str, Any]:
         }
 
 
+def filter_node(state: AgentState) -> Dict[str, Any]:
+    """Filter low-quality listings (QC)."""
+    logger.info("filter_node_started", count=len(state["canonical_listings"]))
+    
+    try:
+        result = filter_listings.invoke({
+            "listings": state["canonical_listings"]
+        })
+        
+        if result["status"] == "success":
+            return {
+                "canonical_listings": result["data"], # Replace with filtered list
+                "filtered_count": result["count"], # Current valid count
+                "listings_count": result["count"], # Update main count too
+                "current_stage": "filtered",
+                "messages": [{"role": "filter", "content": f"Filtered listings. Kept {result['count']}, Dropped {result.get('dropped_count', 0)}"}]
+            }
+        else:
+             return {
+                 "messages": [{"role": "filter", "content": f"Filter failed: {result.get('errors')}"}]
+             }
+             
+    except Exception as e:
+        logger.error("filter_node_failed", error=str(e))
+        return {
+            "messages": [{"role": "filter", "content": f"Filter failed: {str(e)}"}]
+        }
+
+
 def evaluate_node(state: AgentState) -> Dict[str, Any]:
     """Evaluate listings for investment potential."""
     logger.info("evaluate_node_started", count=len(state["canonical_listings"]))
@@ -382,7 +420,7 @@ Write a professional investment brief (2-3 paragraphs) summarizing:
         }
 
 
-def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "enrich", "evaluate", "report", "end"]:
+def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "enrich", "filter", "evaluate", "report", "end"]:
     """Route based on supervisor decision."""
     return state.get("next_action", "end")
 
@@ -396,6 +434,7 @@ def create_cognitive_graph():
     graph.add_node("crawl", crawl_node)
     graph.add_node("normalize", normalize_node)
     graph.add_node("enrich", enrich_node)
+    graph.add_node("filter", filter_node)
     graph.add_node("evaluate", evaluate_node)
     graph.add_node("report", report_node)
     
@@ -417,6 +456,7 @@ def create_cognitive_graph():
     graph.add_edge("crawl", "supervisor")
     graph.add_edge("normalize", "supervisor")
     graph.add_edge("enrich", "supervisor")
+    graph.add_edge("filter", "supervisor")
     graph.add_edge("evaluate", "supervisor")
     graph.add_edge("report", END)
     
