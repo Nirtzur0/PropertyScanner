@@ -1,7 +1,6 @@
 """
 PyTorch Dataset for PropertyFusionModel Training.
 Loads listings directly from SQLite database and encodes on-the-fly or uses cached embeddings.
-Supports VLM image-to-text descriptions using local Ollama.
 """
 import sqlite3
 import random
@@ -20,121 +19,12 @@ import io
 logger = structlog.get_logger()
 
 
-class VLMImageDescriber:
-    """
-    Uses Ollama's vision model to extract structured descriptions from property images.
-    Descriptions are cached in the database to avoid re-processing.
-    """
-    def __init__(self, model: str = "llava"):
-        self.model = model
-        self._available = None
-        
-    def _check_availability(self) -> bool:
-        """Check if Ollama and a vision model are available."""
-        if self._available is not None:
-            return self._available
-            
-        try:
-            import ollama
-            response = ollama.list()
-            # Handle new API: response.models is a list of Model objects
-            models = response.models if hasattr(response, 'models') else response.get('models', [])
-            model_names = []
-            for m in models:
-                # New API uses .model attribute, old uses dict
-                name = m.model if hasattr(m, 'model') else m.get('name', '')
-                model_names.append(name.split(':')[0])
-            
-            # Check for vision-capable models
-            vision_models = ['llava', 'moondream', 'bakllava', 'llava-phi3']
-            self._available = any(vm in model_names for vm in vision_models)
-            if self._available:
-                for vm in vision_models:
-                    if vm in model_names:
-                        self.model = vm
-                        break
-                logger.info("vlm_available", model=self.model)
-            else:
-                logger.info("no_vision_model_installed", available=model_names, 
-                           hint="Run: ollama pull llava")
-        except Exception as e:
-            logger.warning("ollama_not_available", error=str(e))
-            self._available = False
-            
-        return self._available
-        
-    def describe_images(self, image_urls: List[str], max_images: int = 2) -> str:
-        """
-        Generate text descriptions from property images.
-        
-        Args:
-            image_urls: List of image URLs or local paths
-            max_images: Maximum number of images to process
-            
-        Returns:
-            Combined description string
-        """
-        if not self._check_availability():
-            return ""
-            
-        if not image_urls:
-            return ""
-            
-        try:
-            import ollama
-            import requests
-            import base64
-            
-            descriptions = []
-            prompt = (
-                "Analyze this property image for real estate valuation. "
-                "In 40 words describe: "
-                "1) Room type (living room, kitchen, bedroom, bathroom, exterior) "
-                "2) Condition (new/renovated/needs renovation/old) "
-                "3) Quality (luxury/modern/standard/basic) "
-                "4) Key value-affecting features (natural light, views, finishes, appliances)"
-            )
-            
-            for url in image_urls[:max_images]:
-                try:
-                    if url.startswith("http"):
-                        resp = requests.get(url, timeout=10)
-                        img_bytes = resp.content
-                    else:
-                        with open(url, "rb") as f:
-                            img_bytes = f.read()
-                    
-                    # Standardize image to prevent Ollama runner crashes
-                    # Use 336x336 (native for Llava) or generic 512x512
-                    with Image.open(io.BytesIO(img_bytes)) as img:
-                        img = img.convert("RGB")
-                        img = img.resize((512, 512))
-                        byte_arr = io.BytesIO()
-                        img.save(byte_arr, format='PNG')
-                        standardized_b64 = base64.b64encode(byte_arr.getvalue()).decode()
-                    
-                    response = ollama.generate(
-                        model=self.model,
-                        prompt=prompt,
-                        images=[standardized_b64]
-                    )
-                    descriptions.append(response.get('response', ''))
-                except Exception as e:
-                    logger.warning("image_description_failed", url=url[:50], error=str(e))
-                    
-            return " ".join(descriptions)
-            
-        except Exception as e:
-            logger.error("vlm_describe_failed", error=str(e))
-            return ""
-
-
 class PropertyDataset(Dataset):
     """
     Dataset that loads listings directly from SQLite database.
     
     Encodes text using SentenceTransformer (cached after first use).
-    Optionally uses VLM to describe images and append to text.
+    Uses VLM descriptions if available in the database (no on-the-fly generation).
     Samples comparables from the same city for contextual learning.
     """
     def __init__(
@@ -145,8 +35,7 @@ class PropertyDataset(Dataset):
         min_comps_fallback: int = 3,
         cache_embeddings: bool = True,
         text_model: str = "all-MiniLM-L6-v2",
-        use_vlm: bool = True,
-        vlm_model: str = "llava"
+        use_vlm: bool = True
     ):
         """
         Args:
@@ -168,9 +57,6 @@ class PropertyDataset(Dataset):
         from src.services.encoders import TextEncoder, TabularEncoder
         self.text_encoder = TextEncoder(model_name=text_model)
         self.tabular_encoder = TabularEncoder()
-        
-        # VLM for image descriptions
-        self.vlm = VLMImageDescriber(model=vlm_model) if use_vlm else None
         
         # Load all listings from database
         self.listings = self._load_listings()
@@ -258,19 +144,6 @@ class PropertyDataset(Dataset):
         # Default to 2015 (reasonable modern estimate)
         return 2015
     
-    def _save_vlm_description(self, listing_id: str, description: str):
-        """Cache VLM description to database."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                "UPDATE listings SET vlm_description = ? WHERE id = ?",
-                (description, listing_id)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.warning("vlm_cache_save_failed", error=str(e))
-    
     def _get_text_embedding(self, listing: Dict) -> np.ndarray:
         """Get text embedding for a listing (cached). Includes VLM description if available."""
         listing_id = listing["id"]
@@ -282,28 +155,10 @@ class PropertyDataset(Dataset):
         title = listing.get("title") or ""
         description = listing.get("description") or ""
         
-        # Get VLM description (from cache or generate)
-        vlm_desc = listing.get("vlm_description") or ""
-        if not vlm_desc and self.vlm and self.use_vlm:
-            # Try to generate from images
-            image_urls_raw = listing.get("image_urls") or "[]"
-            try:
-                if isinstance(image_urls_raw, str):
-                    try:
-                        image_urls = json.loads(image_urls_raw)
-                    except json.JSONDecodeError:
-                        image_urls = ast.literal_eval(image_urls_raw)
-                else:
-                    image_urls = image_urls_raw
-                if image_urls:
-                    vlm_desc = self.vlm.describe_images(image_urls)
-                    if vlm_desc:
-                        # Cache to database
-                        self._save_vlm_description(listing_id, vlm_desc)
-                        # Update local copy
-                        listing["vlm_description"] = vlm_desc
-            except Exception as e:
-                logger.warning("vlm_processing_error", error=str(e))
+        # Get VLM description (from database)
+        vlm_desc = ""
+        if self.use_vlm:
+             vlm_desc = listing.get("vlm_description") or ""
         
         # Combine all text
         text = f"{title}. {description} {vlm_desc}".strip()

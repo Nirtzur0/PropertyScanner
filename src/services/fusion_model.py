@@ -302,7 +302,7 @@ class FusionModelService:
             }
             
         self.model = PropertyFusionModel(
-            tabular_dim=self.config.get("tabular_dim", 8),
+            tabular_dim=self.config.get("tabular_dim", 10),
             text_dim=self.config.get("text_dim", 384),
             image_dim=self.config.get("image_dim", 512),
             hidden_dim=self.config.get("hidden_dim", 256),

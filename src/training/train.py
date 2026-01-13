@@ -285,7 +285,7 @@ def train_model(
     
     # Create compact model (92k params)
     model = PropertyFusionModel(
-        tabular_dim=8,
+        tabular_dim=10,
         text_dim=384,
         image_dim=512,
         hidden_dim=64,

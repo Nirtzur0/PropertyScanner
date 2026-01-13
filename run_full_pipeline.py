@@ -31,7 +31,7 @@ def run_sequence():
         "--epochs", "100",
         "--batch-size", "16",
         "--patience", "15",
-        "--device", "mps"
+        "--device", "cpu"
     ]
     
     subprocess.run(train_cmd, env=env)

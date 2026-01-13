@@ -4,7 +4,7 @@ import json
 import tqdm
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from src.training.dataset import VLMImageDescriber
+from src.services.vlm import VLMImageDescriber
 
 import ast
 import structlog
