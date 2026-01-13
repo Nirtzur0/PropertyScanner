@@ -30,6 +30,11 @@ class EvaluateInput(BaseModel):
     num_comps: int = Field(default=10, description="Number of comparables to consider")
 
 
+class EnrichInput(BaseModel):
+    """Input for enrichment tool."""
+    listings: List[Dict[str, Any]] = Field(description="List of canonical listings to enrich")
+
+
 class RetrieveCompsInput(BaseModel):
     """Input for comparable retrieval."""
     listing: Dict[str, Any] = Field(description="Listing to find comparables for")
@@ -183,6 +188,63 @@ def evaluate_listing(listing: Dict[str, Any], num_comps: int = 10) -> Dict[str, 
         }
 
 
+@tool(args_schema=EnrichInput)
+def enrich_listings(listings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Enrich listings with additional location data (e.g., city).
+
+    Use this tool after normalization to ensure listings have correct city information
+    before evaluation.
+
+    Returns a dict with 'status', 'data' (enriched listings), and 'enriched_count'.
+    """
+    from src.services.enrichment_service import EnrichmentService
+
+    try:
+        service = EnrichmentService()
+        enriched_count = 0
+        enriched_listings = []
+
+        for listing_dict in listings:
+            # We work with the dict directly to modify it
+            # Ensure we don't modify the input in place if we want to be safe, but here it's fine
+            listing_copy = listing_dict.copy()
+
+            location = listing_copy.get('location')
+            if location and isinstance(location, dict):
+                lat = location.get('lat')
+                lon = location.get('lon')
+                city = location.get('city')
+
+                if lat and lon and (not city or city == "Unknown"):
+                    try:
+                        new_city = service.get_city(lat, lon)
+                        if new_city and new_city != "Unknown":
+                            location['city'] = new_city
+                            enriched_count += 1
+                    except Exception as e:
+                        logger.warning("enrich_single_failed", lat=lat, lon=lon, error=str(e))
+
+            enriched_listings.append(listing_copy)
+
+        return {
+            "status": "success",
+            "data": enriched_listings,
+            "count": len(enriched_listings),
+            "enriched_count": enriched_count
+        }
+
+    except Exception as e:
+        logger.error("enrich_tool_failed", error=str(e))
+        return {
+            "status": "failure",
+            "data": listings, # Return original on failure
+            "count": len(listings),
+            "enriched_count": 0,
+            "errors": [str(e)]
+        }
+
+
 @tool(args_schema=RetrieveCompsInput)
 def retrieve_comparables(
     listing: Dict[str, Any], 
@@ -236,6 +298,7 @@ def retrieve_comparables(
 TOOLS = [
     crawl_listings,
     normalize_listings,
+    enrich_listings,
     evaluate_listing,
     retrieve_comparables
 ]

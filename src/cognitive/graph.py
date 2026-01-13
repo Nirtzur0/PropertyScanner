@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from src.cognitive.state import AgentState
-from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing
+from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing, enrich_listings
 
 logger = structlog.get_logger()
 
@@ -58,6 +58,7 @@ SUPERVISOR_PROMPT = """You are a property investment analyst agent. Your job is 
 You have access to the following tools:
 - crawl_listings: Fetch property listings from real estate websites
 - normalize_listings: Convert raw listings to structured format
+- enrich_listings: Add location details (city) to listings
 - evaluate_listing: Analyze a listing for investment potential
 - retrieve_comparables: Find similar properties for comparison
 
@@ -68,12 +69,16 @@ Current state:
 - Target areas: {target_areas}
 - Sources crawled: {sources_crawled}
 - Listings found: {listings_count}
+- Enriched listings: {enriched_count}
+- Enrichment status: {enrichment_status}
 - Evaluations completed: {evaluations_count}
+
+Typical flow: Crawl -> Normalize -> Enrich -> Evaluate -> Report
 
 If you have enough data and evaluations, generate a final report.
 Otherwise, decide which tool to use next.
 
-Respond with one of: "crawl", "normalize", "evaluate", "report", or "end"
+Respond with one of: "crawl", "normalize", "enrich", "evaluate", "report", or "end"
 """
 
 
@@ -91,6 +96,8 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         error_count=0,
         sources_crawled=[],
         listings_count=0,
+        enriched_count=0,
+        enrichment_status="pending",
         final_report=None
     )
 
@@ -108,6 +115,8 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             target_areas=state["target_areas"],
             sources_crawled=state["sources_crawled"],
             listings_count=state["listings_count"],
+            enriched_count=state.get("enriched_count", 0),
+            enrichment_status=state.get("enrichment_status", "pending"),
             evaluations_count=len(state["evaluations"])
         )
         
@@ -129,6 +138,8 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             next_action = "crawl"
         elif "normalize" in decision:
             next_action = "normalize"
+        elif "enrich" in decision:
+            next_action = "enrich"
         elif "evaluate" in decision:
             next_action = "evaluate"
         elif "report" in decision:
@@ -151,6 +162,9 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             return {"next_action": "crawl", "current_stage": "supervisor"}
         elif not state["canonical_listings"]:
             return {"next_action": "normalize", "current_stage": "supervisor"}
+        elif state.get("enrichment_status", "pending") == "pending" and state["canonical_listings"]:
+             # If we have listings but haven't completed enrichment, prioritize enrich
+             return {"next_action": "enrich", "current_stage": "supervisor"}
         elif not state["evaluations"]:
             return {"next_action": "evaluate", "current_stage": "supervisor"}
         else:
@@ -237,6 +251,37 @@ def normalize_node(state: AgentState) -> Dict[str, Any]:
         "current_stage": "normalized",
         "messages": [{"role": "normalize", "content": f"Normalized {len(canonical_listings)} listings"}]
     }
+
+
+def enrich_node(state: AgentState) -> Dict[str, Any]:
+    """Enrich listings with location data."""
+    logger.info("enrich_node_started", count=len(state["canonical_listings"]))
+
+    try:
+        result = enrich_listings.invoke({
+            "listings": state["canonical_listings"]
+        })
+
+        if result["status"] == "success":
+            return {
+                "canonical_listings": result["data"], # Replace with enriched versions
+                "enriched_count": result.get("enriched_count", 0),
+                "enrichment_status": "success",
+                "current_stage": "enriched",
+                "messages": [{"role": "enrich", "content": f"Enriched {result.get('enriched_count', 0)} listings"}]
+            }
+        else:
+            return {
+                 "enrichment_status": "failed",
+                 "messages": [{"role": "enrich", "content": f"Enrichment failed: {result.get('errors')}"}]
+            }
+
+    except Exception as e:
+        logger.error("enrich_node_failed", error=str(e))
+        return {
+            "enrichment_status": "failed",
+            "messages": [{"role": "enrich", "content": f"Enrichment failed: {str(e)}"}]
+        }
 
 
 def evaluate_node(state: AgentState) -> Dict[str, Any]:
@@ -337,7 +382,7 @@ Write a professional investment brief (2-3 paragraphs) summarizing:
         }
 
 
-def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "evaluate", "report", "end"]:
+def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "enrich", "evaluate", "report", "end"]:
     """Route based on supervisor decision."""
     return state.get("next_action", "end")
 
@@ -350,6 +395,7 @@ def create_cognitive_graph():
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("crawl", crawl_node)
     graph.add_node("normalize", normalize_node)
+    graph.add_node("enrich", enrich_node)
     graph.add_node("evaluate", evaluate_node)
     graph.add_node("report", report_node)
     
@@ -360,6 +406,7 @@ def create_cognitive_graph():
         {
             "crawl": "crawl",
             "normalize": "normalize",
+            "enrich": "enrich",
             "evaluate": "evaluate",
             "report": "report",
             "end": END
@@ -369,6 +416,7 @@ def create_cognitive_graph():
     # All action nodes return to supervisor
     graph.add_edge("crawl", "supervisor")
     graph.add_edge("normalize", "supervisor")
+    graph.add_edge("enrich", "supervisor")
     graph.add_edge("evaluate", "supervisor")
     graph.add_edge("report", END)
     
