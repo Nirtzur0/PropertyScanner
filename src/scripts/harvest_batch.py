@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO)
 logger = structlog.get_logger()
 
-TARGET_COUNT = 3
+TARGET_COUNT = 1000
 BATCH_SIZE = 20
 MAX_WORKERS = 4 # Be careful with Ollama load
 
