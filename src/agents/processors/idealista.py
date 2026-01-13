@@ -1,7 +1,8 @@
 from typing import Any, Dict, List, Optional
 from bs4 import BeautifulSoup
 from src.agents.base import BaseAgent, AgentResponse
-from src.core.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus
+from src.core.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus, GeoLocation
+from src.services.geocoding_service import GeocodingService
 import hashlib
 import re
 
@@ -11,6 +12,7 @@ class IdealistaNormalizerAgent(BaseAgent):
     """
     def __init__(self):
         super().__init__(name="IdealistaNormalizer")
+        self.geocoding_service = GeocodingService()
 
     def _clean_price(self, text: str) -> float:
         # "245.000 €" -> 245000.0
@@ -21,6 +23,8 @@ class IdealistaNormalizerAgent(BaseAgent):
         html = raw.raw_data.get("html_snippet", "")
         if not html:
             return None
+
+        unique_hash = hashlib.md5(f"{raw.source_id}:{raw.external_id}".encode()).hexdigest()
             
         soup = BeautifulSoup(html, 'html.parser')
         
@@ -177,7 +181,12 @@ class IdealistaNormalizerAgent(BaseAgent):
         # But if we have a "Location" section in features?
         
         # Populate GeoLocation
-        from src.core.domain.schema import GeoLocation
+        lat, lon = 0.0, 0.0
+        if title != "Unknown Property":
+            coords = self.geocoding_service.geocode_address(title)
+            if coords:
+                lat, lon = coords
+
         canonical = CanonicalListing(
             id=unique_hash,
             source_id=raw.source_id,
@@ -197,8 +206,8 @@ class IdealistaNormalizerAgent(BaseAgent):
             image_urls=image_urls,
             status=ListingStatus.ACTIVE,
             location=GeoLocation(
-                lat=0.0,
-                lon=0.0,
+                lat=lat,
+                lon=lon,
                 address_full=title,
                 city=city,
                 country="ES"
