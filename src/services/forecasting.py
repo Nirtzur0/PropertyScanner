@@ -21,6 +21,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from datetime import datetime, timedelta
 import structlog
 from src.core.domain.schema import ValuationProjection
+from src.services.area_intelligence import AreaIntelligenceService
 
 logger = structlog.get_logger(__name__)
 
@@ -39,6 +40,7 @@ class ForecastingService:
         self.db_path = db_path
         self._tft_service = None
         self._conformal = None
+        self.area_intelligence = AreaIntelligenceService(db_path)
         
     def _get_tft_service(self):
         """Lazy load TFT service"""
@@ -62,7 +64,7 @@ class ForecastingService:
         
     def _load_time_series(self, region_id: str, use_hedonic: bool = True) -> pd.DataFrame:
         """
-        Load historical indices joined with macro indicators.
+        Load historical indices joined with macro indicators and Area Intelligence.
         
         Prefers hedonic indices (quality-adjusted) over raw median.
         """
@@ -119,6 +121,13 @@ class ForecastingService:
         df['euribor_12m'] = df['euribor_12m'].ffill().fillna(3.0)
         df['ecb_deposit_rate'] = df['ecb_deposit_rate'].ffill().fillna(3.5)
         
+        # --- Integrate Area Intelligence ---
+        # Get static area scores and broadcast them (simple approach for now)
+        # Ideally we'd have time-varying area stats, but for MVP we use current crawling status.
+        area_data = self.area_intelligence.get_area_indicators(region_id)
+        df['area_sentiment'] = area_data.get('sentiment_score', 0.5)
+        df['area_development'] = area_data.get('future_development_score', 0.5)
+
         return df
 
     def forecast_property(
@@ -166,7 +175,7 @@ class ForecastingService:
     ) -> List[ValuationProjection]:
         """Quantile GBM forecasting (fallback)"""
         
-        feature_cols = ['time_idx', 'euribor_12m', 'inventory_count']
+        feature_cols = ['time_idx', 'euribor_12m', 'inventory_count', 'area_sentiment', 'area_development']
         df['inventory_count'] = df['inventory_count'].fillna(0)
         
         X = df[feature_cols].values
@@ -192,6 +201,8 @@ class ForecastingService:
         last_date = last_row['month_date']
         current_index_val = last_row['price_index_sqm']
         current_euribor = last_row['euribor_12m']
+        area_sentiment = last_row['area_sentiment']
+        area_development = last_row['area_development']
         
         # Get conformal calibrator
         conformal = self._get_conformal()
@@ -203,7 +214,13 @@ class ForecastingService:
             future_euribor = max(1.5, current_euribor - (0.25 * (h/12.0)))
             future_inventory = last_row['inventory_count']
             
-            future_X = np.array([[future_date.toordinal(), future_euribor, future_inventory]])
+            future_X = np.array([[
+                future_date.toordinal(),
+                future_euribor,
+                future_inventory,
+                area_sentiment,
+                area_development
+            ]])
             
             # Predict
             pred_q50 = models[0.5].predict(future_X)[0]
