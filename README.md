@@ -87,8 +87,15 @@ Crawl active listings from real estate portals.
 ./venv/bin/python src/training/collect_data.py --target 50
 ```
 
-#### 2. Train Models (Valuation + Trends)
-Train the multimodal Fusion Model (Price) and TFT Forecaster (Trends).
+#### 2. Train Models (Full Pipeline)
+Run the complete training pipeline, including VLM preprocessing (image description generation) and Fusion Model training.
+```bash
+# Runs VLM preprocessing followed by training
+./venv/bin/python run_full_pipeline.py
+```
+
+Alternatively, you can run steps individually:
+
 ```bash
 # 2a. Train Valuation Model (requires "ollama serve" for VLM)
 ./venv/bin/python src/training/train.py --epochs 10

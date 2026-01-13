@@ -4,34 +4,42 @@ This document explains the autonomous agent system that powers data collection a
 
 ## Agent Architecture
 
-The system uses a **Factory Pattern** to spawn specialized agents for different tasks. All agents inherit from a `BaseAgent` class that handles logging, error recovery, and configuration.
+The system uses a **LangGraph** workflow (`src/cognitive/graph.py`) to orchestrate the actions of specialized agents. This graph-based approach allows for conditional routing and a "Supervisor" LLM that decides the next best action based on the current state.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> CrawlerAgent
+graph TD
+    Supervisor["Supervisor (LLM)"]
     
-    state CrawlerAgent {
-        [*] --> FetchURL
-        FetchURL --> CheckCompliance: "robots.txt"
-        CheckCompliance --> ScrapeHTML
-        ScrapeHTML --> ValidateStructure
-        ValidateStructure --> [*]
-    }
+    subgraph "Worker Nodes"
+        Crawl["Crawl Node"]
+        Norm["Normalize Node"]
+        Enrich["Enrich Node"]
+        Filter["Filter Node"]
+        Eval["Evaluate Node"]
+    end
 
-    CrawlerAgent --> SnapshotService: "Save Raw Data"
-    SnapshotService --> ProcessorAgent
+    Report["Report Node"]
+
+    Supervisor -->|Decision| Crawl
+    Supervisor -->|Decision| Norm
+    Supervisor -->|Decision| Enrich
+    Supervisor -->|Decision| Filter
+    Supervisor -->|Decision| Eval
+    Supervisor -->|Decision| Report
     
-    state ProcessorAgent {
-        [*] --> LoadRaw
-        LoadRaw --> NormalizeSchema
-        NormalizeSchema --> CleanData
-        CleanData --> Deduplicate
-        Deduplicate --> [*]
-    }
+    Crawl --> Supervisor
+    Norm --> Supervisor
+    Enrich --> Supervisor
+    Filter --> Supervisor
+    Eval --> Supervisor
     
-    ProcessorAgent --> StorageService: "Save Canonical Data"
-    StorageService --> [*]
+    Report --> END
 ```
+
+### The Supervisor Pattern
+Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `AgentState` (e.g., "Have we crawled data? Is it normalized?") and dynamically routes execution to the appropriate worker node.
+
+**Typical Flow**: `Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report`
 
 ## Agent Examples
 
