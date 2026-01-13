@@ -4,6 +4,7 @@ Replaces the static pipeline with an intelligent, adaptive workflow.
 """
 import structlog
 from typing import List, Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.cognitive.graph import create_cognitive_graph, create_initial_state
 
@@ -119,11 +120,55 @@ class CognitiveOrchestrator:
         Args:
             query: Base query
             areas: List of search paths
-            parallel: Whether to run in parallel (not yet implemented)
+            parallel: Whether to run in parallel
             
         Returns:
             Aggregated results from all areas
         """
-        # For now, just pass all areas to single run
-        # TODO: Implement parallel execution
-        return self.run(query, areas)
+        if not parallel or not areas or len(areas) <= 1:
+            return self.run(query, areas)
+
+        results = []
+        with ThreadPoolExecutor(max_workers=min(len(areas), 10)) as executor:
+            future_to_area = {
+                executor.submit(self.run, query, [area]): area
+                for area in areas
+            }
+
+            for future in as_completed(future_to_area):
+                area = future_to_area[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.error("parallel_area_failed", area=area, error=str(e))
+                    results.append({
+                        "error": str(e),
+                        "final_report": f"Analysis failed for {area}: {e}",
+                        "evaluations": [],
+                        "canonical_listings": []
+                    })
+
+        # Aggregate results
+        aggregated_results = {
+            "final_report": "",
+            "evaluations": [],
+            "canonical_listings": [],
+            "messages": []
+        }
+
+        reports = []
+        for res in results:
+            if "evaluations" in res:
+                aggregated_results["evaluations"].extend(res["evaluations"])
+            if "canonical_listings" in res:
+                aggregated_results["canonical_listings"].extend(res["canonical_listings"])
+            if "messages" in res:
+                aggregated_results["messages"].extend(res["messages"])
+            if "final_report" in res:
+                reports.append(res["final_report"])
+
+        # Combine reports
+        aggregated_results["final_report"] = "\n\n---\n\n".join(reports)
+
+        return aggregated_results
