@@ -35,6 +35,7 @@ from src.services.market_analytics import MarketAnalyticsService
 from src.services.hedonic_index import HedonicIndexService
 from src.services.conformal_calibrator import HorizonCalibratorRegistry
 from src.services.fusion_model import FusionModelService, FusionOutput
+from src.services.encoders import MultimodalEncoder
 
 logger = structlog.get_logger(__name__)
 
@@ -100,6 +101,9 @@ class ValuationService:
         self.hedonic = HedonicIndexService()
         self.fusion = FusionModelService()
         
+        # Encoder for embeddings (Vision disabled to avoid heavy dependencies)
+        self.encoder = MultimodalEncoder(enable_vision=False)
+
         # Conformal calibrators (per-horizon)
         self.calibrators = HorizonCalibratorRegistry(
             horizons=[0] + self.config.horizons_months,
@@ -316,83 +320,67 @@ class ValuationService:
                     "sample_meta": [c['meta'] for c in adjusted_comps[:5]]
                 })
 
-            # TODO: Get embeddings from cache/encode
-            # For now, use fallback in fusion model
-            adj_prices = [c['adj_price'] for c in adjusted_comps]
+            # Get embeddings and features for target
+            target_text, target_tab, target_img = self._get_embeddings(listing)
             
-            # Simple fusion fallback (no embeddings)
-            anchor_price = np.mean(adj_prices)
-            anchor_std = np.std(adj_prices) if len(adj_prices) > 1 else anchor_price * 0.1
+            # Get embeddings and features for comps
+            comp_text_list = []
+            comp_tab_list = []
+            comp_img_list = []
+            comp_prices_list = []
             
-            if tracer:
-                tracer.log("fusion_anchor", {"anchor": anchor_price, "std": anchor_std})
+            for item in adjusted_comps:
+                comp = item['comp']
+                c_text, c_tab, c_img = self._get_embeddings(comp)
 
-            # Quantiles from comp distribution
-            q10 = np.percentile(adj_prices, 10)
-            q50 = np.median(adj_prices)
-            q90 = np.percentile(adj_prices, 90)
+                comp_text_list.append(c_text)
+                comp_tab_list.append(c_tab)
+                comp_img_list.append(c_img)
+                comp_prices_list.append(item['adj_price'])
+
+            # Run fusion model
+            fusion_out = self.fusion.predict(
+                target_text_embedding=target_text,
+                target_tabular_features=target_tab,
+                target_image_embedding=target_img,
+                comp_text_embeddings=comp_text_list,
+                comp_tabular_features=comp_tab_list,
+                comp_image_embeddings=comp_img_list,
+                comp_prices=comp_prices_list
+            )
+
+            # Extract quantiles
+            q10 = fusion_out.price_quantiles.get("0.1", 0)
+            q50 = fusion_out.price_quantiles.get("0.5", 0)
+            q90 = fusion_out.price_quantiles.get("0.9", 0)
             
+            if q50 <= 0:
+                # Fallback if model fails to produce positive price
+                adj_prices = comp_prices_list
+                q10 = np.percentile(adj_prices, 10)
+                q50 = np.median(adj_prices)
+                q90 = np.percentile(adj_prices, 90)
+
             if tracer:
                 tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
             
-            # Adjust for target size if different from median comp
-            residual_adjustment = 0.0
+            anchor_price = q50
+            anchor_std = (q90 - q10) / 2  # Approx std
+            
+            # Update attention weights if returned
+            if fusion_out.attention_weights is not None:
+                attn_weights = fusion_out.attention_weights.flatten()
 
-            if listing.surface_area_sqm and listing.surface_area_sqm > 0:
-                # Extract valid comps for size regression
-                valid_comps_data = [
-                    (c['comp'].surface_area_sqm, c['adj_price'])
-                    for c in adjusted_comps
-                    if c['comp'].surface_area_sqm and c['comp'].surface_area_sqm > 0
-                ]
-
-                if len(valid_comps_data) >= 3:
-                    comp_sizes = np.array([d[0] for d in valid_comps_data])
-                    comp_prices = np.array([d[1] for d in valid_comps_data])
-
-                    # Compute median price per sqm as benchmark
-                    median_price_sqm = np.median(comp_prices / comp_sizes)
-
-                    try:
-                        # Linear regression: Price = slope * Size + intercept
-                        slope, intercept = np.polyfit(comp_sizes, comp_prices, 1)
-
-                        # Sanity check on slope (marginal value of space)
-                        # Should be positive and reasonable (e.g. < 2x median price/sqm)
-                        if slope < 0 or slope > median_price_sqm * 2:
-                            # Fallback to damped median price/sqm
-                            slope = median_price_sqm * 0.7
-
-                        # Calculate residual
-                        median_comp_size = np.median(comp_sizes)
-                        size_diff = listing.surface_area_sqm - median_comp_size
-
-                        residual_adjustment = slope * size_diff
-
-                        if tracer:
-                            tracer.log("fusion_residual_adjustment", {
-                                "slope": slope,
-                                "intercept": intercept,
-                                "median_comp_size": median_comp_size,
-                                "size_diff": size_diff,
-                                "adjustment": residual_adjustment,
-                                "median_price_sqm": median_price_sqm
-                            })
-
-                    except Exception as e:
-                        logger.warning("residual_regression_failed", error=str(e))
-
-            # Apply adjustment
-            q10 += residual_adjustment
-            q50 += residual_adjustment
-            q90 += residual_adjustment
+                for i, ce in enumerate(comp_evidence):
+                    if i < len(attn_weights):
+                        ce.attention_weight = float(attn_weights[i])
+            else:
+                 # Uniform fallback
+                uniform_weight = 1.0 / len(comp_evidence)
+                for ce in comp_evidence:
+                    ce.attention_weight = uniform_weight
             
             uncertainty = (q90 - q10) / (2 * q50) if q50 > 0 else 0.15
-            
-            # Update attention weights (uniform for now)
-            uniform_weight = 1.0 / len(comp_evidence)
-            for ce in comp_evidence:
-                ce.attention_weight = uniform_weight
             
             # Determine if hedonic fallback was used
             hedonic_fallback = any(c['meta'].get('comp_index_fallback') for c in adjusted_comps)
@@ -418,8 +406,62 @@ class ValuationService:
             
         except Exception as e:
             logger.warning("fusion_valuation_failed", error=str(e))
+            # If fusion failed (e.g. encoding error), return None to trigger fallback
             return None
-    
+
+    def _get_embeddings(self, listing: CanonicalListing) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        """
+        Helper to extract embeddings and features for a listing.
+        Returns: (text_embedding, tabular_features, image_embedding)
+        """
+        # 1. Text Embedding
+        text_parts = [listing.title]
+        if listing.description:
+            text_parts.append(listing.description)
+        if listing.vlm_description:
+            text_parts.append(listing.vlm_description)
+        full_text = " ".join(text_parts)
+
+        text_emb = self.encoder.text_encoder.encode_single(full_text)
+
+        # 2. Tabular Features
+        # Features expected by TabularEncoder default:
+        # bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, price_per_sqm, sentiment_score, has_elevator
+
+        # We need to compute price_per_sqm. For target, it might be 0 or implied.
+        # For comps, we have price.
+        price_sqm = 0.0
+        if listing.price and listing.surface_area_sqm and listing.surface_area_sqm > 0:
+            price_sqm = listing.price / listing.surface_area_sqm
+
+        features = {
+            'bedrooms': listing.bedrooms or 0,
+            'bathrooms': listing.bathrooms or 0,
+            'surface_area_sqm': listing.surface_area_sqm or 0,
+            'year_built': 0, # Not in CanonicalListing
+            'floor': listing.floor or 0,
+            'lat': listing.location.lat if listing.location else 0,
+            'lon': listing.location.lon if listing.location else 0,
+            'price_per_sqm': price_sqm,
+            'sentiment_score': 0.5, # Placeholder as we don't have easy access here
+            'has_elevator': 1.0 if listing.has_elevator else 0.0
+        }
+
+        tab_vec = self.encoder.tabular_encoder.encode(features)
+
+        # 3. Image Embedding
+        # Use cached if available
+        img_emb = None
+        if listing.image_embeddings and len(listing.image_embeddings) > 0:
+            # Assume first embedding or mean
+            # image_embeddings is List[List[float]]
+            try:
+                img_emb = np.array(listing.image_embeddings[0], dtype='float32')
+            except:
+                pass
+
+        return text_emb, tab_vec, img_emb
+
     def _try_tabular_valuation(
         self,
         listing: CanonicalListing
