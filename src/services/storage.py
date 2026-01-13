@@ -82,7 +82,6 @@ class StorageService:
                     if item.floor is not None: db_item.floor = item.floor
                     if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
                     
-                    # Fix: Persist Description
                     if item.description:
                          db_item.description = item.description
                          
