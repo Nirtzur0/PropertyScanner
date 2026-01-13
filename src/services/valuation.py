@@ -336,7 +336,56 @@ class ValuationService:
                 tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
             
             # Adjust for target size if different from median comp
-            # TODO: Implement proper residual prediction
+            residual_adjustment = 0.0
+
+            if listing.surface_area_sqm and listing.surface_area_sqm > 0:
+                # Extract valid comps for size regression
+                valid_comps_data = [
+                    (c['comp'].surface_area_sqm, c['adj_price'])
+                    for c in adjusted_comps
+                    if c['comp'].surface_area_sqm and c['comp'].surface_area_sqm > 0
+                ]
+
+                if len(valid_comps_data) >= 3:
+                    comp_sizes = np.array([d[0] for d in valid_comps_data])
+                    comp_prices = np.array([d[1] for d in valid_comps_data])
+
+                    # Compute median price per sqm as benchmark
+                    median_price_sqm = np.median(comp_prices / comp_sizes)
+
+                    try:
+                        # Linear regression: Price = slope * Size + intercept
+                        slope, intercept = np.polyfit(comp_sizes, comp_prices, 1)
+
+                        # Sanity check on slope (marginal value of space)
+                        # Should be positive and reasonable (e.g. < 2x median price/sqm)
+                        if slope < 0 or slope > median_price_sqm * 2:
+                            # Fallback to damped median price/sqm
+                            slope = median_price_sqm * 0.7
+
+                        # Calculate residual
+                        median_comp_size = np.median(comp_sizes)
+                        size_diff = listing.surface_area_sqm - median_comp_size
+
+                        residual_adjustment = slope * size_diff
+
+                        if tracer:
+                            tracer.log("fusion_residual_adjustment", {
+                                "slope": slope,
+                                "intercept": intercept,
+                                "median_comp_size": median_comp_size,
+                                "size_diff": size_diff,
+                                "adjustment": residual_adjustment,
+                                "median_price_sqm": median_price_sqm
+                            })
+
+                    except Exception as e:
+                        logger.warning("residual_regression_failed", error=str(e))
+
+            # Apply adjustment
+            q10 += residual_adjustment
+            q50 += residual_adjustment
+            q90 += residual_adjustment
             
             uncertainty = (q90 - q10) / (2 * q50) if q50 > 0 else 0.15
             
