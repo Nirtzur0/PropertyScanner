@@ -15,6 +15,7 @@ from src.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
 from src.agents.processors.idealista import IdealistaNormalizerAgent
 from src.agents.processors.pisos import PisosNormalizerAgent
 from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.agents.analysts.enricher import EnrichmentAgent
 from src.utils.compliance import ComplianceManager
 
 def chunks(lst, n):
@@ -34,6 +35,8 @@ def recrawl_database():
     norm_idealista = IdealistaNormalizerAgent()
     norm_pisos = PisosNormalizerAgent()
     norm_immobiliare = ImmobiliareNormalizerAgent()
+    
+    enricher = EnrichmentAgent(compliance=compliance)
     
     print("Fetching listings with missing data from DB...")
     
@@ -83,6 +86,11 @@ def recrawl_database():
                     norm_res = norm_idealista.run({"raw_listings": raw_listings})
                     canonical_listings = norm_res.data
                     
+                    # Enrich (Geocoding/LLM)
+                    if canonical_listings:
+                        enrich_res = enricher.run({"listings": canonical_listings})
+                        canonical_listings = enrich_res.data
+                    
                     # Save
                     if canonical_listings:
                         storage.save_listings(canonical_listings)
@@ -108,6 +116,11 @@ def recrawl_database():
                 norm_res = norm_pisos.run({"raw_listings": raw_listings})
                 canonical_listings = norm_res.data
                 
+                # Enrich (Geocoding/LLM)
+                if canonical_listings:
+                    enrich_res = enricher.run({"listings": canonical_listings})
+                    canonical_listings = enrich_res.data
+                
                 # Save
                 if canonical_listings:
                     storage.save_listings(canonical_listings)
@@ -132,6 +145,11 @@ def recrawl_database():
                 # Normalize
                 norm_res = norm_immobiliare.run({"raw_listings": raw_listings})
                 canonical_listings = norm_res.data
+                
+                # Enrich (Geocoding/LLM)
+                if canonical_listings:
+                    enrich_res = enricher.run({"listings": canonical_listings})
+                    canonical_listings = enrich_res.data
                 
                 # Save
                 if canonical_listings:

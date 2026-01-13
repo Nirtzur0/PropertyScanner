@@ -57,25 +57,66 @@ class EnrichmentAgent(BaseAgent):
             
         return None
 
+    def _reverse_geocode(self, lat: float, lon: float) -> Optional[GeoLocation]:
+        url = "https://nominatim.openstreetmap.org/reverse"
+        
+        # Rate Limiting check
+        api_domain_url = "https://nominatim.openstreetmap.org/"
+        if not self.compliance.check_and_wait(api_domain_url, rate_limit_seconds=self.config["period_seconds"]):
+             self.logger.warning("rate_limit_blocked", url=api_domain_url)
+             return None
+
+        params = {
+            "lat": lat,
+            "lon": lon,
+            "format": "json",
+            "zoom": 10
+        }
+        
+        try:
+            resp = requests.get(url, params=params, headers=self.headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and "address" in data:
+                    addr = data["address"]
+                    # Priority for city-level labels
+                    city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or addr.get("county") or "Unknown"
+                    
+                    return GeoLocation(
+                        lat=lat, # Keep original precise coords
+                        lon=lon,
+                        address_full=data.get("display_name", ""),
+                        city=city,
+                        country=addr.get("country", "Spain")
+                    )
+        except Exception as e:
+            self.logger.error("reverse_geocoding_failed", error=str(e))
+            
+        return None
+
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         """
         Input: {'listings': List[CanonicalListing]}
-        Output: List[CanonicalListing] (modified in-place or new list)
+        Output: List[CanonicalListing] (modified in-place)
         """
         listings: List[CanonicalListing] = input_payload.get("listings", [])
         enriched_count = 0
         
         for listing in listings:
-            # Skip if already has location
-            if listing.location and listing.location.lat:
+            # Case A: Has Lat/Lon but no City (or Unknown)
+            if listing.location and listing.location.lat != 0:
+                if notOrUnknown(listing.location.city):
+                    geo = self._reverse_geocode(listing.location.lat, listing.location.lon)
+                    if geo:
+                        listing.location.city = geo.city
+                        if notOrUnknown(listing.location.address_full):
+                            listing.location.address_full = geo.address_full
+                        enriched_count += 1
                 continue
                 
-            # Construct query from Title or fallback
-            # Idealista title: "Piso en Calle de Atocha, Madrid"
-            # We can use regex to extract the likely address part, or just try the whole string.
-            # "Piso en " is noise.
+            # Case B: No Lat/Lon, try Geocoding from Title
             query = listing.title
-            remove_prefixes = ["Piso en ", "Ático en ", "Chalet en ", "Estudio en "]
+            remove_prefixes = ["Piso en ", "Ático en ", "Chalet en ", "Estudio en ", "Venta de piso en "]
             for p in remove_prefixes:
                 query = query.replace(p, "")
             
@@ -85,3 +126,6 @@ class EnrichmentAgent(BaseAgent):
                 enriched_count += 1
                 
         return AgentResponse(status="success", data=listings, metadata={"enriched_count": enriched_count})
+
+def notOrUnknown(s: Optional[str]) -> bool:
+    return not s or s.lower() == "unknown"

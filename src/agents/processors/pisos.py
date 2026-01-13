@@ -239,6 +239,38 @@ class PisosNormalizerAgent(BaseAgent):
                         # Filter out thumbnails if possible by size/naming
                         image_urls.append(src)
 
+        # Address / City Extraction
+        city = "Unknown"
+        
+        # 1. Try JSON-LD Address
+        if json_data.get("address"):
+            addr = json_data["address"]
+            if isinstance(addr, dict):
+                city = addr.get("addressLocality", city)
+        
+        # 2. Fallback to URL extraction if still Unknown
+        if city == "Unknown":
+            try:
+                # https://www.pisos.com/comprar/piso-madrid_centro-id/
+                url_parts = full_url.split('/')
+                # Find the slug part (usually 2nd to last)
+                slug = url_parts[-2] if len(url_parts) >= 2 else ""
+                if slug and '-' in slug:
+                     # "piso-madrid_centro-id" -> "madrid_centro"
+                     # Logic: remove first part (piso-), remove last part (-id)
+                     # But often ID is just at the end. 
+                     # Let's try to grab the middle chunk.
+                     parts = slug.split('-')
+                     if len(parts) >= 3:
+                        # simple heuristic: take parts[1]
+                        city_raw = parts[1]
+                        # Clean underscores
+                        city_clean = city_raw.replace('_', ' ').title()
+                        if city_clean.lower() not in ["piso", "vivienda", "casa", "comprar", "alquiler"]:
+                            city = city_clean
+            except:
+                pass
+
         # ID Generation
         unique_string = f"pisos_{raw.external_id}"
         unique_hash = hashlib.md5(unique_string.encode()).hexdigest()
@@ -250,7 +282,7 @@ class PisosNormalizerAgent(BaseAgent):
             external_id=raw.external_id,
             url=full_url,
             title=title,
-            description=description, # Now populated
+            description=description,
             price=price,
             currency=Currency.EUR,
             property_type=PropertyType.APARTMENT,
@@ -273,30 +305,21 @@ class PisosNormalizerAgent(BaseAgent):
                 lat=lat, 
                 lon=lon, 
                 address_full=title, 
-                city="Unknown", 
+                city=city, 
                 neighborhood="Unknown",
                 country="ES" 
             )
         else:
-            # Fallback: Extract city from URL
-            # https://www.pisos.com/comprar/piso-madrid_centro-id/
-            try:
-                url_parts = full_url.split('/')
-                # Usually the part before the ID: piso-madrid_centro-id
-                slug = url_parts[-2]
-                city_raw = slug.split('-')[1].split('_')[0] if '-' in slug else ""
-                if city_raw and city_raw not in ["piso", "vivienda", "casa"]:
-                    from src.core.domain.schema import GeoLocation
-                    canonical.location = GeoLocation(
-                        lat=0.0,
-                        lon=0.0,
-                        address_full=title,
-                        city=city_raw.capitalize(),
-                        neighborhood="Unknown",
-                        country="ES"
-                    )
-            except:
-                pass
+            # Fallback location (0,0) but preserve City
+            from src.core.domain.schema import GeoLocation
+            canonical.location = GeoLocation(
+                lat=0.0,
+                lon=0.0,
+                address_full=title,
+                city=city,
+                neighborhood="Unknown",
+                country="ES"
+            )
 
         # Timestamps (Source)
         if json_data.get("datePosted"):

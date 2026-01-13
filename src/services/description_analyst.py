@@ -30,12 +30,13 @@ Description: "{description}"
 
 Task:
 1. Extract FACTS (boolean/int) if present: has_elevator, has_pool, has_garage, renovation_needed, floor_number (int).
-2. Determine SENTIMENT score (-1.0 to 1.0): 
+2. Extract LOCATION: `city_or_district` (string) if explicitly mentioned (e.g. "Located in Chamberi", "Heart of Madrid").
+3. Determine SENTIMENT score (-1.0 to 1.0): 
    - -1.0 = Terrible deal, major red flags, "needs work".
    - 0.0 = Neutral, factual listing.
    - 1.0 = Incredible opportunity, "must see", purely positive.
    Be CRITICAL. Marketing fluff should not boost the score much.
-3. specific_features: List of key strings e.g. ["sea_view", "high_ceilings"].
+4. specific_features: List of key strings e.g. ["sea_view", "high_ceilings"].
 
 Output ONLY valid JSON:
 {{
@@ -45,6 +46,9 @@ Output ONLY valid JSON:
     "has_garage": bool,
     "renovation_needed": bool,
     "floor": int or null
+  }},
+  "extraction": {{
+    "city_or_district": "string or null"
   }},
   "sentiment_score": float,
   "summary": "Short critical assessment"

@@ -155,17 +155,36 @@ class IdealistaNormalizerAgent(BaseAgent):
         # Deduplicate
         image_urls = list(set(image_urls))
         
-        # --- 7. ID Generation ---
-        unique_string = f"{raw.source_id}_{raw.external_id}"
-        unique_hash = hashlib.md5(unique_string.encode()).hexdigest()
+        # --- 7. Location / City Extraction ---
+        # Idealista URLs: https://www.idealista.com/inmueble/12345/
+        # Or search: https://www.idealista.com/venta-viviendas/madrid-madrid/
+        
+        city = "Unknown"
+        
+        # Method A: From Title (e.g. "Piso en Calle de Atocha, Madrid")
+        # Usually "Type in Address, City"
+        if "," in title:
+            parts = title.split(",")
+            if len(parts) >= 2:
+                potential_city = parts[-1].strip()
+                # Sanity check length
+                if len(potential_city) < 30: 
+                    city = potential_city
 
-        return CanonicalListing(
+        # Method B: From URL if Detail Page context
+        # Ideally we'd need the search URL context, but we might only have listing URL
+        # Listing URLs don't always have city. 
+        # But if we have a "Location" section in features?
+        
+        # Populate GeoLocation
+        from src.core.domain.schema import GeoLocation
+        canonical = CanonicalListing(
             id=unique_hash,
             source_id=raw.source_id,
             external_id=raw.external_id,
             url=raw.url,
             title=title,
-            description=description, # Populated!
+            description=description, 
             price=price,
             currency=Currency.EUR,
             property_type=PropertyType.APARTMENT, 
@@ -176,8 +195,17 @@ class IdealistaNormalizerAgent(BaseAgent):
             has_elevator=has_elevator,
             energy_rating=energy_rating,
             image_urls=image_urls,
-            status=ListingStatus.ACTIVE
+            status=ListingStatus.ACTIVE,
+            location=GeoLocation(
+                lat=0.0,
+                lon=0.0,
+                address_full=title,
+                city=city,
+                country="ES"
+            )
         )
+
+        return canonical
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         """
@@ -201,12 +229,7 @@ class IdealistaNormalizerAgent(BaseAgent):
         elif errors:
              status = "failure"
         else:
-             status = "success" # Empty input
-        
-        # NOTE: The article suggests parsing hidden JSON (e.g. `utag_data`).
-        # If we had the full PAGE HTML, we would regex for "var utag_data = {...}".
-        # Currently, 'RawListing' only contains the item snippet (<article>...</article>).
-        # So we stick to DOM parsing for now.
+             status = "success"
         
         return AgentResponse(
             status=status,
