@@ -207,3 +207,19 @@ class MarketProfile(BaseModel):
     inventory_trend: str # "increasing", "stable", "decreasing"
     
     projections: List[ValuationProjection] = Field(default_factory=list)
+
+class AreaIntelligence(BaseModel):
+    """
+    Crawled/External intelligence for a specific area (City/Neighborhood).
+    """
+    area_id: str # e.g. "madrid" or "madrid_chamberi"
+    last_updated: datetime = Field(default_factory=datetime.now)
+
+    # Quantitative Indicators (0.0 to 1.0 or normalized)
+    sentiment_score: float = 0.5 # 0.0=Negative, 1.0=Positive (News/Social)
+    future_development_score: float = 0.5 # 0.0=Stagnant, 1.0=Booming (Construction permits, etc)
+
+    # Raw Data / Metadata
+    news_summary: Optional[str] = None
+    top_keywords: List[str] = Field(default_factory=list)
+    source_urls: List[str] = Field(default_factory=list)
