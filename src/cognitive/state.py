@@ -30,6 +30,8 @@ class AgentState(TypedDict):
     # Metadata
     sources_crawled: List[str]
     listings_count: int
+    enriched_count: int
+    enrichment_status: str # "pending", "success", "failed", "skipped"
     
     # Final output
     final_report: Optional[str]
