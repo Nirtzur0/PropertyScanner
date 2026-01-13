@@ -316,7 +316,8 @@ class EvaluationAgent(BaseAgent):
             comps = self._retriever.retrieve_comps(
                 target=listing,
                 k=request.num_comps,
-                max_radius_km=request.geo_radius_km
+                max_radius_km=request.geo_radius_km,
+                listing_type=listing.listing_type or "sale"
             )
         
         # 2. Encode target

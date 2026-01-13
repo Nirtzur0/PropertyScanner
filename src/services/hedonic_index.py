@@ -94,6 +94,7 @@ class HedonicIndexService:
             WHERE price > 1000 
               AND surface_area_sqm > 10
               AND surface_area_sqm < 500
+              AND listing_type = 'sale'
         """
         
         if region_name:

@@ -22,6 +22,7 @@ class IndexedListing:
     int_id: int
     title: str
     price: float
+    listing_type: str # "sale" or "rent"
     surface_area_sqm: Optional[float]
     bedrooms: Optional[int]
     lat: Optional[float]
@@ -82,6 +83,7 @@ class CompRetriever:
                         int_id=item["int_id"],
                         title=item["title"],
                         price=item["price"],
+                        listing_type=item.get("listing_type", "sale"),
                         surface_area_sqm=item.get("surface_area_sqm"),
                         bedrooms=item.get("bedrooms"),
                         lat=item.get("lat"),
@@ -104,6 +106,7 @@ class CompRetriever:
                     "int_id": il.int_id,
                     "title": il.title,
                     "price": il.price,
+                "listing_type": il.listing_type,
                     "surface_area_sqm": il.surface_area_sqm,
                     "bedrooms": il.bedrooms,
                     "lat": il.lat,
@@ -171,6 +174,7 @@ class CompRetriever:
                 int_id=int_id,
                 title=l.title or "",
                 price=l.price,
+                listing_type=l.listing_type if hasattr(l, "listing_type") and l.listing_type else "sale",
                 surface_area_sqm=l.surface_area_sqm,
                 bedrooms=l.bedrooms,
                 lat=l.location.lat if l.location else None,
@@ -201,7 +205,8 @@ class CompRetriever:
         k: int = 10,
         max_radius_km: float = 5.0,
         exclude_self: bool = True,
-        strict_filters: bool = True
+        strict_filters: bool = True,
+        listing_type: Optional[str] = None
     ) -> List[CompListing]:
         """
         Find K similar listings with optional geo-filtering and logical compatibility.
@@ -247,6 +252,10 @@ class CompRetriever:
             """Helper to filter candidates with specific strictness."""
             results = []
             for il, dist in candidates:
+                # 0. Listing Type Filter
+                if listing_type and il.listing_type != listing_type:
+                    continue
+
                 # 1. Geo Filter (Hard Requirement usually)
                 if max_radius_km > 0 and target_lat and target_lon and il.lat and il.lon:
                     geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)

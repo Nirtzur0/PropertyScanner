@@ -27,7 +27,7 @@ import numpy as np
 from src.services.storage import StorageService
 from src.services.modeling import ValuationModel
 from src.core.domain.schema import (
-    CanonicalListing, DealAnalysis, CompEvidence, EvidencePack, ValuationProjection
+    CanonicalListing, DealAnalysis, CompEvidence, EvidencePack, ValuationProjection, CompListing
 )
 from src.core.domain.models import DBListing
 from src.services.forecasting import ForecastingService
@@ -36,6 +36,7 @@ from src.services.hedonic_index import HedonicIndexService
 from src.services.conformal_calibrator import HorizonCalibratorRegistry
 from src.services.fusion_model import FusionModelService, FusionOutput
 from src.services.encoders import MultimodalEncoder
+from src.services.retrieval import CompRetriever
 
 logger = structlog.get_logger(__name__)
 
@@ -100,6 +101,7 @@ class ValuationService:
         self.analytics = MarketAnalyticsService()
         self.hedonic = HedonicIndexService()
         self.fusion = FusionModelService()
+        self.retriever = CompRetriever()
         
         # Encoder for embeddings (Vision disabled to avoid heavy dependencies)
         self.encoder = MultimodalEncoder(enable_vision=False)
@@ -188,6 +190,13 @@ class ValuationService:
                 evidence.calibration_status = "calibrated"
             
             # =====================================================================
+            # STAGE 1.5: RENT ESTIMATION & YIELD
+            # =====================================================================
+
+            rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(listing, tracer)
+            rental_yield = (rent_est * 12 / fair_value * 100) if rent_est and fair_value > 0 else None
+
+            # =====================================================================
             # STAGE 2: DEAL SCORING
             # =====================================================================
             
@@ -195,6 +204,9 @@ class ValuationService:
                 listing, fair_value, uncertainty, evidence
             )
             
+            if rental_yield and rental_yield > 5.0:
+                flags.append("high_yield")
+
             # =====================================================================
             # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
             # =====================================================================
@@ -214,7 +226,7 @@ class ValuationService:
             # =====================================================================
             
             thesis = self._generate_thesis(
-                listing, fair_value, uncertainty, evidence, score
+                listing, fair_value, uncertainty, evidence, score, rental_yield
             )
             
             return DealAnalysis(
@@ -226,7 +238,8 @@ class ValuationService:
                 investment_thesis=thesis,
                 projections=projections,
                 market_signals=market_signals,
-                evidence=evidence
+                evidence=evidence,
+                rental_yield_estimate=rental_yield
             )
         finally:
             if tracer:
@@ -708,7 +721,8 @@ class ValuationService:
         fair_value: float,
         uncertainty: float,
         evidence: EvidencePack,
-        score: float
+        score: float,
+        rental_yield: float = None
     ) -> str:
         """Generate investment thesis text"""
         model_name = {
@@ -724,6 +738,9 @@ class ValuationService:
         
         if evidence.calibration_status == "calibrated":
             thesis += "Intervals conformally calibrated. "
+
+        if rental_yield:
+            thesis += f"Est. Yield: {rental_yield:.1f}%. "
         
         if score > 0.7:
             thesis += "Strong buy signal."
@@ -733,3 +750,72 @@ class ValuationService:
             thesis += "Likely overpriced."
         
         return thesis
+
+    def _compute_rental_value(
+        self,
+        listing: CanonicalListing,
+        tracer: Any = None
+    ) -> Tuple[Optional[float], float, List[CompListing]]:
+        """
+        Estimate rent using robust comparable rental listings.
+
+        Returns:
+            (estimated_monthly_rent, uncertainty_pct, rental_comps_used)
+        """
+        try:
+            # Retrieve rental comps
+            rental_comps = self.retriever.retrieve_comps(
+                target=listing,
+                k=15, # More candidates
+                max_radius_km=2.0, # Tighter radius for rent
+                listing_type="rent"
+            )
+
+            if not rental_comps:
+                return None, 0.0, []
+
+            # Weighted average
+            total_weight = 0.0
+            weighted_rent_sqm = 0.0
+
+            valid_comps = []
+
+            for comp in rental_comps:
+                # Calculate rent per sqm
+                sqm = comp.features.get('sqm', 0)
+                if sqm > 10: # Min 10 sqm
+                    rent_sqm = comp.price / sqm
+                    # Filter outliers (e.g. < 5 or > 100 EUR/m2)
+                    if 5.0 <= rent_sqm <= 100.0:
+                        weight = comp.similarity_score
+                        weighted_rent_sqm += rent_sqm * weight
+                        total_weight += weight
+                        valid_comps.append(comp)
+
+            if total_weight == 0 or not valid_comps:
+                return None, 0.0, []
+
+            est_rent_sqm = weighted_rent_sqm / total_weight
+
+            if listing.surface_area_sqm:
+                est_rent = est_rent_sqm * listing.surface_area_sqm
+            else:
+                return None, 0.0, []
+
+            # Uncertainty based on spread of comps
+            rents_sqm = [c.price / c.features['sqm'] for c in valid_comps]
+            std_rent = np.std(rents_sqm)
+            uncertainty = std_rent / est_rent_sqm if est_rent_sqm > 0 else 0.2
+
+            if tracer:
+                tracer.log("rental_valuation", {
+                    "est_rent": est_rent,
+                    "comps_count": len(valid_comps),
+                    "avg_sqm": est_rent_sqm
+                })
+
+            return est_rent, uncertainty, valid_comps
+
+        except Exception as e:
+            logger.error("rent_estimation_failed", error=str(e))
+            return None, 0.0, []
