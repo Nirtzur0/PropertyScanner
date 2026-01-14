@@ -109,6 +109,24 @@ class EnrichmentAgent(BaseAgent):
                         listing.location.city = geo.city
                         enriched_count += 1
                 continue
+            
+            # Case A.1: Has Location object but No Lat/Lon, try Geocoding from Address
+            if listing.location and listing.location.address_full:
+                 coords = self.offline_service.geocoding_service.geocode_address(listing.location.address_full)
+                 if coords:
+                     lat, lon = coords
+                     listing.location.lat = lat
+                     listing.location.lon = lon
+                     enriched_count += 1
+                     self.logger.info("geocoded_from_address", address=listing.location.address_full, lat=lat, lon=lon)
+                     
+                     # Chain: Fill City if missing
+                     if notOrUnknown(listing.location.city):
+                         city = self.offline_service.get_city(lat, lon)
+                         if city and city != "Unknown":
+                             listing.location.city = city
+                             
+                     continue
                 
             # Case B: No Lat/Lon, try Geocoding from Title
             query = listing.title

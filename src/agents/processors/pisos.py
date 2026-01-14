@@ -258,7 +258,24 @@ class PisosNormalizerAgent(BaseAgent):
             if isinstance(addr, dict):
                 city = addr.get("addressLocality", city)
         
-        # 2. Fallback to URL extraction if still Unknown
+        # 2. Try Breadcrumbs (Very reliable)
+        if city == "Unknown":
+            breadcrumbs = soup.select("div.bread-crumbs ul li a, ul.breadcrumbs li a")
+            if breadcrumbs:
+                # Usually: Home > Sale > Province > City > Zone
+                # We try to grab the City (index -2 or -3 usually?)
+                # Or just grab the text of the one containing "Pisos en..."
+                for b in breadcrumbs:
+                    txt = b.get_text(strip=True)
+                    if txt not in ["pisos.com", "Venta", "Alquiler"] and "Pisos en" not in txt:
+                        # Likely a place name
+                        # Filter out "Pisos en Madrid" -> "Madrid"
+                        clean_city = txt.replace("Pisos en ", "").replace("Casas en ", "").strip()
+                        if clean_city:
+                            city = clean_city
+                            # Keep looking for more specific ones? usually last reliable one is fine.
+        
+        # 3. Fallback to URL extraction if still Unknown
         if city == "Unknown":
             # URL structure often: .../piso-city_neighborhood...
             # e.g. pisos.com/comprar/piso-puerta_de_madrid_el_juncal28802...
@@ -299,10 +316,35 @@ class PisosNormalizerAgent(BaseAgent):
 
         # Force Location Object creation even if Lat/Lon missing, to allow enrichment
         if city == "Unknown": 
-             city = "Spain" # Fallback to country level to avoid NoneType issues downstream? No, better keep Unknown but create object.
+             # Try regex for coordinates if missing from JSON-LD
+             pass
 
-        # Ensure we always attempt to create a Location object if we have at least a Title or City
-        # Check happens below at line 304, but let's make sure city is at least passed safely.
+        # Coordinate Regex Fallback
+        if not lat or not lon:
+            # mapData = { ... "latitude": 40.4... }
+            # or "lat": 40.4
+            try:
+                # Search for latitude pattern
+                lat_match = re.search(r'["\']?latitude["\']?\s*:\s*([-\d.]+)', html)
+                lon_match = re.search(r'["\']?longitude["\']?\s*:\s*([-\d.]+)', html)
+                
+                if not lat_match:
+                     lat_match = re.search(r'["\']?lat["\']?\s*:\s*([-\d.]+)', html)
+                if not lon_match:
+                     lon_match = re.search(r'["\']?lng["\']?\s*:\s*([-\d.]+)', html)
+
+                # NEW: Check for data-params="latitude=..." style
+                if not lat_match:
+                     lat_match = re.search(r'latitude=([-\d.]+)', html)
+                if not lon_match:
+                     lon_match = re.search(r'longitude=([-\d.]+)', html)
+                     
+                if lat_match and lon_match:
+                    lat = float(lat_match.group(1))
+                    lon = float(lon_match.group(1))
+            except:
+                pass
+
 
         # ID Generation
         unique_string = f"pisos_{raw.external_id}"
@@ -327,7 +369,7 @@ class PisosNormalizerAgent(BaseAgent):
             bathrooms=bathrooms,
             floor=floor,
             has_elevator=has_elevator,
-            energy_rating=energy_rating,
+            # energy_rating removed
             
             status=ListingStatus.ACTIVE
         )

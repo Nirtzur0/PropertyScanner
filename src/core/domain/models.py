@@ -30,7 +30,6 @@ class DBListing(Base):
     surface_area_sqm = Column(Float, nullable=True)
     floor = Column(Integer, nullable=True)
     has_elevator = Column(Boolean, nullable=True)
-    energy_rating = Column(String, nullable=True)
     
     # Location (JSON/Composite in real PG, flat here for simplicity)
     address_full = Column(String, nullable=True)

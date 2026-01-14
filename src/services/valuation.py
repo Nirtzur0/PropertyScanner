@@ -456,7 +456,8 @@ class ValuationService:
             'lat': listing.location.lat if listing.location else 0,
             'lon': listing.location.lon if listing.location else 0,
             'price_per_sqm': price_sqm,
-            'sentiment_score': 0.5, # Placeholder as we don't have easy access here
+            'text_sentiment': listing.text_sentiment or 0.5,
+            'image_sentiment': listing.image_sentiment or 0.5,
             'has_elevator': 1.0 if listing.has_elevator else 0.0
         }
 

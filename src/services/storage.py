@@ -80,51 +80,32 @@ class StorageService:
                     db_item.surface_area_sqm = item.surface_area_sqm
                     db_item.updated_at = item.updated_at
                     
-                    # Explicit field mapping
-                    if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
-                    if item.floor is not None: db_item.floor = item.floor
-                    if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
-                    
                     if item.vlm_description:
                         db_item.vlm_description = item.vlm_description
                     
                     if item.description:
                          db_item.description = item.description
                          
-                         # Run Analysis if not present (simple check to avoid re-run)
-                         # NOTE: In production, use a flag or check if sentiment_score is None
-                         if db_item.sentiment_score is None:
-                             analysis = self.description_analyst.analyze(item.description)
-                             if analysis:
-                                 db_item.sentiment_score = analysis.get("sentiment_score")
-                                 db_item.analysis_meta = analysis
-                                 
-                                 if item.text_sentiment:
-                                     db_item.text_sentiment = item.text_sentiment
-                                 
-                                 if item.image_sentiment:
-                                     db_item.image_sentiment = item.image_sentiment
-                                 elif "visual_sentiment" in str(item.vlm_description):
-                                      # Fallback parsing if not set directly (edge case)
-                                      pass
-
-                                 # Fill missing facts
-                                 facts = analysis.get("facts", {})
-                                 if facts:
-                                     if db_item.has_elevator is None: db_item.has_elevator = facts.get("has_elevator")
-                                     if db_item.floor is None: db_item.floor = facts.get("floor")
+                    # Overwrite description with structured JSON if available (User Request)
+                    if hasattr(item, "analysis_meta") and item.analysis_meta:
+                        import json
+                        db_item.description = json.dumps(item.analysis_meta, ensure_ascii=False, indent=2)
+                        db_item.analysis_meta = item.analysis_meta
                     
-                    # Explicit field mapping (ensure these are updated if present in item)
+                    # AI Analysis Results
+                    if hasattr(item, "text_sentiment") and item.text_sentiment is not None:
+                         db_item.text_sentiment = item.text_sentiment
+                    if hasattr(item, "image_sentiment") and item.image_sentiment is not None:
+                         db_item.image_sentiment = item.image_sentiment
+                    if hasattr(item, "tags"):
+                         db_item.tags = item.tags
+
+                    # Explicit field mapping
                     if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
                     if item.floor is not None: db_item.floor = item.floor
                     if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
                     
-                    # Energy Rating extraction (often missing but critical)
-                    # We assume it might be passed in item or needs future extraction
-                    # For now, just ensuring property copying if added to Canonical
-                    if hasattr(item, 'energy_rating') and item.energy_rating:
-                        db_item.energy_rating = item.energy_rating
-                        
+                    
                     # Defaults for critical enums if missing
                     if not db_item.currency: db_item.currency = "EUR"
                     if not db_item.status: db_item.status = "active"

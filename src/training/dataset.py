@@ -121,23 +121,35 @@ class PropertyDataset(Dataset):
             
         return valid_listings
     
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Safely convert value to float."""
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+             # Handle special cases if needed (e.g. 'semisotano' -> -1)
+             if isinstance(value, str) and 'sota' in value.lower():
+                 return -1.0
+             return default
+    
     def _fit_tabular_encoder(self):
         """Fit tabular encoder on all listings for proper normalization."""
         feature_dicts = []
         for listing in self.listings:
             # NOTE: price is NOT included - it's the target variable
             features = {
-                "bedrooms": listing.get("bedrooms") or 0,
-                "bathrooms": listing.get("bathrooms") or 0,
-                "surface_area_sqm": listing.get("surface_area_sqm") or 0,
-                "year_built": self._extract_year_built(listing),
-                "floor": listing.get("floor") or 0,
-                "lat": listing.get("lat") or 0,
-                "lon": listing.get("lon") or 0,
-                "text_sentiment": listing.get("text_sentiment") or 0.0,
-                "image_sentiment": listing.get("image_sentiment") or 0.0,
+                "bedrooms": self._safe_float(listing.get("bedrooms")),
+                "bathrooms": self._safe_float(listing.get("bathrooms")),
+                "surface_area_sqm": self._safe_float(listing.get("surface_area_sqm")),
+                "year_built": self._safe_float(self._extract_year_built(listing)),
+                "floor": self._safe_float(listing.get("floor")),
+                "lat": self._safe_float(listing.get("lat")),
+                "lon": self._safe_float(listing.get("lon")),
+                "text_sentiment": self._safe_float(listing.get("text_sentiment")),
+                "image_sentiment": self._safe_float(listing.get("image_sentiment")),
                 "has_elevator": 1.0 if listing.get("has_elevator") else 0.0,
-                "price_per_sqm": (listing.get("price") or 0) / max(listing.get("surface_area_sqm") or 1, 1),
+                "price_per_sqm": self._safe_float(listing.get("price")) / max(self._safe_float(listing.get("surface_area_sqm"), 1.0), 1.0),
             }
             feature_dicts.append(features)
         
@@ -198,17 +210,17 @@ class PropertyDataset(Dataset):
     def _get_tabular_features(self, listing: Dict) -> np.ndarray:
         """Extract normalized tabular features (excluding price - that's the target)."""
         features = {
-            "bedrooms": listing.get("bedrooms") or 0,
-            "bathrooms": listing.get("bathrooms") or 0,
-            "surface_area_sqm": listing.get("surface_area_sqm") or 0,
-            "year_built": self._extract_year_built(listing),
-            "floor": listing.get("floor") or 0,
-            "lat": listing.get("lat") or 0,
-            "lon": listing.get("lon") or 0,
-            "text_sentiment": listing.get("text_sentiment") or 0.0,
-            "image_sentiment": listing.get("image_sentiment") or 0.0,
+            "bedrooms": self._safe_float(listing.get("bedrooms")),
+            "bathrooms": self._safe_float(listing.get("bathrooms")),
+            "surface_area_sqm": self._safe_float(listing.get("surface_area_sqm")),
+            "year_built": self._safe_float(self._extract_year_built(listing)),
+            "floor": self._safe_float(listing.get("floor")),
+            "lat": self._safe_float(listing.get("lat")),
+            "lon": self._safe_float(listing.get("lon")),
+            "text_sentiment": self._safe_float(listing.get("text_sentiment")),
+            "image_sentiment": self._safe_float(listing.get("image_sentiment")),
             "has_elevator": 1.0 if listing.get("has_elevator") else 0.0,
-            "price_per_sqm": 0,  # Will be computed from comps during inference
+            "price_per_sqm": 0.0,  # Will be computed from comps during inference
         }
         return self.tabular_encoder.encode(features)
     

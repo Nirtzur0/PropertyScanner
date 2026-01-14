@@ -205,13 +205,12 @@ class Harvester:
             try:
                 # Check DB first to avoid re-work
                 # Extract probable ID from URL (consistent hashing)
+                # Improved ID Extraction
                 clean_url = url.rstrip("/")
                 slug = clean_url.split("/")[-1]
-                parts = slug.split("_")
-                if len(parts) > 1 and parts[-1].isdigit():
-                    ext_id = parts[-1]
-                else:
-                    ext_id = slug
+                # Extract ID: Take last segment after hyphen, then part before underscore
+                # e.g. ...-55859239198_109300 -> 55859239198
+                ext_id = slug.split("-")[-1].split("_")[0]
                 
                 if not ext_id: ext_id = "unknown" # Should match below logic roughly
 
@@ -241,19 +240,10 @@ class Harvester:
                 # ID Extraction Fix:
                 # URL: .../piso-...-12345_67890/
                 # 1. Strip trailing slash
+                # Improved ID Extraction (Consistent with above)
                 clean_url = url.rstrip("/")
-                # 2. Get last segment: piso-...-12345_67890
                 slug = clean_url.split("/")[-1]
-                # 3. Get actual ID part (last chunk after _)
-                # some urls might be differnt, fallback to slug hash if needed?
-                # Usually: ..._12345
-                
-                parts = slug.split("_")
-                if len(parts) > 1 and parts[-1].isdigit():
-                    ext_id = parts[-1]
-                else:
-                    # Fallback: Just use the whole slug if structure is weird
-                    ext_id = slug
+                ext_id = slug.split("-")[-1].split("_")[0]
                 
                 if not ext_id:
                      # Very fallback

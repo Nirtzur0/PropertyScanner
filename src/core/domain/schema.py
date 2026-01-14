@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field, HttpUrl, AnyUrl
 
 class PropertyType(str, Enum):
@@ -68,7 +68,6 @@ class CanonicalListing(BaseModel):
     bathrooms: Optional[int] = None
     surface_area_sqm: Optional[float] = None
     plot_area_sqm: Optional[float] = None
-    energy_rating: Optional[str] = None
     floor: Optional[int] = None
     has_elevator: Optional[bool] = None
     
@@ -82,6 +81,7 @@ class CanonicalListing(BaseModel):
     # AI Analysis
     text_sentiment: Optional[float] = None
     image_sentiment: Optional[float] = None
+    analysis_meta: Optional[Dict[str, Any]] = None
     
     image_embeddings: Optional[List[List[float]]] = None # Cached vector embeddings
     

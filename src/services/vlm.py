@@ -145,7 +145,8 @@ class VLMImageDescriber:
                     response = ollama.generate(
                         model=self.model,
                         prompt=prompt,
-                        images=[standardized_b64]
+                        images=[standardized_b64],
+                        format='json'
                     )
                     return response.get('response', '')
                 except Exception as oe:

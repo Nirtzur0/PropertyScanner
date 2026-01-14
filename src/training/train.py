@@ -302,7 +302,7 @@ def train_model(
         
         # Create fresh model for each fold
         model = PropertyFusionModel(
-            tabular_dim=10,
+            tabular_dim=11,
             text_dim=384,
             image_dim=512,
             hidden_dim=64,

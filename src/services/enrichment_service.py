@@ -1,7 +1,9 @@
 import reverse_geocoder as rg
 import pandas as pd
 import logging
+import geolib.geohash
 from src.core.domain.models import DBListing
+from src.services.geocoding_service import GeocodingService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class EnrichmentService:
             logger.info("EnrichmentService initialized: reverse_geocoder data loaded.")
         except Exception as e:
             logger.error(f"Failed to initialize reverse_geocoder: {e}")
+            
+        self.geocoding_service = GeocodingService()
 
     def get_city(self, lat: float, lon: float) -> str:
         """
@@ -55,7 +59,32 @@ class EnrichmentService:
         """
         enriched = False
         
-        # 1. City Enrichment
+        # 1. Geocoding (if lat/lon missing)
+        if not listing.lat or not listing.lon or (listing.lat == 0 and listing.lon == 0):
+            # Try to geocode from address
+            if listing.address_full:
+                coords = self.geocoding_service.geocode_address(listing.address_full)
+                if coords:
+                    listing.lat, listing.lon = coords
+                    enriched = True
+                    logger.info(f"Geocoded address '{listing.address_full}' to ({listing.lat}, {listing.lon})")
+            
+            # Fallback: Try from Title if address failed
+            if (not listing.lat or not listing.lon) and listing.title:
+                 # Simple heuristic: remove common prefixes
+                query = listing.title
+                remove_prefixes = ["Piso en ", "Ático en ", "Chalet en ", "Estudio en ", "Venta de piso en "]
+                for p in remove_prefixes:
+                    query = query.replace(p, "")
+                
+                # Avoid geocoding very short queries or generic ones if possible, but GeocodingService handles most
+                coords = self.geocoding_service.geocode_address(query)
+                if coords:
+                    listing.lat, listing.lon = coords
+                    enriched = True
+                    logger.info(f"Geocoded title '{query}' to ({listing.lat}, {listing.lon})")
+
+        # 2. City Enrichment
         # Only enrich if (lat/lon exist) AND (city is missing OR 'Unknown')
         if listing.lat and listing.lon:
             if not listing.city or listing.city == "Unknown":
@@ -64,6 +93,15 @@ class EnrichmentService:
                     listing.city = city
                     enriched = True
         
+        # 3. Geohash Generation
+        if listing.lat and listing.lon and not listing.geohash:
+            try:
+                # geolib.geohash.encode(lat, lon, precision)
+                listing.geohash = geolib.geohash.encode(listing.lat, listing.lon, 9)
+                enriched = True
+            except Exception as e:
+                logger.warning(f"Failed to generate geohash for {listing.lat}, {listing.lon}: {e}")
+
         return enriched
 
     def enrich_dataframe(self, df: pd.DataFrame, lat_col: str = 'lat', lon_col: str = 'lon', city_col: str = 'City') -> pd.DataFrame:

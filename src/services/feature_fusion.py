@@ -33,6 +33,7 @@ class FeatureFusionService:
         if listing.description:
             try:
                 llm_data = self.analyst.analyze(listing.description)
+                listing.analysis_meta = llm_data
             except Exception as e:
                 logger.error("fusion_llm_failed", id=listing.id, error=str(e))
 
@@ -58,7 +59,7 @@ class FeatureFusionService:
                         clean_text = vlm_text.replace("```json", "").replace("```", "").strip()
                         vlm_data = json.loads(clean_text)
                 except:
-                    logger.warning("vlm_json_parse_failed", id=listing.id)
+                    logger.warning("vlm_json_parse_failed", id=listing.id, vlm_text=vlm_text)
                     vlm_data = {}
             except Exception as e:
                 logger.error("fusion_vlm_failed", id=listing.id, error=str(e))

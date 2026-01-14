@@ -61,7 +61,7 @@ if TORCH_AVAILABLE:
         """
         def __init__(
             self,
-            tabular_dim: int = 10,
+            tabular_dim: int = 11,
             text_dim: int = 384,
             image_dim: int = 512,
             hidden_dim: int = 64,  # Reduced from 256 for smaller model
