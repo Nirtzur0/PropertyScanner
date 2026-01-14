@@ -99,12 +99,14 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.p
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale
 ```
 
-**Clean Start (Reset DB)**
-To purge the database and start fresh:
+**Option C: Clean Start (Reset & Restart)**
+If you want to wipe the local database (`data/listings.db`) and all URL checkpoints To start the harvest from scratch:
 ```bash
-# WARNING: Deletes all data!
+# WARNING: This deletes all previously collected data!
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --clean
 ```
+Note: You can use `--clean` with either `--mode sale` or `--mode rent`.
+
 
 #### 2. Run Orchestrator (Agent)
 Ask the AI Agent to find specific properties (complex reasoning).
@@ -125,7 +127,7 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/streamlit run src/dashboard.py
 ```
 
 #### 5. Utilities
-Clean data (fix timestamps/locations) or other maintenance.
+Fix metadata, timestamps, or geocoding issues in the existing data (does **not** delete records).
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/clean_data.py
 ```
