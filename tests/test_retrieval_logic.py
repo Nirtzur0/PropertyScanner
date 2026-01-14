@@ -75,6 +75,7 @@ class TestCompRetrieverLogic(unittest.TestCase):
             int_id=int_id,
             title=title,
             price=100000.0,
+            listing_type="sale",
             surface_area_sqm=sqm,
             bedrooms=beds,
             lat=40.0, lon=-3.0, # Same location
