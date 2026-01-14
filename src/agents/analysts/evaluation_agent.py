@@ -6,11 +6,9 @@ import structlog
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
-from dataclasses import dataclass
 
 from src.agents.base import BaseAgent, AgentResponse
 from src.core.domain.schema import CanonicalListing, CompListing
-import numpy as np
 
 logger = structlog.get_logger()
 
@@ -136,171 +134,21 @@ class EvaluationAgent(BaseAgent):
     
     def __init__(self, enable_vision: bool = False):
         super().__init__(name="EvaluationAgent")
-        
-        # Lazy imports to avoid slow startup
-        self._retriever = None
-        self._encoder = None
-        self._retriever = None
-        self._encoder = None
-        self._tab_encoder = None
-        self._vision_encoder = None
-        self._fusion = None
+
+        # Lazy-load valuation pipeline
+        self._storage = None
+        self._valuation = None
         self._enable_vision = enable_vision
 
     def _ensure_loaded(self):
         """Lazy load components."""
-        if self._retriever is None:
-            from src.services.retrieval import CompRetriever
-            self._retriever = CompRetriever()
-            
-        if self._encoder is None:
-            from src.services.encoders import TextEncoder
-            self._encoder = TextEncoder()
-            
-        if self._tab_encoder is None:
-            from src.services.encoders import TabularEncoder
-            self._tab_encoder = TabularEncoder()
-            
-        if self._vision_encoder is None and self._enable_vision:
-            try:
-                from src.services.encoders import VisionEncoder
-                self._vision_encoder = VisionEncoder()
-            except ImportError:
-                logger.warning("vision_encoder_import_failed")
-            
-        if self._fusion is None:
-            from src.services.fusion_model import FusionModelService
-            self._fusion = FusionModelService()
+        if self._storage is None:
+            from src.services.storage import StorageService
+            self._storage = StorageService()
 
-    def _extract_features(self, item: Any) -> Dict[str, float]:
-        """Extract tabular features from Listing or CompListing."""
-        features = {}
-        
-        # Handle CanonicalListing
-        if hasattr(item, 'property_type'):
-            features['bedrooms'] = float(item.bedrooms or 0)
-            features['bathrooms'] = float(item.bathrooms or 0)
-            features['surface_area_sqm'] = float(item.surface_area_sqm or 0)
-            features['floor'] = float(item.floor or 0)
-            if item.location:
-                features['lat'] = float(item.location.lat)
-                features['lon'] = float(item.location.lon)
-            
-            # Derived
-            if item.price and item.surface_area_sqm:
-                features['price_per_sqm'] = item.price / item.surface_area_sqm
-        
-        # Handle CompListing
-        elif hasattr(item, 'features'):
-            # CompListing features are already a flat dict usually
-            # But we might need to map them if names differ
-            features['bedrooms'] = float(item.features.get('bedrooms', 0))
-            features['bathrooms'] = float(item.features.get('bathrooms', 0))
-            features['surface_area_sqm'] = float(item.features.get('sqm', 0)) # Note 'sqm' key from CompRetriever
-            features['lat'] = float(item.features.get('lat', 0))
-            features['lon'] = float(item.features.get('lon', 0))
-            
-            if item.price and features['surface_area_sqm']:
-                features['price_per_sqm'] = item.price / features['surface_area_sqm']
-                
-        return features
-
-    def _compute_deal_score(
-        self,
-        ask_price: float,
-        fair_value_q50: float,
-        fair_value_q10: float,
-        fair_value_q90: float,
-        rent_q50: float,
-        missing_fields: int,
-        weights: ScoringWeights
-    ) -> tuple:
-        """
-        Compute deal score from predictions.
-        
-        Returns:
-            (score, breakdown)
-        """
-        # Undervaluation: How much below median fair value
-        undervaluation = (fair_value_q50 - ask_price) / ask_price if ask_price > 0 else 0
-        
-        # Yield proxy: Annual rent / price
-        yield_proxy = (12 * rent_q50) / ask_price if ask_price > 0 else 0
-        
-        # Uncertainty penalty: Wide intervals = uncertain
-        interval_width = (fair_value_q90 - fair_value_q10) / fair_value_q50 if fair_value_q50 > 0 else 1.0
-        uncertainty_penalty = max(0, (interval_width - 0.2) * 2)  # Penalty above 20% width
-        
-        # Data quality penalty
-        data_quality_penalty = missing_fields * 0.05
-        
-        # Weighted combination
-        raw_score = (
-            weights.undervaluation * undervaluation +
-            weights.yield_proxy * yield_proxy -
-            weights.uncertainty_penalty * uncertainty_penalty -
-            weights.data_quality_penalty * data_quality_penalty
-        )
-        
-        # Sigmoid normalization to [0, 1]
-        import math
-        score = 1.0 / (1.0 + math.exp(-5 * (raw_score - 0.05)))
-        score = max(0.0, min(1.0, score))
-        
-        breakdown = ScoreBreakdown(
-            undervaluation=undervaluation,
-            yield_proxy=yield_proxy,
-            uncertainty_penalty=uncertainty_penalty,
-            data_quality_penalty=data_quality_penalty
-        )
-        
-        return score, breakdown
-
-    def _generate_thesis(
-        self,
-        score: float,
-        fair_value_q50: float,
-        ask_price: float,
-        interval_width: float
-    ) -> str:
-        """Generate human-readable investment thesis."""
-        delta_pct = ((fair_value_q50 - ask_price) / ask_price) * 100 if ask_price > 0 else 0
-        
-        if score >= 0.8:
-            verdict = "Strong Buy Signal"
-        elif score >= 0.6:
-            verdict = "Potential Opportunity"
-        elif score >= 0.4:
-            verdict = "Fair Value"
-        else:
-            verdict = "Overpriced / High Risk"
-            
-        confidence = "High" if interval_width < 0.15 else ("Medium" if interval_width < 0.30 else "Low")
-        
-        return (
-            f"{verdict}. Fair value estimate: {fair_value_q50:,.0f}€ "
-            f"({delta_pct:+.1f}% vs ask). Confidence: {confidence}."
-        )
-
-    def _get_image_embedding(self, listing: Any) -> Optional[np.ndarray]:
-        """Get or compute image embedding."""
-        if not self._vision_encoder:
-            return None
-            
-        # Check cache (schema update required listing.image_embeddings)
-        if hasattr(listing, 'image_embeddings') and listing.image_embeddings:
-            # Return mean of cached embeddings
-            return np.mean(listing.image_embeddings, axis=0)
-            
-        # Compute if local paths exist (development mode)
-        # In production this would fetch from URL or use pre-computed
-        if hasattr(listing, 'image_urls') and listing.image_urls:
-             # Basic placeholder: if URLs are local file paths
-             local_paths = [u for u in listing.image_urls if os.path.exists(str(u))]
-             if local_paths:
-                 return self._vision_encoder.encode_images(local_paths)
-                 
-        return None
+        if self._valuation is None:
+            from src.services.valuation import ValuationService
+            self._valuation = ValuationService(self._storage)
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         """
@@ -308,127 +156,109 @@ class EvaluationAgent(BaseAgent):
         """
         self._ensure_loaded()
         listing = request.listing
-        
-        # 1. Retrieve comparables
+
         if request.forced_comps:
-            comps = request.forced_comps
-        else:
-            comps = self._retriever.retrieve_comps(
-                target=listing,
-                k=request.num_comps,
-                max_radius_km=request.geo_radius_km,
-                listing_type=listing.listing_type or "sale"
-            )
-        
-        # 2. Encode target
-        # Mix VLM description if available
-        desc = listing.description or ""
-        if listing.vlm_description:
-            desc = f"{desc} \nVision Context: {listing.vlm_description}"
-            
-        text = f"{listing.title or ''} {desc}"
-        target_emb = self._encoder.encode_single(text)
-        target_feats = self._extract_features(listing)
-        target_tab = self._tab_encoder.encode(target_feats)
-        target_img = self._get_image_embedding(listing)
-        
-        # 3. Encode comps and get prices
-        comp_embeddings = []
-        comp_tabulars = []
-        comp_images = []
-        comp_prices = []
-        
-        for c in comps:
-            # Note: In production, we'd cache embeddings
-            comp_emb = self._encoder.encode_single(str(c.id))
-            comp_feats = self._extract_features(c)
-            comp_tab = self._tab_encoder.encode(comp_feats)
-            comp_img = self._get_image_embedding(c) # Usually None for comps unless cached
-            
-            comp_embeddings.append(comp_emb)
-            comp_tabulars.append(comp_tab)
-            comp_images.append(comp_img)
-            comp_prices.append(c.price)
-        
-        # 4. Fusion model prediction
-        fusion_output = self._fusion.predict(
-            target_text_embedding=target_emb,
-            target_tabular_features=target_tab,
-            target_image_embedding=target_img,
-            comp_text_embeddings=comp_embeddings,
-            comp_tabular_features=comp_tabulars,
-            comp_image_embeddings=comp_images,
-            comp_prices=comp_prices
-        )
-        
-        # Extract quantiles
-        fv_q = fusion_output.price_quantiles
-        rent_q = fusion_output.rent_quantiles
-        
-        # 5. Compute deal score
+            raise ValueError("forced_comps_not_supported")
+
+        config = self._valuation.config
+        orig_k = config.K_model
+        orig_radius = config.max_distance_km
+        try:
+            if request.num_comps:
+                config.K_model = request.num_comps
+            if request.geo_radius_km:
+                config.max_distance_km = request.geo_radius_km
+
+            analysis = self._valuation.evaluate_deal(listing)
+        finally:
+            config.K_model = orig_k
+            config.max_distance_km = orig_radius
+
+        if analysis.fair_value_estimate <= 0:
+            raise ValueError("invalid_fair_value")
+        if analysis.fair_value_uncertainty_pct < 0:
+            raise ValueError("invalid_uncertainty")
+
+        fv_q = {
+            "0.1": analysis.fair_value_estimate * (1 - analysis.fair_value_uncertainty_pct),
+            "0.5": analysis.fair_value_estimate,
+            "0.9": analysis.fair_value_estimate * (1 + analysis.fair_value_uncertainty_pct),
+        }
+
+        if analysis.rental_yield_estimate is None:
+            raise ValueError("missing_rental_yield")
+
+        rent_est = analysis.rental_yield_estimate * analysis.fair_value_estimate / 1200
+        if rent_est <= 0:
+            raise ValueError("invalid_rent_estimate")
+
+        if not analysis.rent_projections:
+            raise ValueError("missing_rent_projections")
+
+        rent_proj = min(analysis.rent_projections, key=lambda p: p.months_future)
+        if rent_proj.predicted_value <= 0:
+            raise ValueError("invalid_rent_projection")
+
+        rent_spread = (
+            rent_proj.confidence_interval_high - rent_proj.confidence_interval_low
+        ) / (2 * rent_proj.predicted_value)
+        if rent_spread < 0:
+            raise ValueError("invalid_rent_projection_interval")
+
+        rent_q = {
+            "0.1": rent_est * (1 - rent_spread),
+            "0.5": rent_est,
+            "0.9": rent_est * (1 + rent_spread),
+        }
+
+        # Score breakdown for explainability only (deal_score comes from valuation)
         missing_fields = sum([
             listing.bedrooms is None,
             listing.surface_area_sqm is None,
             0 if listing.location else 1,
             len(listing.image_urls or []) == 0
         ])
-        
-        # Resolve strategy
-        strategy_name = request.strategy
-        strategy = PRESET_STRATEGIES.get(strategy_name, PRESET_STRATEGIES["balanced"])
-        
-        score, breakdown = self._compute_deal_score(
-            ask_price=listing.price,
-            fair_value_q50=fv_q.get("0.5", listing.price),
-            fair_value_q10=fv_q.get("0.1", listing.price * 0.9),
-            fair_value_q90=fv_q.get("0.9", listing.price * 1.1),
-            rent_q50=rent_q.get("0.5", listing.price * 0.004),
-            missing_fields=missing_fields,
-            weights=strategy.weights
+
+        if listing.price <= 0:
+            raise ValueError("invalid_listing_price")
+
+        breakdown = ScoreBreakdown(
+            undervaluation=(analysis.fair_value_estimate - listing.price) / listing.price,
+            yield_proxy=analysis.rental_yield_estimate,
+            uncertainty_penalty=analysis.fair_value_uncertainty_pct,
+            data_quality_penalty=missing_fields * 0.05
         )
-        
-        # 6. Generate thesis
-        interval_width = (fv_q.get("0.9", 0) - fv_q.get("0.1", 0)) / fv_q.get("0.5", 1) if fv_q.get("0.5") else 0.2
-        thesis = self._generate_thesis(
-            score=score,
-            fair_value_q50=fv_q.get("0.5", listing.price),
-            ask_price=listing.price,
-            interval_width=interval_width
-        )
-        
-        # 7. Build evidence
+
         evidence = Evidence(
             top_comps=[
                 {
                     "id": c.id,
-                    "price": c.price,
+                    "price": c.adj_price,
                     "similarity": c.similarity_score,
-                    "snapshot_id": c.snapshot_id
+                    "url": c.url
                 }
-                for c in comps[:5]
+                for c in (analysis.evidence.top_comps if analysis.evidence else [])[:5]
             ],
-            attention_weights=fusion_output.attention_weights.tolist() if fusion_output.attention_weights is not None else None,
-            citations=[c.snapshot_id for c in comps if c.snapshot_id]
+            attention_weights=[
+                c.attention_weight for c in (analysis.evidence.top_comps if analysis.evidence else [])
+            ] or None,
+            citations=[
+                c.url for c in (analysis.evidence.top_comps if analysis.evidence else []) if c.url
+            ]
         )
-        
-        # 8. Flags
-        flags = {
-            "missing_images": len(listing.image_urls or []) == 0,
-            "no_location": listing.location is None,
-            "few_comps": len(comps) < 3,
-            "high_uncertainty": interval_width > 0.30
-        }
+
+        flags = {flag: True for flag in analysis.flags}
         
         return EvaluationResult(
             listing_id=listing.id,
             fair_value_quantiles=fv_q,
             rent_predicted_quantiles=rent_q,
-            deal_score=score,
+            deal_score=analysis.deal_score,
             score_breakdown=breakdown,
-            investment_thesis=thesis,
+            investment_thesis=analysis.investment_thesis or "",
             evidence=evidence,
             flags=flags,
-            strategy_used=strategy_name
+            strategy_used=request.strategy
         )
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:

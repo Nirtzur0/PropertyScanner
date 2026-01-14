@@ -59,6 +59,9 @@ class MarketAnalyticsService:
         
         X = df_clean['date_ord'].values.reshape(-1, 1)
         y = df_clean['price_sqm'].values
+
+        if len(y) < 5 or np.std(y) < 1e-6 or np.std(X) < 1e-6:
+            return 0.0, 0.0
         
         # Simple Linear Regression
         # Slope = change in price per day

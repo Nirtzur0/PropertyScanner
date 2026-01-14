@@ -18,20 +18,24 @@ def main():
     Run the cognitive property scanner agent.
     
     Usage:
-        python -m src.main "Find undervalued apartments in Madrid"
-        python -m src.main "/venta-viviendas/barcelona/"
+        python -m src.main "Find undervalued apartments in Madrid" "/venta-viviendas/madrid/centro/"
+        python -m src.main "Find investment opportunities in Barcelona" "https://www.pisos.com/venta/pisos-barcelona/"
     """
     from src.cognitive.orchestrator import CognitiveOrchestrator
     
-    # Get query from args or use default
-    query = sys.argv[1] if len(sys.argv) > 1 else "Find investment opportunities in Madrid centro"
+    if len(sys.argv) < 3:
+        print("Usage: python -m src.main \"<query>\" \"<area_url_or_path>\"")
+        return
+
+    query = sys.argv[1]
+    areas = sys.argv[2:]
     
     # Initialize cognitive orchestrator
     orchestrator = CognitiveOrchestrator()
     
     # Run analysis
     print(f"\n🧠 Starting cognitive analysis: {query}\n")
-    result = orchestrator.run(query=query)
+    result = orchestrator.run(query=query, areas=areas)
     
     # Print report
     if result.get("final_report"):
@@ -51,5 +55,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

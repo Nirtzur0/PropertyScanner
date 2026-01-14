@@ -8,6 +8,7 @@ from src.core.domain.schema import CanonicalListing
 from src.services.storage import StorageService
 from src.services.valuation import ValuationService
 from src.services.retrieval import CompRetriever
+from src.services.valuation_persister import ValuationPersister
 import pandas as pd
 from datetime import datetime
 
@@ -30,9 +31,12 @@ class Orchestrator:
         self.retriever = CompRetriever()
 
     def run_job(self, target_area: str = None):
+        if not target_area:
+            raise ValueError("target_area_required")
+
         # Determine source.
-        source_id = "idealista_es" # Default
-        search_path = target_area or "/venta-viviendas/madrid/centro/"
+        source_id = "idealista_es"
+        search_path = target_area
         
         if target_area:
             if "pisos.com" in target_area:
@@ -43,12 +47,9 @@ class Orchestrator:
                  search_path = ""
 
         # Get Source Config
-        try:
-            source_conf = next(s for s in self.sources['sources'] if s['id'] == source_id)
-        except StopIteration:
-            # Fallback or error
-            logger.error("source_config_missing", source_id=source_id)
-            return
+        source_conf = next((s for s in self.sources['sources'] if s['id'] == source_id), None)
+        if not source_conf:
+            raise ValueError(f"source_config_missing:{source_id}")
 
         logger.info("starting_job", source=source_id, target=search_path)
         
@@ -108,28 +109,34 @@ class Orchestrator:
         # 5. Valuation & Scoring
         logger.info("valuation_started")
         deals = []
-        for l in enriched_listings:
-             # Retrieve Comps
-             comps = self.retriever.retrieve_comps(l, k=5)
-             
-             # Convert CompListing back to Canonical simplified (or change Valuation to accept CompListing)
-             # For MVP, we need CanonicalListings but CompListing is different.
-             # Actually, ValuationService was typed to take List[CanonicalListing].
-             # For now, let's just cheat and not pass them or reconvert if we had full objects.
-             # BUT, retrieval returns CompListing (Lightweight). 
-             # Let's SKIP passing comps to valuation for a moment to avoid Type mismatch, 
-             # OR effectively load them.
-             
-             # BETTER PLAN: Just log we found them.
-             logger.info("comps_retrieved", id=l.external_id, count=len(comps))
-             
-             # NOTE: To fully use them in Valuation, we need to map CompListing -> CanonicalListing
-             # or update ValuationService to accept CompListing. 
-             # For this step, I will stick to what works and pass None, but verify retrieval works.
-             analysis = self.valuation.evaluate_deal(l, comps=None) 
-             deals.append(analysis)
-             if analysis.deal_score > 0.6: # Interesting deal
-                 logger.info("deal_found", id=l.external_id, title=l.title, score=f"{analysis.deal_score:.2f}", thesis=analysis.investment_thesis)
+        session = self.storage.get_session()
+        try:
+            persister = ValuationPersister(session)
+
+            for l in enriched_listings:
+                cached_val = persister.get_latest_valuation(l.id)
+                if cached_val:
+                    continue
+
+                try:
+                    analysis = self.valuation.evaluate_deal(l, comps=None)
+                except Exception as e:
+                    logger.error("valuation_failed", id=l.external_id, error=str(e))
+                    continue
+
+                persister.save_valuation(l.id, analysis)
+                deals.append(analysis)
+
+                if analysis.deal_score > 0.6:
+                    logger.info(
+                        "deal_found",
+                        id=l.external_id,
+                        title=l.title,
+                        score=f"{analysis.deal_score:.2f}",
+                        thesis=analysis.investment_thesis,
+                    )
+        finally:
+            session.close()
         
         # In a real app, we'd save 'deals' to a separate table or alert the user.
 

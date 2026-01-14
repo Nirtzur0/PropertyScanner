@@ -1,10 +1,10 @@
 # Agent Workflow
 
-This document explains the autonomous agent system that powers data collection and normalization.
+This document explains the autonomous agent system that powers data collection and valuation.
 
 ## Agent Architecture
 
-The system uses a **LangGraph** workflow (`src/cognitive/graph.py`) to orchestrate the actions of specialized agents. This graph-based approach allows for conditional routing and a "Supervisor" LLM that decides the next best action based on the current state.
+The system uses a **LangGraph** workflow (`src/cognitive/graph.py`) to orchestrate the actions of specialized agents. The Supervisor LLM decides the next action based on the current state; no rule-based fallback is used.
 
 ```mermaid
 graph TD
@@ -41,6 +41,12 @@ Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `Ag
 
 **Typical Flow**: `Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report`
 
+## Operational Requirements
+- Provide explicit `areas` (search paths or URLs) when invoking the cognitive orchestrator.
+- Provide at least one LLM provider (Ollama, Gemini, or OpenAI) for Supervisor + Report.
+- Provide a strategy in state (default: `balanced`) if running the graph directly.
+- Evaluation is delegated to `ValuationService` and requires comps, indices, and model artifacts.
+
 ## Agent Examples
 
 ### 1. `PisosCrawlerAgent`
@@ -48,7 +54,7 @@ Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `Ag
 - **Strategy**: 
     - Respects `robots.txt` and rate limits.
     - Uses randomized User-Agents.
-    - extracting JSON-LD structured data when available, falling back to CSS selectors.
+    - extracting JSON-LD structured data when available, plus CSS selectors for robustness.
 
 ### 2. `PisosNormalizerAgent`
 - **Goal**: Convert disparate field names into our `CanonicalListing` Pydantic model.

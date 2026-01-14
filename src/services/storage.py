@@ -2,10 +2,12 @@ import structlog
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import create_engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 from src.core.domain.models import Base, DBListing
 from src.core.domain.schema import CanonicalListing
+from src.core.migrations import run_migrations
 from src.services.enrichment_service import EnrichmentService
 from src.services.enrichment_service import EnrichmentService
 from src.services.description_analyst import DescriptionAnalyst
@@ -15,8 +17,26 @@ logger = structlog.get_logger()
 
 class StorageService:
     def __init__(self, db_url: str = "sqlite:///data/listings.db"):
-        self.engine = create_engine(db_url)
+        connect_args = {}
+        try:
+            url = make_url(db_url)
+            if url.drivername.startswith("sqlite"):
+                connect_args["timeout"] = 30
+        except Exception:
+            pass
+
+        self.engine = create_engine(db_url, connect_args=connect_args)
         Base.metadata.create_all(self.engine)
+
+        # Ensure auxiliary tables/columns exist (indices, macro tables, etc).
+        # SQLAlchemy `create_all` won't evolve existing SQLite schemas.
+        try:
+            url = make_url(db_url)
+            if url.drivername.startswith("sqlite") and url.database and url.database != ":memory:":
+                run_migrations(db_path=url.database)
+        except Exception as e:
+            logger.warning("migrations_failed", error=str(e))
+
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.enrichment_service = EnrichmentService()
         self.description_analyst = DescriptionAnalyst()
@@ -109,7 +129,9 @@ class StorageService:
                     # Defaults for critical enums if missing
                     if not db_item.currency: db_item.currency = "EUR"
                     if not db_item.status: db_item.status = "active"
-                    if not db_item.property_type and item.property_type: db_item.property_type = str(item.property_type)
+                    if not db_item.property_type and item.property_type:
+                        prop = item.property_type
+                        db_item.property_type = prop.value if hasattr(prop, "value") else str(prop)
 
                     # Handle Location if present
                     if item.location:

@@ -67,7 +67,10 @@ class CognitiveOrchestrator:
             - messages: Agent reasoning trace
         """
         logger.info("cognitive_run_started", query=query, areas=areas)
-        
+
+        if not areas:
+            raise ValueError("areas_required")
+
         initial_state = create_initial_state(query, areas)
         
         config = {

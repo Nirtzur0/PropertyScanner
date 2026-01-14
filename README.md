@@ -52,7 +52,7 @@ The system operates as a set of autonomous agents and processors.
     *   They invoke the local VLM to generate "visual inspections" (e.g., *"Modern kitchen, stone countertops, good conversational light"*).
 
 3.  **Training**:
-    *   The `Trainer` creates dynamic batches of (Target + Comps).
+    *   The `Trainer` creates dynamic batches of (Target + Comps) using strict geo + property_type + size filters.
     *   It optimizes the Fusion Model to minimize error in the median price prediction while calibrating uncertainty.
 
 ---
@@ -86,6 +86,8 @@ All commands below assume you're in the project root.
 
 #### 1. Collect Data (Bulk Harvest)
 Run the bulk harvester. You **must** run in Rent mode first to build the yield estimator stats.
+By default, `harvest_batch.py` builds a Spain-wide (province-level) area list from Pisos.com's `mapaweb` pages to avoid geo-redirects to a single city. To scope the crawl, pass `--start-url` (single area) or `--areas-file` (JSON list of start URLs).
+The harvester de-dupes URLs using a disk-backed store at `data/harvest_seen_urls.sqlite3` to keep memory usage stable even for very large crawls.
 
 **Option A: Harvest Rentals (Baseline)**
 *Required for Yield Estimation.*
@@ -98,20 +100,41 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.p
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale
 ```
+Example: harvest only Madrid sales:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --start-url "https://www.pisos.com/venta/pisos-madrid/"
+```
 
 **Option C: Clean Start (Reset & Restart)**
-If you want to wipe the local database (`data/listings.db`) and all URL checkpoints To start the harvest from scratch:
+If you want to wipe the local database (`data/listings.db`), harvest state, and URL de-dupe store to start from scratch:
 ```bash
 # WARNING: This deletes all previously collected data!
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --clean
 ```
 Note: You can use `--clean` with either `--mode sale` or `--mode rent`.
 
+Tip: If you run out of memory, reduce parallelism and/or batch size:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --max-workers 1 --process-batch-size 10 --no-vlm
+```
+
+#### 1b. Build Indices (for Projections)
+Price/rent projections use market + macro time series. After harvesting, build/update them:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_market_data.py
+```
+
+#### 1c. Build Vector Index (for Comps)
+Comparable retrieval requires the FAISS vector index:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_vector_index.py
+```
 
 #### 2. Run Orchestrator (Agent)
 Ask the AI Agent to find specific properties (complex reasoning).
+Requires at least one explicit area/URL.
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/main.py "Find undervalued apartments in Madrid"
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/main.py "Find undervalued apartments in Madrid" "https://www.pisos.com/venta/pisos-madrid/"
 ```
 
 #### 3. Train Models
@@ -119,11 +142,16 @@ Run the training pipeline (requires data in `data/listings.db`).
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/training/train.py --epochs 10
 ```
+This writes `models/fusion_model.pt` and `models/fusion_config.json`.
 
 #### 4. Launch Dashboard
 Visualize listings, valuations, and VLM insights.
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/streamlit run src/dashboard.py
+```
+Tip: For large databases, precompute/cache valuations (includes price/rent/yield projections) so the dashboard doesn’t re-run models on every refresh:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/backfill_valuations.py --listing-type sale
 ```
 
 #### 5. Utilities

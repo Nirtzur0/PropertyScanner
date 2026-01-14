@@ -31,6 +31,8 @@ class ValuationPersister:
         evidence_dict = {
             "thesis": analysis.investment_thesis,
             "projections": [p.dict() for p in analysis.projections],
+            "rent_projections": [p.dict() for p in getattr(analysis, "rent_projections", [])],
+            "yield_projections": [p.dict() for p in getattr(analysis, "yield_projections", [])],
             "signals": analysis.market_signals,
             "evidence": analysis.evidence.dict() if analysis.evidence else {}
         }

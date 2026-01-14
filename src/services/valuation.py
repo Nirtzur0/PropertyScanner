@@ -2,14 +2,15 @@
 Valuation Service (SOTA V3)
 
 Orchestrates property valuation with defensible methodology:
-1. Fusion Model as PRIMARY (comps-based with time-adjustment)
-2. Tabular ML as fallback
-3. Heuristic as final fallback
+1. Fusion Model with time-adjusted comps
+2. Market-drift projections via index regime
+3. Rent comps + yield projections (no implicit fallbacks)
 
 Key Features:
 - Comps are TIME-ADJUSTED using hedonic index before fusion
 - "Today" value: comps-anchor + residual
 - "Future" value: V_t × market drift (no double-counting)
+- Rental yield computed from explicit rent comps + rent index drift
 - All intervals calibrated per-horizon via conformal prediction
 - Structured evidence pack for auditability
 
@@ -25,9 +26,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from src.services.storage import StorageService
-from src.services.modeling import ValuationModel
+from sqlalchemy import text
 from src.core.domain.schema import (
-    CanonicalListing, DealAnalysis, CompEvidence, EvidencePack, ValuationProjection, CompListing
+    CanonicalListing, DealAnalysis, CompEvidence, EvidencePack, ValuationProjection, GeoLocation
 )
 from src.core.domain.models import DBListing
 from src.services.forecasting import ForecastingService
@@ -54,6 +55,8 @@ class ValuationConfig:
     max_distance_km: float = 10.0
     max_age_months: int = 24
     min_comps_for_fusion: int = 5
+    min_rent_comps: int = 5
+    rent_radius_km: float = 2.0
     
     # Horizons
     horizons_months: List[int] = None
@@ -80,9 +83,8 @@ class ValuationService:
     
     Orchestration hierarchy:
     1. Fusion Model (comps-based cross-attention)
-    2. Tabular ML (LightGBM quantile regression)
-    3. Heuristic (market average)
-    
+    Fusion-only valuation with time-adjusted comps.
+
     All comp prices are time-adjusted before use.
     All prediction intervals are conformally calibrated.
     """
@@ -96,7 +98,6 @@ class ValuationService:
         self.config = config or DEFAULT_CONFIG
         
         # Services
-        self.ml_model = ValuationModel()
         self.forecasting = ForecastingService()
         self.analytics = MarketAnalyticsService()
         self.hedonic = HedonicIndexService()
@@ -112,6 +113,144 @@ class ValuationService:
             alpha=self.config.conformal_alpha,
             window_size=self.config.conformal_window
         )
+
+    def _normalize_property_type(self, value: Optional[str]) -> str:
+        if value is None:
+            return "apartment"
+        text = str(value).strip()
+        if "." in text:
+            text = text.split(".")[-1]
+        return text.lower() or "apartment"
+
+    def _to_int(self, value: Optional[object]) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("", "null", "none"):
+                return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _to_float(self, value: Optional[object]) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("", "null", "none"):
+                return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _db_to_canonical(self, db_item: DBListing) -> CanonicalListing:
+        loc = None
+        if db_item.city or db_item.lat or db_item.lon:
+            loc = GeoLocation(
+                lat=db_item.lat,
+                lon=db_item.lon,
+                address_full=db_item.address_full or db_item.title,
+                city=db_item.city or "Unknown",
+                country="ES",
+            )
+
+        return CanonicalListing(
+            id=db_item.id,
+            source_id=db_item.source_id,
+            external_id=db_item.external_id,
+            url=str(db_item.url),
+            title=db_item.title,
+            description=db_item.description,
+            price=db_item.price,
+            currency=db_item.currency,
+            listing_type=getattr(db_item, "listing_type", "sale") or "sale",
+            property_type=self._normalize_property_type(db_item.property_type),
+            bedrooms=self._to_int(db_item.bedrooms),
+            bathrooms=self._to_int(db_item.bathrooms),
+            surface_area_sqm=self._to_float(db_item.surface_area_sqm),
+            floor=self._to_int(db_item.floor),
+            has_elevator=db_item.has_elevator,
+            location=loc,
+            image_urls=db_item.image_urls or [],
+            vlm_description=db_item.vlm_description,
+            text_sentiment=db_item.text_sentiment,
+            image_sentiment=db_item.image_sentiment,
+            analysis_meta=db_item.analysis_meta,
+            listed_at=db_item.listed_at,
+            updated_at=db_item.updated_at,
+            status=db_item.status,
+            tags=db_item.tags or [],
+        )
+
+    def _retrieve_comps(self, listing: CanonicalListing) -> Tuple[List[CanonicalListing], Dict[str, float]]:
+        comps = self.retriever.retrieve_comps(
+            target=listing,
+            k=self.config.K_model,
+            max_radius_km=self.config.max_distance_km,
+            listing_type=listing.listing_type or "sale",
+        )
+        if len(comps) < self.config.min_comps_for_fusion:
+            raise ValueError("insufficient_comps")
+
+        similarity_by_id = {c.id: c.similarity_score for c in comps}
+        ids = [c.id for c in comps]
+
+        session = self.storage.get_session()
+        try:
+            rows = session.query(DBListing).filter(DBListing.id.in_(ids)).all()
+        finally:
+            session.close()
+
+        by_id = {r.id: r for r in rows}
+        hydrated = []
+        for comp_id in ids:
+            row = by_id.get(comp_id)
+            if row:
+                hydrated.append(self._db_to_canonical(row))
+
+        if len(hydrated) < self.config.min_comps_for_fusion:
+            raise ValueError("insufficient_hydrated_comps")
+
+        return hydrated, similarity_by_id
+
+    def _retrieve_rent_comps(self, listing: CanonicalListing) -> Tuple[List[CanonicalListing], Dict[str, float]]:
+        comps = self.retriever.retrieve_comps(
+            target=listing,
+            k=self.config.K_model,
+            max_radius_km=self.config.rent_radius_km,
+            listing_type="rent",
+        )
+        if len(comps) < self.config.min_rent_comps:
+            raise ValueError("insufficient_rent_comps")
+
+        similarity_by_id = {c.id: c.similarity_score for c in comps}
+        ids = [c.id for c in comps]
+
+        session = self.storage.get_session()
+        try:
+            rows = (
+                session.query(DBListing)
+                .filter(DBListing.id.in_(ids))
+                .filter(DBListing.listing_type == "rent")
+                .all()
+            )
+        finally:
+            session.close()
+
+        by_id = {r.id: r for r in rows}
+        hydrated = []
+        for comp_id in ids:
+            row = by_id.get(comp_id)
+            if row:
+                hydrated.append(self._db_to_canonical(row))
+
+        if len(hydrated) < self.config.min_rent_comps:
+            raise ValueError("insufficient_hydrated_rent_comps")
+
+        return hydrated, similarity_by_id
     
     # =========================================================================
     # MAIN ENTRY POINT
@@ -145,13 +284,20 @@ class ValuationService:
         try:
             # Get region for index lookups
             region_id = self._get_region_id(listing)
+            if region_id == "unknown":
+                raise ValueError("missing_region_id")
             
             # =====================================================================
             # STAGE 1: SPOT VALUATION ("Today's Fair Value")
             # =====================================================================
             
+            if comps is None:
+                comps, similarity_by_id = self._retrieve_comps(listing)
+            else:
+                similarity_by_id = {}
+
             fair_value, uncertainty, evidence = self._compute_spot_value(
-                listing, comps, region_id, valuation_date, tracer
+                listing, comps, similarity_by_id, region_id, valuation_date, tracer
             )
             
             if tracer:
@@ -193,40 +339,53 @@ class ValuationService:
             # STAGE 1.5: RENT ESTIMATION & YIELD
             # =====================================================================
 
-            rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(listing, tracer)
-            rental_yield = (rent_est * 12 / fair_value * 100) if rent_est and fair_value > 0 else None
+            rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(
+                listing, region_id, valuation_date, tracer
+            )
+            if fair_value <= 0:
+                raise ValueError("invalid_fair_value")
+            rental_yield = (rent_est * 12 / fair_value * 100)
 
             # =====================================================================
             # STAGE 2: DEAL SCORING
             # =====================================================================
             
+            market_signals = self._get_market_signals(listing, region_id, valuation_date)
             score, flags = self._compute_deal_score(
-                listing, fair_value, uncertainty, evidence
+                listing, fair_value, uncertainty, evidence, market_signals, rental_yield
             )
-            
-            if rental_yield and rental_yield > 5.0:
-                flags.append("high_yield")
 
             # =====================================================================
             # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
             # =====================================================================
             
-            projections = self._compute_projections(
-                fair_value, region_id, valuation_date
+            projections = self._compute_projections(fair_value, region_id, valuation_date)
+
+            # =====================================================================
+            # STAGE 3b: RENT & YIELD PROJECTIONS
+            # =====================================================================
+
+            rent_projections = self.forecasting.forecast_rent(
+                region_id=region_id,
+                current_monthly_rent=rent_est,
+                horizons_months=self.config.horizons_months,
+            )
+
+            yield_projections = self._compute_yield_projections(
+                price_projections=projections,
+                rent_projections=rent_projections,
             )
             
             # =====================================================================
             # STAGE 4: MARKET SIGNALS
             # =====================================================================
             
-            market_signals = self._get_market_signals(listing)
-            
             # =====================================================================
             # BUILD RESULT
             # =====================================================================
             
             thesis = self._generate_thesis(
-                listing, fair_value, uncertainty, evidence, score, rental_yield
+                listing, fair_value, uncertainty, evidence, score, rental_yield, market_signals
             )
             
             return DealAnalysis(
@@ -237,6 +396,8 @@ class ValuationService:
                 flags=flags,
                 investment_thesis=thesis,
                 projections=projections,
+                rent_projections=rent_projections,
+                yield_projections=yield_projections,
                 market_signals=market_signals,
                 evidence=evidence,
                 rental_yield_estimate=rental_yield
@@ -253,174 +414,157 @@ class ValuationService:
         self,
         listing: CanonicalListing,
         comps: Optional[List[CanonicalListing]],
+        similarity_by_id: Dict[str, float],
         region_id: str,
         valuation_date: datetime,
         tracer: Any = None
     ) -> Tuple[float, float, EvidencePack]:
         """
-        Compute today's fair value using tiered approach.
-        
-        Hierarchy:
-        1. Fusion Model (if comps >= min_comps and embeddings available)
-        2. Tabular ML (if ML model trained)
-        3. Heuristic (market average)
+        Compute today's fair value using fusion-only approach.
+        Requires a minimum number of comps and a trained fusion model.
         """
-        
-        # Try Fusion Model first
-        if comps and len(comps) >= self.config.min_comps_for_fusion:
-            result = self._try_fusion_valuation(
-                listing, comps, region_id, valuation_date, tracer
-            )
-            if result:
-                return result
-        
-        # Fallback to Tabular ML
-        result = self._try_tabular_valuation(listing)
-        if result:
-            return result
-        
-        # Final fallback: Heuristic
-        return self._heuristic_valuation(listing)
+        if not comps or len(comps) < self.config.min_comps_for_fusion:
+            raise ValueError("insufficient_comps_for_fusion")
+
+        return self._try_fusion_valuation(
+            listing, comps, similarity_by_id, region_id, valuation_date, tracer
+        )
     
     def _try_fusion_valuation(
         self,
         listing: CanonicalListing,
         comps: List[CanonicalListing],
+        similarity_by_id: Dict[str, float],
         region_id: str,
         valuation_date: datetime,
         tracer: Any = None
-    ) -> Optional[Tuple[float, float, EvidencePack]]:
+    ) -> Tuple[float, float, EvidencePack]:
         """
         Attempt Fusion Model valuation with time-adjusted comps.
         """
+        # Time-adjust comp prices
+        adjusted_comps = []
+        comp_evidence = []
+
+        for comp in comps[:self.config.K_model]:
+            comp_timestamp = comp.listed_at or comp.updated_at
+            if not comp_timestamp:
+                continue
+
+            adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
+                raw_price=comp.price,
+                region_id=region_id,
+                comp_timestamp=comp_timestamp,
+                target_timestamp=valuation_date
+            )
+
+            if meta.get("comp_index_fallback") or meta.get("target_index_fallback"):
+                raise ValueError("hedonic_index_fallback_detected")
+
+            adjusted_comps.append({
+                'comp': comp,
+                'adj_price': adj_price,
+                'adj_factor': adj_factor,
+                'meta': meta
+            })
+
+            comp_evidence.append(CompEvidence(
+                id=comp.id,
+                url=str(comp.url) if comp.url else None,
+                observed_month=comp_timestamp.strftime("%Y-%m"),
+                raw_price=comp.price,
+                adj_factor=adj_factor,
+                adj_price=adj_price,
+                attention_weight=0.0,  # Updated after fusion
+                is_sold=comp.status.value == "sold" if comp.status else False,
+                similarity_score=similarity_by_id.get(comp.id)
+            ))
+
+        if len(adjusted_comps) < self.config.min_comps_for_fusion:
+            raise ValueError("insufficient_time_adjusted_comps")
+
+        if tracer:
+            tracer.log("fusion_time_adjustment", {
+                "comps_count": len(adjusted_comps),
+                "sample_adj_factors": [c['adj_factor'] for c in adjusted_comps[:5]],
+                "sample_meta": [c['meta'] for c in adjusted_comps[:5]]
+            })
+
+        # Get embeddings and features for target
+        target_text, target_tab, target_img = self._get_embeddings(listing)
+
+        # Get embeddings and features for comps
+        comp_text_list = []
+        comp_tab_list = []
+        comp_img_list = []
+        comp_prices_list = []
+
+        for item in adjusted_comps:
+            comp = item['comp']
+            c_text, c_tab, c_img = self._get_embeddings(comp)
+
+            comp_text_list.append(c_text)
+            comp_tab_list.append(c_tab)
+            comp_img_list.append(c_img)
+            comp_prices_list.append(item['adj_price'])
+
+        # Run fusion model
+        fusion_out = self.fusion.predict(
+            target_text_embedding=target_text,
+            target_tabular_features=target_tab,
+            target_image_embedding=target_img,
+            comp_text_embeddings=comp_text_list,
+            comp_tabular_features=comp_tab_list,
+            comp_image_embeddings=comp_img_list,
+            comp_prices=comp_prices_list
+        )
+
+        # Extract quantiles
         try:
-            # Time-adjust comp prices
-            adjusted_comps = []
-            comp_evidence = []
-            
-            for comp in comps[:self.config.K_model]:
-                comp_timestamp = comp.listed_at or comp.updated_at or valuation_date
-                
-                adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
-                    raw_price=comp.price,
-                    region_id=region_id,
-                    comp_timestamp=comp_timestamp,
-                    target_timestamp=valuation_date
-                )
-                
-                adjusted_comps.append({
-                    'comp': comp,
-                    'adj_price': adj_price,
-                    'adj_factor': adj_factor,
-                    'meta': meta
-                })
-                
-                comp_evidence.append(CompEvidence(
-                    id=comp.id,
-                    url=str(comp.url) if comp.url else None,
-                    observed_month=comp_timestamp.strftime("%Y-%m"),
-                    raw_price=comp.price,
-                    adj_factor=adj_factor,
-                    adj_price=adj_price,
-                    attention_weight=0.0,  # Will be updated after fusion
-                    is_sold=comp.status.value == "sold" if comp.status else False
-                ))
-            
-            if tracer:
-                tracer.log("fusion_time_adjustment", {
-                    "comps_count": len(adjusted_comps),
-                    "sample_adj_factors": [c['adj_factor'] for c in adjusted_comps[:5]],
-                    "sample_meta": [c['meta'] for c in adjusted_comps[:5]]
-                })
+            q10 = float(fusion_out.price_quantiles["0.1"])
+            q50 = float(fusion_out.price_quantiles["0.5"])
+            q90 = float(fusion_out.price_quantiles["0.9"])
+        except Exception as exc:
+            raise ValueError("missing_fusion_quantiles") from exc
 
-            # Get embeddings and features for target
-            target_text, target_tab, target_img = self._get_embeddings(listing)
-            
-            # Get embeddings and features for comps
-            comp_text_list = []
-            comp_tab_list = []
-            comp_img_list = []
-            comp_prices_list = []
-            
-            for item in adjusted_comps:
-                comp = item['comp']
-                c_text, c_tab, c_img = self._get_embeddings(comp)
+        if q50 <= 0 or q10 <= 0 or q90 <= 0 or not (q10 <= q50 <= q90):
+            raise ValueError("invalid_fusion_quantiles")
 
-                comp_text_list.append(c_text)
-                comp_tab_list.append(c_tab)
-                comp_img_list.append(c_img)
-                comp_prices_list.append(item['adj_price'])
+        if tracer:
+            tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
 
-            # Run fusion model
-            fusion_out = self.fusion.predict(
-                target_text_embedding=target_text,
-                target_tabular_features=target_tab,
-                target_image_embedding=target_img,
-                comp_text_embeddings=comp_text_list,
-                comp_tabular_features=comp_tab_list,
-                comp_image_embeddings=comp_img_list,
-                comp_prices=comp_prices_list
-            )
+        anchor_price = q50
+        anchor_std = (q90 - q10) / 2
 
-            # Extract quantiles
-            q10 = fusion_out.price_quantiles.get("0.1", 0)
-            q50 = fusion_out.price_quantiles.get("0.5", 0)
-            q90 = fusion_out.price_quantiles.get("0.9", 0)
-            
-            if q50 <= 0:
-                # Fallback if model fails to produce positive price
-                adj_prices = comp_prices_list
-                q10 = np.percentile(adj_prices, 10)
-                q50 = np.median(adj_prices)
-                q90 = np.percentile(adj_prices, 90)
+        if fusion_out.attention_weights is None:
+            raise ValueError("missing_attention_weights")
 
-            if tracer:
-                tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
-            
-            anchor_price = q50
-            anchor_std = (q90 - q10) / 2  # Approx std
-            
-            # Update attention weights if returned
-            if fusion_out.attention_weights is not None:
-                attn_weights = fusion_out.attention_weights.flatten()
+        attn_weights = fusion_out.attention_weights.flatten()
+        for i, ce in enumerate(comp_evidence):
+            if i < len(attn_weights):
+                ce.attention_weight = float(attn_weights[i])
 
-                for i, ce in enumerate(comp_evidence):
-                    if i < len(attn_weights):
-                        ce.attention_weight = float(attn_weights[i])
-            else:
-                 # Uniform fallback
-                uniform_weight = 1.0 / len(comp_evidence)
-                for ce in comp_evidence:
-                    ce.attention_weight = uniform_weight
-            
-            uncertainty = (q90 - q10) / (2 * q50) if q50 > 0 else 0.15
-            
-            # Determine if hedonic fallback was used
-            hedonic_fallback = any(c['meta'].get('comp_index_fallback') for c in adjusted_comps)
-            fallback_reasons = [c['meta'].get('fallback_reason') for c in adjusted_comps if c['meta'].get('fallback_reason')]
-            
-            # Comp date range
-            comp_months = [ce.observed_month for ce in comp_evidence]
-            comp_date_range = f"{min(comp_months)} to {max(comp_months)}" if comp_months else None
-            
-            evidence = EvidencePack(
-                model_used="fusion",
-                anchor_price=anchor_price,
-                anchor_std=anchor_std,
-                top_comps=comp_evidence,
-                hedonic_fallback=hedonic_fallback,
-                hedonic_fallback_reason=fallback_reasons[0] if fallback_reasons else None,
-                calibration_status="uncalibrated",
-                valuation_date=valuation_date.strftime("%Y-%m-%d"),
-                comp_date_range=comp_date_range
-            )
-            
-            return (q50, uncertainty, evidence)
-            
-        except Exception as e:
-            logger.warning("fusion_valuation_failed", error=str(e))
-            # If fusion failed (e.g. encoding error), return None to trigger fallback
-            return None
+        comp_evidence.sort(key=lambda ce: ce.attention_weight, reverse=True)
+
+        uncertainty = (q90 - q10) / (2 * q50)
+
+        # Comp date range
+        comp_months = [ce.observed_month for ce in comp_evidence]
+        comp_date_range = f"{min(comp_months)} to {max(comp_months)}" if comp_months else None
+
+        evidence = EvidencePack(
+            model_used="fusion",
+            anchor_price=anchor_price,
+            anchor_std=anchor_std,
+            top_comps=comp_evidence,
+            hedonic_fallback=False,
+            hedonic_fallback_reason=None,
+            calibration_status="uncalibrated",
+            valuation_date=valuation_date.strftime("%Y-%m-%d"),
+            comp_date_range=comp_date_range
+        )
+
+        return (q50, uncertainty, evidence)
 
     def _get_embeddings(self, listing: CanonicalListing) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
@@ -476,74 +620,6 @@ class ValuationService:
 
         return text_emb, tab_vec, img_emb
 
-    def _try_tabular_valuation(
-        self,
-        listing: CanonicalListing
-    ) -> Optional[Tuple[float, float, EvidencePack]]:
-        """
-        Attempt Tabular ML valuation.
-        """
-        try:
-            ml_est = self.ml_model.predict(listing)
-            est_price_sqm = ml_est.get("q50", 0.0)
-            
-            if est_price_sqm <= 0:
-                return None
-            
-            q10 = ml_est.get("q10", est_price_sqm * 0.85)
-            q90 = ml_est.get("q90", est_price_sqm * 1.15)
-            
-            if listing.surface_area_sqm and listing.surface_area_sqm > 0:
-                fair_value = listing.surface_area_sqm * est_price_sqm
-                val_q10 = listing.surface_area_sqm * q10
-                val_q90 = listing.surface_area_sqm * q90
-            else:
-                return None
-            
-            uncertainty = (val_q90 - val_q10) / (2 * fair_value) if fair_value > 0 else 0.2
-            
-            evidence = EvidencePack(
-                model_used="tabular_ml",
-                anchor_price=fair_value,
-                anchor_std=fair_value * uncertainty,
-                top_comps=[],
-                calibration_status="uncalibrated"
-            )
-            
-            return (fair_value, uncertainty, evidence)
-            
-        except Exception as e:
-            logger.warning("tabular_valuation_failed", error=str(e))
-            return None
-    
-    def _heuristic_valuation(
-        self,
-        listing: CanonicalListing
-    ) -> Tuple[float, float, EvidencePack]:
-        """
-        Fallback heuristic valuation using market averages.
-        """
-        market_avg_sqm, sample_size = self._get_market_average_sqm(
-            listing.location.city if listing.location else None
-        )
-        
-        if listing.surface_area_sqm and market_avg_sqm > 0:
-            fair_value = listing.surface_area_sqm * market_avg_sqm
-        else:
-            fair_value = listing.price if listing.price > 0 else 300000.0
-        
-        uncertainty = 0.25  # High uncertainty for heuristic
-        
-        evidence = EvidencePack(
-            model_used="heuristic",
-            anchor_price=fair_value,
-            anchor_std=fair_value * uncertainty,
-            top_comps=[],
-            calibration_status="uncalibrated"
-        )
-        
-        return (fair_value, uncertainty, evidence)
-    
     # =========================================================================
     # PROJECTIONS (Market Drift Only - No Double Counting)
     # =========================================================================
@@ -563,46 +639,104 @@ class ValuationService:
         Formula: V_{t+h} = V_t × growth_ratio_{r,h}
         """
         projections = []
-        
-        try:
-            # Get growth forecasts from ForecastingService
-            raw_projections = self.forecasting.forecast_property(
-                region_id=region_id,
-                current_value=spot_value,
-                horizons_months=self.config.horizons_months
-            )
-            
-            # Apply conformal calibration per horizon
-            for proj in raw_projections:
-                horizon = proj.months_future
-                
-                # Calibrate if we have enough data
-                if self.calibrators.is_calibrated(horizon):
-                    cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
-                        proj.confidence_interval_low,
-                        proj.predicted_value,
-                        proj.confidence_interval_high,
-                        horizon_months=horizon
-                    )
-                    
-                    # Update with calibrated values
-                    proj.confidence_interval_low = cal_q10
-                    proj.predicted_value = cal_q50
-                    proj.confidence_interval_high = cal_q90
-                    
-                    # Recalculate confidence
-                    if cal_q50 > 0:
-                        spread = (cal_q90 - cal_q10) / cal_q50
-                        proj.confidence_score = max(0.1, 1.0 - spread)
-                    
-                    proj.scenario_name = f"{proj.scenario_name}_calibrated"
-                
-                projections.append(proj)
-                
-        except Exception as e:
-            logger.warning("projection_failed", error=str(e))
-        
+
+        # Get growth forecasts from ForecastingService
+        raw_projections = self.forecasting.forecast_property(
+            region_id=region_id,
+            current_value=spot_value,
+            horizons_months=self.config.horizons_months
+        )
+
+        # Apply conformal calibration per horizon
+        for proj in raw_projections:
+            horizon = proj.months_future
+
+            # Calibrate if we have enough data
+            if self.calibrators.is_calibrated(horizon):
+                cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
+                    proj.confidence_interval_low,
+                    proj.predicted_value,
+                    proj.confidence_interval_high,
+                    horizon_months=horizon
+                )
+
+                # Update with calibrated values
+                proj.confidence_interval_low = cal_q10
+                proj.predicted_value = cal_q50
+                proj.confidence_interval_high = cal_q90
+
+                # Recalculate confidence
+                if cal_q50 > 0:
+                    spread = (cal_q90 - cal_q10) / cal_q50
+                    proj.confidence_score = max(0.1, 1.0 - spread)
+
+                proj.scenario_name = f"{proj.scenario_name}_calibrated"
+
+            projections.append(proj)
+
         return projections
+
+    def _compute_yield_projections(
+        self,
+        price_projections: List[ValuationProjection],
+        rent_projections: List[ValuationProjection],
+    ) -> List[ValuationProjection]:
+        """
+        Compute forward gross yield projections by combining price + rent projections.
+        """
+        if not price_projections or not rent_projections:
+            raise ValueError("missing_yield_projection_inputs")
+
+        price_by_horizon = {p.months_future: p for p in price_projections}
+        rent_by_horizon = {p.months_future: p for p in rent_projections}
+        missing = [
+            h for h in self.config.horizons_months
+            if h not in price_by_horizon or h not in rent_by_horizon
+        ]
+        if missing:
+            raise ValueError("missing_projection_horizon")
+
+        out: List[ValuationProjection] = []
+
+        for h in self.config.horizons_months:
+            price = price_by_horizon.get(h)
+            rent = rent_by_horizon.get(h)
+            if not price or not rent:
+                raise ValueError("missing_projection_horizon")
+            if price.predicted_value <= 0 or rent.predicted_value <= 0:
+                raise ValueError("invalid_projection_values")
+
+            rent_q10 = rent.confidence_interval_low
+            rent_q50 = rent.predicted_value
+            rent_q90 = rent.confidence_interval_high
+            rent_conf = rent.confidence_score
+
+            # Conservative bounds: low yield = low rent / high price; high yield = high rent / low price.
+            denom_low = price.confidence_interval_high if price.confidence_interval_high > 0 else price.predicted_value
+            denom_high = price.confidence_interval_low if price.confidence_interval_low and price.confidence_interval_low > 0 else price.predicted_value
+
+            y50 = (rent_q50 * 12 / price.predicted_value) * 100 if price.predicted_value > 0 else 0.0
+            y10 = (rent_q10 * 12 / denom_low) * 100 if denom_low > 0 else 0.0
+            y90 = (rent_q90 * 12 / denom_high) * 100 if denom_high > 0 else y50
+
+            # Ensure monotonicity
+            low = min(y10, y50, y90)
+            high = max(y10, y50, y90)
+
+            out.append(
+                ValuationProjection(
+                    metric="yield_pct",
+                    months_future=h,
+                    years_future=h / 12.0,
+                    predicted_value=float(y50),
+                    confidence_interval_low=float(low),
+                    confidence_interval_high=float(high),
+                    confidence_score=float(min(price.confidence_score, rent_conf)),
+                    scenario_name="yield_baseline",
+                )
+            )
+
+        return out
     
     # =========================================================================
     # DEAL SCORING
@@ -613,57 +747,76 @@ class ValuationService:
         listing: CanonicalListing,
         fair_value: float,
         uncertainty: float,
-        evidence: EvidencePack
+        evidence: EvidencePack,
+        market_signals: Dict[str, float],
+        rental_yield: float
     ) -> Tuple[float, List[str]]:
         """
-        Compute deal score with uncertainty-aware penalties.
+        Compute deal score from value, yield, and market regime signals.
         """
         flags = []
-        
-        # Base score from value gap
-        if listing.price > 0:
-            diff_pct = (fair_value - listing.price) / listing.price
-        else:
-            diff_pct = 0.0
-        
-        base_score = 0.5 + diff_pct
-        
-        # Uncertainty penalty
-        uncertainty_penalty = 0.0
-        if uncertainty > 0.25:
-            uncertainty_penalty = (uncertainty - 0.25) * 0.5
-            flags.append("high_uncertainty")
-        
-        # Evidence quality penalty
-        evidence_penalty = 0.0
-        if evidence.model_used == "heuristic":
-            evidence_penalty = 0.15
-            flags.append("heuristic_valuation")
-        elif evidence.model_used == "tabular_ml":
-            evidence_penalty = 0.05
-        
-        # Hedonic fallback penalty
-        if evidence.hedonic_fallback:
-            evidence_penalty += 0.05
-            flags.append("hedonic_fallback")
-        
-        # Calibration penalty
-        if evidence.calibration_status != "calibrated":
-            evidence_penalty += 0.03
-            flags.append("uncalibrated")
-        
-        # Final score
-        score = base_score - uncertainty_penalty - evidence_penalty
+
+        if listing.price <= 0:
+            raise ValueError("invalid_listing_price")
+        if rental_yield is None or rental_yield <= 0:
+            raise ValueError("missing_rental_yield")
+
+        market_yield = market_signals.get("market_yield")
+        momentum = market_signals.get("momentum")
+        liquidity = market_signals.get("liquidity")
+        catchup = market_signals.get("catchup")
+        if market_yield is None or market_yield <= 0:
+            raise ValueError("missing_market_yield")
+        if momentum is None or liquidity is None or catchup is None:
+            raise ValueError("missing_market_signals")
+
+        diff_pct = (fair_value - listing.price) / listing.price
+        yield_spread = (rental_yield - market_yield) / market_yield
+
+        value_component = float(np.tanh(diff_pct / 0.15))
+        yield_component = float(np.tanh(yield_spread / 0.03))
+        momentum_component = float(np.tanh(momentum / 0.05))
+        liquidity_component = float((liquidity - 0.5) / 0.5)
+        catchup_component = float((catchup - 0.5) / 0.5)
+
+        raw_score = (
+            0.35 * value_component +
+            0.25 * yield_component +
+            0.20 * momentum_component +
+            0.10 * liquidity_component +
+            0.10 * catchup_component
+        )
+
+        conviction = max(0.0, 1.0 - (uncertainty / 0.35))
+        score = (0.5 + 0.5 * raw_score) * conviction
         score = max(0.0, min(1.0, score))
-        
-        # Value flags
+
+        if uncertainty > 0.25:
+            flags.append("high_uncertainty")
+
         if diff_pct > 0.15:
             flags.append("undervalued")
         if diff_pct > 0.25:
             flags.append("deep_value")
         if diff_pct < -0.15:
             flags.append("overpriced")
-        
+
+        if yield_spread > 0.01:
+            flags.append("yield_advantage")
+        if yield_spread < -0.01:
+            flags.append("yield_disadvantage")
+
+        if momentum > 0.03:
+            flags.append("strong_momentum")
+        if momentum < -0.03:
+            flags.append("negative_momentum")
+
+        if liquidity < 0.3:
+            flags.append("low_liquidity")
+
+        if evidence.calibration_status != "calibrated":
+            flags.append("uncalibrated")
+
         return score, flags
     
     # =========================================================================
@@ -675,46 +828,88 @@ class ValuationService:
         if listing.location and listing.location.city:
             return listing.location.city.lower()
         return "unknown"
-    
-    def _get_market_average_sqm(self, city: str = None) -> Tuple[float, int]:
-        """Get market average price per sqm"""
-        session = self.storage.get_session()
-        try:
-            query = session.query(
-                DBListing.price, DBListing.surface_area_sqm
-            ).filter(
-                DBListing.price > 0,
-                DBListing.surface_area_sqm > 0
-            )
-            
-            if city:
-                query = query.filter(DBListing.city == city)
-            
-            data = query.all()
-            if not data:
-                return 3000.0, 0  # Default for Madrid
-                
-            ratios = [row.price / row.surface_area_sqm for row in data]
-            avg_sqm = sum(ratios) / len(ratios)
-            return avg_sqm, len(ratios)
-        finally:
-            session.close()
-    
-    def _get_market_signals(self, listing: CanonicalListing) -> Dict[str, float]:
-        """Get current market signals"""
-        try:
-            if listing.location and listing.location.city:
-                profile = self.analytics.analyze_listing(listing)
-                if profile:
-                    return {
-                        "momentum": profile.momentum_score,
-                        "liquidity": profile.liquidity_score,
-                        "catchup": profile.catchup_potential
-                    }
-        except Exception as e:
-            logger.warning("market_signals_failed", error=str(e))
-        
-        return {}
+
+    def _get_market_index_value(self, region_id: str, month_key: str, column: str) -> float:
+        allowed = {"price_index_sqm", "rent_index_sqm"}
+        if column not in allowed:
+            raise ValueError("unsupported_market_index_column")
+
+        query = text(
+            f"""
+            SELECT {column}
+            FROM market_indices
+            WHERE region_id = :region_id AND month_date LIKE :month_key
+            ORDER BY month_date DESC
+            LIMIT 1
+            """
+        )
+
+        with self.storage.engine.connect() as conn:
+            row = conn.execute(
+                query,
+                {"region_id": region_id, "month_key": f"{month_key}%"}
+            ).fetchone()
+
+        if not row or row[0] is None:
+            raise ValueError("missing_market_index")
+
+        value = float(row[0])
+        if value <= 0:
+            raise ValueError("invalid_market_index")
+
+        return value
+
+    def _get_market_yield(self, region_id: str, valuation_date: datetime) -> float:
+        month_key = valuation_date.strftime("%Y-%m")
+        price_index = self._get_market_index_value(region_id, month_key, "price_index_sqm")
+        rent_index = self._get_market_index_value(region_id, month_key, "rent_index_sqm")
+        return (rent_index * 12 / price_index) * 100
+
+    def _get_market_signals(
+        self,
+        listing: CanonicalListing,
+        region_id: str,
+        valuation_date: datetime
+    ) -> Dict[str, float]:
+        """Get current market signals (strict)."""
+        if not listing.location or not listing.location.city:
+            raise ValueError("missing_location")
+
+        profile = self.analytics.analyze_listing(listing)
+        if not profile:
+            raise ValueError("missing_market_profile")
+        if getattr(profile, "zone_id", None) == "unknown":
+            raise ValueError("missing_market_profile")
+
+        market_yield = self._get_market_yield(region_id, valuation_date)
+
+        return {
+            "momentum": profile.momentum_score,
+            "liquidity": profile.liquidity_score,
+            "catchup": profile.catchup_potential,
+            "market_yield": market_yield,
+        }
+
+    def _adjust_rent_price(
+        self,
+        raw_price: float,
+        region_id: str,
+        comp_timestamp: datetime,
+        target_timestamp: datetime,
+    ) -> Tuple[float, float]:
+        comp_month = comp_timestamp.strftime("%Y-%m")
+        target_month = target_timestamp.strftime("%Y-%m")
+
+        comp_index = self._get_market_index_value(region_id, comp_month, "rent_index_sqm")
+        target_index = self._get_market_index_value(region_id, target_month, "rent_index_sqm")
+
+        factor = target_index / comp_index
+        if factor <= 0:
+            raise ValueError("invalid_rent_adjustment_factor")
+        if factor < 0.5 or factor > 2.0:
+            raise ValueError("rent_adjustment_out_of_bounds")
+
+        return raw_price * factor, factor
     
     def _generate_thesis(
         self,
@@ -723,100 +918,129 @@ class ValuationService:
         uncertainty: float,
         evidence: EvidencePack,
         score: float,
-        rental_yield: float = None
+        rental_yield: float,
+        market_signals: Dict[str, float]
     ) -> str:
         """Generate investment thesis text"""
-        model_name = {
-            "fusion": "Comparable Analysis",
-            "tabular_ml": "ML Model",
-            "heuristic": "Market Average"
-        }.get(evidence.model_used, evidence.model_used)
-        
-        thesis = f"Fair value €{fair_value:,.0f} (±{uncertainty:.0%}) via {model_name}. "
-        
+        if listing.price <= 0:
+            raise ValueError("invalid_listing_price")
+
+        value_gap_pct = (fair_value - listing.price) / listing.price * 100
+        market_yield = market_signals.get("market_yield")
+        momentum = market_signals.get("momentum")
+        liquidity = market_signals.get("liquidity")
+
+        thesis = (
+            f"Fair value €{fair_value:,.0f} (±{uncertainty:.0%}) from comp-fusion; "
+            f"value gap {value_gap_pct:+.1f}% vs ask. "
+        )
+
         if evidence.top_comps:
             thesis += f"Based on {len(evidence.top_comps)} time-adjusted comps. "
-        
-        if evidence.calibration_status == "calibrated":
-            thesis += "Intervals conformally calibrated. "
 
-        if rental_yield:
-            thesis += f"Est. Yield: {rental_yield:.1f}%. "
-        
+        if market_yield is not None:
+            spread_pp = rental_yield - market_yield
+            thesis += f"Yield {rental_yield:.1f}% vs market {market_yield:.1f}% ({spread_pp:+.1f}pp). "
+        else:
+            thesis += f"Yield {rental_yield:.1f}%. "
+
+        if momentum is not None and liquidity is not None:
+            thesis += f"Momentum {momentum * 100:.1f}%/yr, liquidity {liquidity:.2f}. "
+
+        if evidence.calibration_status == "calibrated":
+            thesis += "Intervals calibrated. "
+
         if score > 0.7:
             thesis += "Strong buy signal."
         elif score > 0.55:
             thesis += "Potential opportunity."
         elif score < 0.4:
             thesis += "Likely overpriced."
-        
+
         return thesis
 
     def _compute_rental_value(
         self,
         listing: CanonicalListing,
+        region_id: str,
+        valuation_date: datetime,
         tracer: Any = None
-    ) -> Tuple[Optional[float], float, List[CompListing]]:
+    ) -> Tuple[float, float, List[CanonicalListing]]:
         """
         Estimate rent using robust comparable rental listings.
 
         Returns:
             (estimated_monthly_rent, uncertainty_pct, rental_comps_used)
         """
-        try:
-            # Retrieve rental comps
-            rental_comps = self.retriever.retrieve_comps(
-                target=listing,
-                k=15, # More candidates
-                max_radius_km=2.0, # Tighter radius for rent
-                listing_type="rent"
+        if not listing.surface_area_sqm or listing.surface_area_sqm <= 0:
+            raise ValueError("missing_surface_area_for_rent")
+
+        rental_comps, similarity_by_id = self._retrieve_rent_comps(listing)
+
+        adjusted_rents = []
+        adjusted_weights = []
+        comps_used = []
+
+        for comp in rental_comps:
+            if not comp.surface_area_sqm or comp.surface_area_sqm <= 0:
+                continue
+            comp_timestamp = comp.listed_at or comp.updated_at
+            if not comp_timestamp:
+                continue
+
+            adj_price, adj_factor = self._adjust_rent_price(
+                raw_price=comp.price,
+                region_id=region_id,
+                comp_timestamp=comp_timestamp,
+                target_timestamp=valuation_date,
             )
+            rent_sqm = adj_price / comp.surface_area_sqm
+            weight = similarity_by_id.get(comp.id, 0.0)
+            if weight <= 0:
+                continue
 
-            if not rental_comps:
-                return None, 0.0, []
+            adjusted_rents.append(rent_sqm)
+            adjusted_weights.append(weight)
+            comps_used.append(comp)
 
-            # Weighted average
-            total_weight = 0.0
-            weighted_rent_sqm = 0.0
+        if len(adjusted_rents) < self.config.min_rent_comps:
+            raise ValueError("insufficient_adjusted_rent_comps")
 
-            valid_comps = []
+        values = np.array(adjusted_rents, dtype=float)
+        weights = np.array(adjusted_weights, dtype=float)
+        weight_sum = float(weights.sum())
+        if weight_sum <= 0:
+            raise ValueError("invalid_rent_comp_weights")
 
-            for comp in rental_comps:
-                # Calculate rent per sqm
-                sqm = comp.features.get('sqm', 0)
-                if sqm > 10: # Min 10 sqm
-                    rent_sqm = comp.price / sqm
-                    # Filter outliers (e.g. < 5 or > 100 EUR/m2)
-                    if 5.0 <= rent_sqm <= 100.0:
-                        weight = comp.similarity_score
-                        weighted_rent_sqm += rent_sqm * weight
-                        total_weight += weight
-                        valid_comps.append(comp)
+        median = float(np.median(values))
+        mad = float(np.median(np.abs(values - median)))
+        if mad <= 0:
+            mad = max(median * 0.05, 0.1)
 
-            if total_weight == 0 or not valid_comps:
-                return None, 0.0, []
+        mask = np.abs(values - median) <= (3.0 * mad)
+        values = values[mask]
+        weights = weights[mask]
+        comps_used = [c for c, keep in zip(comps_used, mask) if keep]
 
-            est_rent_sqm = weighted_rent_sqm / total_weight
+        if len(values) < self.config.min_rent_comps:
+            raise ValueError("rent_comp_filter_excessive")
 
-            if listing.surface_area_sqm:
-                est_rent = est_rent_sqm * listing.surface_area_sqm
-            else:
-                return None, 0.0, []
+        weights = weights / weights.sum()
+        est_rent_sqm = float(np.sum(weights * values))
+        variance = float(np.sum(weights * (values - est_rent_sqm) ** 2))
+        std_rent_sqm = float(np.sqrt(variance))
 
-            # Uncertainty based on spread of comps
-            rents_sqm = [c.price / c.features['sqm'] for c in valid_comps]
-            std_rent = np.std(rents_sqm)
-            uncertainty = std_rent / est_rent_sqm if est_rent_sqm > 0 else 0.2
+        if est_rent_sqm <= 0:
+            raise ValueError("invalid_rent_estimate")
 
-            if tracer:
-                tracer.log("rental_valuation", {
-                    "est_rent": est_rent,
-                    "comps_count": len(valid_comps),
-                    "avg_sqm": est_rent_sqm
-                })
+        est_rent = est_rent_sqm * listing.surface_area_sqm
+        uncertainty = std_rent_sqm / est_rent_sqm
 
-            return est_rent, uncertainty, valid_comps
+        if tracer:
+            tracer.log("rental_valuation", {
+                "est_rent": est_rent,
+                "comps_count": len(comps_used),
+                "avg_sqm": est_rent_sqm
+            })
 
-        except Exception as e:
-            logger.error("rent_estimation_failed", error=str(e))
-            return None, 0.0, []
+        return est_rent, uncertainty, comps_used

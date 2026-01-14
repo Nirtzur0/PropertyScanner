@@ -106,7 +106,8 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         enriched_count=0,
         enrichment_status="pending",
         filtered_count=0,
-        final_report=None
+        final_report=None,
+        strategy="balanced"
     )
 
 
@@ -181,21 +182,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error("supervisor_failed", error=str(e))
-        # Fallback to simple rule-based logic
-        if not state["raw_listings"]:
-            return {"next_action": "crawl", "current_stage": "supervisor"}
-        elif not state["canonical_listings"]:
-            return {"next_action": "normalize", "current_stage": "supervisor"}
-        elif state.get("enrichment_status", "pending") == "pending" and state["canonical_listings"]:
-             # If we have listings but haven't completed enrichment, prioritize enrich
-             return {"next_action": "enrich", "current_stage": "supervisor"}
-        elif state.get("filtered_count", 0) == 0 and state["canonical_listings"]:
-             # Prioritize filtering before evaluation
-             return {"next_action": "filter", "current_stage": "supervisor"}
-        elif not state["evaluations"]:
-            return {"next_action": "evaluate", "current_stage": "supervisor"}
-        else:
-            return {"next_action": "report", "current_stage": "supervisor"}
+        raise
 
 
 
@@ -209,15 +196,7 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
     # Determine search path
     areas = state["target_areas"]
     if not areas:
-        # Extract area from query using simple heuristics
-        query = state["query"].lower()
-        if "madrid" in query:
-            # Fallback to Pisos as Idealista is blocking bots
-            areas = ["https://www.pisos.com/venta/pisos-madrid/"]
-        elif "barcelona" in query:
-            areas = ["https://www.pisos.com/venta/pisos-barcelona/"]
-        else:
-            areas = ["https://www.pisos.com/venta/pisos-madrid/"] # Default
+        raise ValueError("target_areas_required")
     
     for area in areas:
         try:
@@ -351,16 +330,9 @@ def evaluate_node(state: AgentState) -> Dict[str, Any]:
     # Evaluate top N listings (avoid rate limits)
     max_to_evaluate = min(len(state["canonical_listings"]), 10)
     
-    # Deduce strategy from query
-    query = state["query"].lower()
-    strategy = "balanced"
-    
-    if "airbnb" in query or "rental" in query or "income" in query or "cash flow" in query or "yield" in query:
-        strategy = "cash_flow_investor"
-    elif "cheap" in query or "deal" in query or "undervalued" in query or "bargain" in query or "flip" in query:
-        strategy = "bargain_hunter"
-    elif "safe" in query or "consistent" in query or "premium" in query:
-        strategy = "safe_bet"
+    strategy = state.get("strategy")
+    if not strategy:
+        raise ValueError("strategy_required")
 
     for listing in state["canonical_listings"][:max_to_evaluate]:
         try:
@@ -433,11 +405,7 @@ Write a professional investment brief (2-3 paragraphs) summarizing:
         
     except Exception as e:
         logger.error("report_failed", error=str(e))
-        # Fallback to simple report
-        return {
-            "final_report": f"Analysis complete. Found {state['listings_count']} listings with {len(state['evaluations'])} evaluations.",
-            "current_stage": "complete"
-        }
+        raise
 
 
 def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "enrich", "filter", "evaluate", "report", "end"]:

@@ -37,6 +37,7 @@ class TestFullPipeline(unittest.TestCase):
                 listed_at DATETIME,
                 updated_at DATETIME,
                 status VARCHAR,
+                listing_type VARCHAR,
                 image_urls TEXT,
                 vlm_description TEXT,
                 bedrooms INT,
@@ -78,16 +79,18 @@ class TestFullPipeline(unittest.TestCase):
         # Seed Data
         # 1. Listings (representing 3 months of data)
         listings = [
-            ("L1", 300000, 100, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 2, 1, 1, 2),
-            ("L2", 310000, 100, "madrid", "ezjmgu", "2024-02-01", "2024-02-15", "active", "[]", "desc", 2, 1, 1, 3),
-            ("L3", 320000, 100, "madrid", "ezjmgu", "2024-03-01", "2024-03-15", "active", "[]", "desc", 2, 1, 1, 4),
+            ("L1", 300000, 100, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "sale", "[]", "desc", 2, 1, 1, 2),
+            ("L2", 310000, 100, "madrid", "ezjmgu", "2024-02-01", "2024-02-15", "active", "sale", "[]", "desc", 2, 1, 1, 3),
+            ("L3", 320000, 100, "madrid", "ezjmgu", "2024-03-01", "2024-03-15", "active", "sale", "[]", "desc", 2, 1, 1, 4),
             # Neighbor
-            ("L4", 150000, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "[]", "desc", 1, 1, 0, 1),
+            ("L4", 150000, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "sale", "[]", "desc", 1, 1, 0, 1),
+            # Rent listing for rent index
+            ("R1", 1500, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "rent", "[]", "desc", 1, 1, 0, 1),
         ]
         
         conn.executemany("""
-            INSERT INTO listings (id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, image_urls, vlm_description, bedrooms, bathrooms, has_elevator, floor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO listings (id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, listing_type, image_urls, vlm_description, bedrooms, bathrooms, has_elevator, floor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, listings)
         
         # 2. Macro Data
@@ -153,6 +156,13 @@ class TestFullPipeline(unittest.TestCase):
         
         self.assertEqual(len(projections), 2)
         print(f"Generated {len(projections)} projections.")
+
+        rent_projections = svc.forecast_rent(
+            region_id="madrid",
+            current_monthly_rent=1500,
+            horizons_months=[3, 6],
+        )
+        self.assertEqual(len(rent_projections), 2)
         
     def test_macro_agent_stub(self):
         """Verify macro agent instantiation"""

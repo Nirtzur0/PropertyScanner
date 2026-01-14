@@ -247,10 +247,22 @@ class TFTForecastingService:
             ORDER BY hi.region_id, hi.month_date
         """
         
-        df = pd.read_sql(query, conn)
-        conn.close()
-        
-        return df
+        try:
+            # Fast existence check to avoid noisy warnings in cold-start DBs.
+            cur = conn.cursor()
+            has_hedonic = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hedonic_indices'"
+            ).fetchone()
+            if not has_hedonic:
+                return pd.DataFrame()
+
+            df = pd.read_sql(query, conn)
+            return df
+        except Exception as e:
+            logger.warning("tft_training_data_load_failed", error=str(e))
+            return pd.DataFrame()
+        finally:
+            conn.close()
     
     def train(self, epochs: int = 100, lr: float = 0.001):
         """Train the TFT model"""
@@ -323,10 +335,12 @@ class TFTForecastingService:
                 logger.info("tft_training_progress", epoch=epoch, loss=total_loss)
         
         # Save model
+        # IMPORTANT: avoid pickling custom classes in checkpoints (PyTorch 2.6+ safe loading).
+        config_payload = self.config.__dict__.copy() if hasattr(self.config, "__dict__") else {}
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'region_map': self.region_map,
-            'config': self.config
+            'config': config_payload
         }, self.model_path)
         
         logger.info("tft_training_complete", model_path=self.model_path)
@@ -345,6 +359,8 @@ class TFTForecastingService:
         
         # Get recent history
         df = self._load_training_data()
+        if df.empty or "region_id" not in df.columns:
+            return {}
         region_df = df[df['region_id'] == region_id].tail(self.config.context_length)
         
         if len(region_df) < self.config.context_length:
@@ -384,13 +400,54 @@ class TFTForecastingService:
     def _load_model(self):
         """Load trained model from disk"""
         try:
-            checkpoint = torch.load(self.model_path)
-            self.region_map = checkpoint['region_map']
-            self.config = checkpoint['config']
+            try:
+                checkpoint = torch.load(self.model_path)
+            except Exception as e:
+                # PyTorch 2.6 defaults `weights_only=True` and may reject older checkpoints
+                # that contain custom Python objects. Fall back to full load for local files.
+                try:
+                    # Older checkpoints may have pickled config as `__main__.TFTConfig` when trained
+                    # by running this module as a script. Inject the class into __main__ so pickle
+                    # can resolve it.
+                    try:
+                        import __main__ as main_module
+                        if not hasattr(main_module, "TFTConfig"):
+                            setattr(main_module, "TFTConfig", TFTConfig)
+                    except Exception:
+                        pass
+                    checkpoint = torch.load(self.model_path, weights_only=False)
+                except TypeError:
+                    raise e
+
+            self.region_map = checkpoint.get('region_map', {})
+
+            raw_config = checkpoint.get('config')
+            if isinstance(raw_config, dict):
+                self.config = TFTConfig(**raw_config)
+            elif isinstance(raw_config, TFTConfig):
+                self.config = raw_config
+            elif raw_config is not None and hasattr(raw_config, "__dict__"):
+                self.config = TFTConfig(**raw_config.__dict__)
+            else:
+                self.config = TFTConfig()
+
             self.model = TFTForecaster(self.config, len(self.region_map))
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.model.eval()
             logger.info("tft_model_loaded", path=self.model_path)
+
+            # Self-heal: if checkpoint wasn't in the safe dict format, rewrite it.
+            if not isinstance(raw_config, dict):
+                try:
+                    safe_checkpoint = {
+                        "model_state_dict": checkpoint.get("model_state_dict"),
+                        "region_map": self.region_map,
+                        "config": self.config.__dict__.copy(),
+                    }
+                    torch.save(safe_checkpoint, self.model_path)
+                    logger.info("tft_checkpoint_upgraded", path=self.model_path)
+                except Exception as upgrade_err:
+                    logger.warning("tft_checkpoint_upgrade_failed", error=str(upgrade_err))
         except Exception as e:
             logger.warning("tft_model_load_failed", error=str(e))
             self.model = None

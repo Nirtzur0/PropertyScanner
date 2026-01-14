@@ -95,6 +95,8 @@ try:
         if cached_val:
             # Reconstruct Analysis from Cache (Lite Version)
             projections = [ValuationProjection(**p) for p in cached_val.evidence.get("projections", [])]
+            rent_projections = [ValuationProjection(**p) for p in cached_val.evidence.get("rent_projections", [])]
+            yield_projections = [ValuationProjection(**p) for p in cached_val.evidence.get("yield_projections", [])]
             analysis = DealAnalysis(
                 property_id=db_item.id,
                 listing_id=db_item.id,
@@ -104,6 +106,8 @@ try:
                 investment_thesis=cached_val.evidence.get("thesis", "Cached Analysis"),
                 market_signals=cached_val.evidence.get("signals", {}),
                 projections=projections,
+                rent_projections=rent_projections,
+                yield_projections=yield_projections,
                 evidence=None # Simplified for UI
             )
             comps = [] # Can't easily reconstruct comps list without full deserialization
@@ -130,6 +134,8 @@ try:
             "Desc": listing.description,
             "VLM Desc": listing.vlm_description,
             "Projections": analysis.projections,
+            "Rent Projections": getattr(analysis, "rent_projections", []),
+            "Yield Projections": getattr(analysis, "yield_projections", []),
             "Signals": analysis.market_signals,
             "Comps": comps if comps else [] # Handle empty for cached
         })
@@ -295,6 +301,24 @@ else:
                     
                     chart_df = pd.DataFrame(proj_data)
                     st.line_chart(chart_df, x="Month", y="Value")
+
+                if item.get("Rent Projections"):
+                    st.markdown("### 🏠 Future Rent Projection (€/month)")
+                    rent_data = []
+                    for p in item["Rent Projections"]:
+                        rent_data.append({"Month": p.months_future, "Rent": p.predicted_value})
+                    rent_df = pd.DataFrame(rent_data)
+                    if not rent_df.empty:
+                        st.line_chart(rent_df, x="Month", y="Rent")
+
+                if item.get("Yield Projections"):
+                    st.markdown("### 💸 Future Gross Yield Projection (%)")
+                    yield_data = []
+                    for p in item["Yield Projections"]:
+                        yield_data.append({"Month": p.months_future, "Yield": p.predicted_value})
+                    yield_df = pd.DataFrame(yield_data)
+                    if not yield_df.empty:
+                        st.line_chart(yield_df, x="Month", y="Yield")
                 
                 # Show Comps
                 if item["Comps"]:

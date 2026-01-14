@@ -34,6 +34,7 @@ class AgentState(TypedDict):
     enriched_count: int
     enrichment_status: str
     filtered_count: int
+    strategy: str
     
     # Final output
     final_report: Optional[str]

@@ -15,6 +15,34 @@ class AreaIntelligenceService:
 
     def __init__(self, db_path: str = "data/listings.db"):
         self.db_path = db_path
+        self._ensure_table()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _ensure_table(self) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS area_intelligence (
+                    area_id TEXT PRIMARY KEY,
+                    last_updated DATETIME,
+                    sentiment_score FLOAT,
+                    future_development_score FLOAT,
+                    news_summary TEXT,
+                    top_keywords TEXT,
+                    source_urls TEXT
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     def get_area_indicators(self, area_id: str) -> Dict[str, Any]:
         """
@@ -71,7 +99,7 @@ class AreaIntelligenceService:
         }
 
     def _load_from_db(self, area_id: str) -> Optional[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         try:
             cursor = conn.cursor()
             cursor.execute("""
@@ -95,7 +123,7 @@ class AreaIntelligenceService:
         return None
 
     def _save_to_db(self, area_id: str, data: Dict[str, Any]):
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         try:
             cursor = conn.cursor()
             cursor.execute("""
@@ -104,7 +132,7 @@ class AreaIntelligenceService:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 area_id,
-                datetime.now(),
+                datetime.now().isoformat(),
                 data["sentiment_score"],
                 data["future_development_score"],
                 data["news_summary"],

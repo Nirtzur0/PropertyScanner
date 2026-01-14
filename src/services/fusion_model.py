@@ -289,31 +289,30 @@ class FusionModelService:
 
     def _load_or_init(self):
         """Load existing model or initialize a new one."""
-        if os.path.exists(self.config_path):
-            with open(self.config_path, "r") as f:
-                self.config = json.load(f)
-        else:
-            self.config = {
-                "tabular_dim": 10,
-                "text_dim": 384,
-                "image_dim": 512,
-                "hidden_dim": 256,
-                "num_heads": 4
-            }
-            
+        if not os.path.exists(self.config_path):
+            raise FileNotFoundError("fusion_config_missing")
+
+        with open(self.config_path, "r") as f:
+            self.config = json.load(f)
+
+        required = {"tabular_dim", "text_dim", "image_dim", "hidden_dim", "num_heads"}
+        missing = required.difference(self.config.keys())
+        if missing:
+            raise ValueError("fusion_config_incomplete")
+
         self.model = PropertyFusionModel(
-            tabular_dim=self.config.get("tabular_dim", 10),
-            text_dim=self.config.get("text_dim", 384),
-            image_dim=self.config.get("image_dim", 512),
-            hidden_dim=self.config.get("hidden_dim", 256),
-            num_heads=self.config.get("num_heads", 4)
+            tabular_dim=self.config["tabular_dim"],
+            text_dim=self.config["text_dim"],
+            image_dim=self.config["image_dim"],
+            hidden_dim=self.config["hidden_dim"],
+            num_heads=self.config["num_heads"]
         )
         
-        if os.path.exists(self.model_path):
-            self.model.load_state_dict(torch.load(self.model_path, map_location="cpu"))
-            logger.info("fusion_model_loaded", path=self.model_path)
-        else:
-            logger.info("fusion_model_initialized_fresh")
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError("fusion_model_missing")
+
+        self.model.load_state_dict(torch.load(self.model_path, map_location="cpu"))
+        logger.info("fusion_model_loaded", path=self.model_path)
             
         self.model.eval()
 
@@ -345,26 +344,15 @@ class FusionModelService:
             FusionOutput with quantile predictions
         """
         if not TORCH_AVAILABLE or self.model is None:
-            # Fallback: simple average of comps
-            if comp_prices:
-                avg_price = np.mean(comp_prices)
-                std_price = np.std(comp_prices) if len(comp_prices) > 1 else avg_price * 0.1
-            else:
-                avg_price = 300000.0
-                std_price = 50000.0
-                
-            return FusionOutput(
-                price_quantiles={
-                    "0.1": avg_price - 1.28 * std_price,
-                    "0.5": avg_price,
-                    "0.9": avg_price + 1.28 * std_price
-                },
-                rent_quantiles={
-                    "0.1": avg_price * 0.003,
-                    "0.5": avg_price * 0.004,
-                    "0.9": avg_price * 0.005
-                }
-            )
+            raise RuntimeError("fusion_model_unavailable")
+
+        if not comp_text_embeddings or not comp_tabular_features or not comp_prices:
+            raise ValueError("missing_comps_for_fusion")
+
+        if len(comp_text_embeddings) != len(comp_tabular_features) or len(comp_text_embeddings) != len(comp_prices):
+            raise ValueError("mismatched_comp_inputs")
+        if comp_image_embeddings and len(comp_image_embeddings) != len(comp_text_embeddings):
+            raise ValueError("mismatched_comp_image_inputs")
         
         # Prepare target tensors
         target_tab = torch.from_numpy(target_tabular_features).unsqueeze(0).float()
@@ -376,11 +364,7 @@ class FusionModelService:
         # Prepare comp tensors
         num_comps = min(len(comp_text_embeddings), 10)
         if num_comps == 0:
-            num_comps = 1
-            comp_text_embeddings = [np.zeros(self.config.get("text_dim", 384))]
-            comp_tabular_features = [np.zeros(self.config.get("tabular_dim", 8))]
-            comp_image_embeddings = [np.zeros(self.config.get("image_dim", 512))]
-            comp_prices = [300000.0]
+            raise ValueError("missing_comps_for_fusion")
             
         comp_tab = torch.stack([
             torch.from_numpy(f).float() for f in comp_tabular_features[:num_comps]

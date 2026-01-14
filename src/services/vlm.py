@@ -146,7 +146,8 @@ class VLMImageDescriber:
                         model=self.model,
                         prompt=prompt,
                         images=[standardized_b64],
-                        format='json'
+                        format='json',
+                        options={'timeout': 60}
                     )
                     return response.get('response', '')
                 except Exception as oe:

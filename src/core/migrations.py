@@ -1,7 +1,6 @@
 
 import sqlite3
 import structlog
-import pygeohash as pgh
 
 logger = structlog.get_logger(__name__)
 
@@ -30,6 +29,7 @@ def run_migrations(db_path="data/listings.db"):
             updated_at DATETIME
         )
     """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_market_indices_region_date ON market_indices (region_id, month_date)")
     
     # 2. Macro Indicators
     conn.execute("""
@@ -68,6 +68,28 @@ def run_migrations(db_path="data/listings.db"):
         logger.info("migration_geohash_added")
     except Exception:
         pass
+
+    # 4b. Listing type (sale vs rent) for downstream indices/forecasting
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN listing_type TEXT DEFAULT 'sale'")
+        logger.info("migration_listing_type_added")
+        try:
+            # Best-effort backfill from URL patterns.
+            conn.execute(
+                """
+                UPDATE listings
+                SET listing_type = 'rent'
+                WHERE (
+                    listing_type IS NULL OR listing_type = '' OR listing_type = 'sale'
+                ) AND (
+                    url LIKE '%/alquiler/%' OR url LIKE '%/rent/%' OR url LIKE '%/rental/%'
+                )
+                """
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
     
     # 5. Hedonic Indices (SOTA V3)
     conn.execute("""
@@ -84,6 +106,19 @@ def run_migrations(db_path="data/listings.db"):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_hedonic_region_date ON hedonic_indices (region_id, month_date)")
+
+    # 5b. Area Intelligence (used by forecasting)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS area_intelligence (
+            area_id TEXT PRIMARY KEY,
+            last_updated DATETIME,
+            sentiment_score FLOAT,
+            future_development_score FLOAT,
+            news_summary TEXT,
+            top_keywords TEXT,
+            source_urls TEXT
+        )
+    """)
     
     # 6. Update macro_scenarios schema for SOTA V3 (cite-or-drop)
     try:

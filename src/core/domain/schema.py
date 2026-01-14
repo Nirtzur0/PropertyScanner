@@ -109,6 +109,8 @@ class DealAnalysis(BaseModel):
     
     # Forward-looking Logic
     projections: List["ValuationProjection"] = Field(default_factory=list)
+    rent_projections: List["ValuationProjection"] = Field(default_factory=list)
+    yield_projections: List["ValuationProjection"] = Field(default_factory=list)
     market_signals: Dict[str, float] = Field(default_factory=dict) # e.g. {"momentum": 0.8, "liquidity": 0.5}
     
     # SOTA V3: Structured evidence pack
@@ -192,6 +194,7 @@ class ValuationProjection(BaseModel):
     """
     Projected value of a property over time.
     """
+    metric: str = "price"  # e.g. "price", "rent_monthly", "yield_pct"
     months_future: int
     years_future: float # Allow 0.5, 0.25 etc
     predicted_value: float

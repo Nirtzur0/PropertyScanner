@@ -76,7 +76,14 @@ class HedonicIndexService:
     def _load_listings(self, region_name: str = None) -> pd.DataFrame:
         """Load listings with required features"""
         conn = sqlite3.connect(self.db_path)
-        
+
+        # Schema compatibility: some test DBs may not include listing_type.
+        try:
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()]
+            has_listing_type = "listing_type" in cols
+        except Exception:
+            has_listing_type = False
+
         query = """
             SELECT 
                 id, 
@@ -94,13 +101,17 @@ class HedonicIndexService:
             WHERE price > 1000 
               AND surface_area_sqm > 10
               AND surface_area_sqm < 500
-              AND listing_type = 'sale'
         """
-        
+
+        params = []
+        if has_listing_type:
+            query += " AND listing_type = 'sale'"
+
         if region_name:
-            query += f" AND city = '{region_name}'"
-            
-        df = pd.read_sql(query, conn)
+            query += " AND LOWER(city) = ?"
+            params.append(region_name.lower().strip())
+
+        df = pd.read_sql(query, conn, params=params)
         conn.close()
         
         # Parse dates
@@ -231,12 +242,7 @@ class HedonicIndexService:
     def get_index(self, region_id: str, month_date: str) -> IndexResult:
         """
         Get hedonic index value for a specific region and month.
-        
-        Fallback hierarchy:
-        1. Neighborhood-level index (geohash-6)
-        2. City-level index
-        3. Global ("all") index
-        
+
         Args:
             region_id: City name or geohash prefix
             month_date: Month string in format "YYYY-MM" or "YYYY-MM-DD"
@@ -249,40 +255,17 @@ class HedonicIndexService:
             month_date = month_date[:7]
         
         conn = sqlite3.connect(self.db_path)
-        
-        # Try specific region first
-        result = self._query_index(conn, region_id, month_date)
-        if result:
+
+        try:
+            result = self._query_index(conn, region_id, month_date)
+        finally:
             conn.close()
-            return result
-        
-        # Fallback to city (if region_id looks like geohash)
-        if len(region_id) >= 6 and region_id.isalnum():
-            city_result = self._query_index(conn, "all", month_date)
-            if city_result:
-                city_result.is_fallback = True
-                city_result.fallback_reason = f"neighborhood '{region_id}' not found, using global"
-                conn.close()
-                return city_result
-        
-        # Final fallback: try "all" region
-        all_result = self._query_index(conn, "all", month_date)
-        conn.close()
-        
-        if all_result:
-            all_result.is_fallback = True
-            all_result.fallback_reason = f"region '{region_id}' not found, using global"
-            return all_result
-        
-        # No data at all - return default
-        logger.warning("hedonic_index_not_found", region=region_id, month=month_date)
-        return IndexResult(
-            value=3000.0,  # Default €/m² for Madrid
-            r_squared=0.0,
-            n_observations=0,
-            is_fallback=True,
-            fallback_reason="no index data available"
-        )
+
+        if not result:
+            logger.warning("hedonic_index_not_found", region=region_id, month=month_date)
+            raise ValueError("hedonic_index_not_found")
+
+        return result
     
     def _query_index(self, conn: sqlite3.Connection, region_id: str, month_date: str) -> Optional[IndexResult]:
         """Query database for index value"""
@@ -304,25 +287,6 @@ class HedonicIndexService:
                 r_squared=float(row[1]) if row[1] else 0.0,
                 n_observations=int(row[2]) if row[2] else 0,
                 is_fallback=False
-            )
-        
-        # Try any recent month (within 6 months)
-        cursor.execute("""
-            SELECT hedonic_index_sqm, r_squared, n_observations, month_date
-            FROM hedonic_indices
-            WHERE region_id = ?
-            ORDER BY month_date DESC
-            LIMIT 1
-        """, (region_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            return IndexResult(
-                value=float(row[0]),
-                r_squared=float(row[1]) if row[1] else 0.0,
-                n_observations=int(row[2]) if row[2] else 0,
-                is_fallback=True,
-                fallback_reason=f"exact month not found, using {row[3]}"
             )
         
         return None
@@ -394,14 +358,14 @@ class HedonicIndexService:
         comp_index = self.get_index(region_id, comp_month)
         target_index = self.get_index(region_id, target_month)
         
-        # Compute factor
-        if comp_index.value > 0:
-            adj_factor = target_index.value / comp_index.value
-        else:
-            adj_factor = 1.0
-        
-        # Clamp to reasonable bounds (avoid extreme adjustments)
-        adj_factor = max(0.5, min(2.0, adj_factor))
+        if comp_index.value <= 0 or target_index.value <= 0:
+            raise ValueError("invalid_hedonic_index_values")
+
+        adj_factor = target_index.value / comp_index.value
+        if adj_factor <= 0:
+            raise ValueError("invalid_hedonic_adjustment")
+        if adj_factor < 0.5 or adj_factor > 2.0:
+            raise ValueError("hedonic_adjustment_out_of_bounds")
         
         metadata = {
             "comp_month": comp_month,
@@ -410,8 +374,8 @@ class HedonicIndexService:
             "target_index": target_index.value,
             "comp_index_fallback": comp_index.is_fallback,
             "target_index_fallback": target_index.is_fallback,
-            "raw_factor": target_index.value / comp_index.value if comp_index.value > 0 else 1.0,
-            "clamped": adj_factor != (target_index.value / comp_index.value if comp_index.value > 0 else 1.0),
+            "raw_factor": adj_factor,
+            "clamped": False,
         }
         
         return adj_factor, metadata
@@ -472,11 +436,12 @@ class HedonicIndexService:
             )
         """)
         
-        region_id = region_name or "all"
+        region_id = region_name.lower().strip() if region_name else "all"
         
         for _, row in df.iterrows():
             month_str = str(row['month'])
             record_id = f"{region_id}|{month_str}"
+            month_date = f"{month_str}-01"
             
             cursor.execute("""
                 INSERT OR REPLACE INTO hedonic_indices 
@@ -486,7 +451,7 @@ class HedonicIndexService:
             """, (
                 record_id,
                 region_id,
-                month_str,
+                month_date,
                 float(row['hedonic_index']),
                 float(row['raw_median']),
                 float(row['r_squared']),

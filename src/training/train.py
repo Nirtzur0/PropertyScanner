@@ -308,6 +308,14 @@ def train_model(
             hidden_dim=64,
             num_heads=2
         )
+
+        config = {
+            "tabular_dim": 11,
+            "text_dim": 384,
+            "image_dim": 512,
+            "hidden_dim": 64,
+            "num_heads": 2
+        }
         
         if i == 0:
             logger.info("model_created", params=sum(p.numel() for p in model.parameters()))
@@ -320,6 +328,14 @@ def train_model(
             device=device,
             checkpoint_dir=f"models/fold_{fold_id}" if k_folds > 1 else "models"
         )
+
+        config_path = trainer.checkpoint_dir / "fusion_config.json"
+        try:
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2, sort_keys=True)
+            logger.info("fusion_config_saved", path=str(config_path))
+        except Exception as e:
+            logger.warning("fusion_config_save_failed", path=str(config_path), error=str(e))
         
         history = trainer.train(epochs=epochs, patience=patience, fold_idx=fold_id)
         all_histories.append(history)
@@ -362,4 +378,3 @@ if __name__ == "__main__":
     print(f"\nTraining complete!")
     print(f"Average MAE: €{avg_mae:,.0f}")
     print(f"Average MAPE: {avg_mape:.1f}%")
-

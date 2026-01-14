@@ -69,7 +69,7 @@ Output JSON ONLY:
                 "format": "json" # Ollama JSON mode
             }
             
-            response = requests.post(self.generate_endpoint, json=payload, timeout=30)
+            response = requests.post(self.generate_endpoint, json=payload, timeout=60)
             if response.status_code == 200:
                 data = response.json()
                 content = data.get("response", "")

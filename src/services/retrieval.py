@@ -23,6 +23,7 @@ class IndexedListing:
     title: str
     price: float
     listing_type: str # "sale" or "rent"
+    property_type: Optional[str]
     surface_area_sqm: Optional[float]
     bedrooms: Optional[int]
     lat: Optional[float]
@@ -84,6 +85,7 @@ class CompRetriever:
                         title=item["title"],
                         price=item["price"],
                         listing_type=item.get("listing_type", "sale"),
+                        property_type=item.get("property_type"),
                         surface_area_sqm=item.get("surface_area_sqm"),
                         bedrooms=item.get("bedrooms"),
                         lat=item.get("lat"),
@@ -106,7 +108,8 @@ class CompRetriever:
                     "int_id": il.int_id,
                     "title": il.title,
                     "price": il.price,
-                "listing_type": il.listing_type,
+                    "listing_type": il.listing_type,
+                    "property_type": il.property_type,
                     "surface_area_sqm": il.surface_area_sqm,
                     "bedrooms": il.bedrooms,
                     "lat": il.lat,
@@ -161,7 +164,10 @@ class CompRetriever:
                 continue
                 
             # Create embedding from text
-            text = f"{l.title or ''} {l.description or ''}"
+            text_parts = [l.title or "", l.description or ""]
+            if getattr(l, "vlm_description", None):
+                text_parts.append(l.vlm_description or "")
+            text = " ".join(t for t in text_parts if t).strip()
             vec = self.model.encode(text, normalize_embeddings=True)
             vectors.append(vec)
             
@@ -175,6 +181,7 @@ class CompRetriever:
                 title=l.title or "",
                 price=l.price,
                 listing_type=l.listing_type if hasattr(l, "listing_type") and l.listing_type else "sale",
+                property_type=(l.property_type.value if hasattr(l, "property_type") and hasattr(l.property_type, "value") else str(getattr(l, "property_type", "") or "")).lower() or None,
                 surface_area_sqm=l.surface_area_sqm,
                 bedrooms=l.bedrooms,
                 lat=l.location.lat if l.location else None,
@@ -223,9 +230,29 @@ class CompRetriever:
         """
         if self.index.ntotal == 0:
             return []
+
+        if max_radius_km > 0:
+            if not target.location or target.location.lat is None or target.location.lon is None:
+                raise ValueError("missing_target_geolocation")
+
+        target_property_type = None
+        if hasattr(target, "property_type") and target.property_type:
+            target_property_type = str(target.property_type)
+            if "." in target_property_type:
+                target_property_type = target_property_type.split(".")[-1]
+            target_property_type = target_property_type.lower().strip()
+
+        if strict_filters:
+            if not target_property_type:
+                raise ValueError("missing_target_property_type")
+            if not target.surface_area_sqm or target.surface_area_sqm <= 0:
+                raise ValueError("missing_target_surface_area")
             
         # Create query embedding
-        text = f"{target.title or ''} {target.description or ''}"
+        text_parts = [target.title or "", target.description or ""]
+        if getattr(target, "vlm_description", None):
+            text_parts.append(target.vlm_description or "")
+        text = " ".join(t for t in text_parts if t).strip()
         query_vec = self.model.encode(text, normalize_embeddings=True)
         query_vec = query_vec.reshape(1, -1).astype('float32')
         
@@ -246,109 +273,62 @@ class CompRetriever:
             if exclude_self and il.id == target.id: continue
             candidates.append((il, float(dist)))
             
-        # --- Filtering Strategies ---
-        
-        def get_filtered_results(allowed_bedroom_diff: int, allowed_sqm_ratio: float) -> List[CompListing]:
-            """Helper to filter candidates with specific strictness."""
-            results = []
-            for il, dist in candidates:
-                # 0. Listing Type Filter
-                if listing_type and il.listing_type != listing_type:
+        # --- Strict Two-Stage Filtering ---
+        # Stage 1: Geo + listing_type
+        # Stage 2: Property type + size (and bedrooms if available)
+
+        results = []
+        allowed_bedroom_diff = 1
+        allowed_sqm_ratio = 0.2
+
+        for il, dist in candidates:
+            if listing_type and il.listing_type != listing_type:
+                continue
+
+            if target_property_type and il.property_type and il.property_type != target_property_type:
+                continue
+
+            if max_radius_km > 0:
+                if il.lat is None or il.lon is None:
+                    continue
+                geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
+                if geo_dist > max_radius_km:
                     continue
 
-                # 1. Geo Filter (Hard Requirement usually)
-                if max_radius_km > 0 and target_lat and target_lon and il.lat and il.lon:
-                    geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
-                    if geo_dist > max_radius_km:
+            if strict_filters:
+                if target.bedrooms is not None:
+                    if il.bedrooms is None:
                         continue
-                
-                # 2. Logical Compatibility
-                if strict_filters:
-                    # Bedrooms
-                    if target.bedrooms is not None and il.bedrooms is not None:
-                        # For small units (0-1 beds), be strict. For large, allow margin.
-                        if target.bedrooms <= 1 and il.bedrooms != target.bedrooms:
-                            if abs(il.bedrooms - target.bedrooms) > 0: continue
-                        elif abs(il.bedrooms - target.bedrooms) > allowed_bedroom_diff:
-                            continue
-                            
-                    # Surface Area
-                    if target.surface_area_sqm and il.surface_area_sqm:
-                        ratio = il.surface_area_sqm / target.surface_area_sqm
-                        # e.g. 0.7 to 1.3
-                        if not ((1.0 - allowed_sqm_ratio) <= ratio <= (1.0 + allowed_sqm_ratio)):
-                            continue
+                    if target.bedrooms <= 1 and il.bedrooms != target.bedrooms:
+                        continue
+                    if target.bedrooms > 1 and abs(il.bedrooms - target.bedrooms) > allowed_bedroom_diff:
+                        continue
 
-                # Similarity Score
-                similarity = 1.0 / (1.0 + dist)
-                
-                results.append(CompListing(
-                    id=il.id,
-                    price=il.price,
-                    features={
-                        "sqm": il.surface_area_sqm or 0,
-                        "bedrooms": il.bedrooms or 0,
-                        "lat": il.lat or 0,
-                        "lon": il.lon or 0
-                    },
-                    similarity_score=similarity,
-                    snapshot_id=il.snapshot_id
-                ))
-                
-                if len(results) >= k:
-                    break
-            return results
+                if target.surface_area_sqm:
+                    if not il.surface_area_sqm:
+                        continue
+                    ratio = il.surface_area_sqm / target.surface_area_sqm
+                    if not ((1.0 - allowed_sqm_ratio) <= ratio <= (1.0 + allowed_sqm_ratio)):
+                        continue
 
-        # Strategy 1: Strict (Apple-to-Apple)
-        # +/- 1 Bedroom, +/- 20% size
-        comps = get_filtered_results(allowed_bedroom_diff=1, allowed_sqm_ratio=0.2)
-        
-        # Strategy 2: Relaxed (Apples-to-Pears)
-        # +/- 2 Bedrooms, +/- 40% size
-        if len(comps) < k:
-            # logger.info("relaxing_filters_level_1", target_id=target.id, found=len(comps))
-            required = k - len(comps)
-            relaxed = get_filtered_results(allowed_bedroom_diff=2, allowed_sqm_ratio=0.4)
-            
-            # Merge unique
-            existing_ids = {c.id for c in comps}
-            for c in relaxed:
-                if c.id not in existing_ids:
-                    comps.append(c)
-                    existing_ids.add(c.id)
-                    if len(comps) >= k: break
-                    
-        # Strategy 3: Desperate (Fruit Salad)
-        # Just pure vector search (already geo-filtered in the inner loop logic if we reused it, 
-        # but let's just take the raw vector results if we still have nothing)
-        if len(comps) < k:
-            # logger.info("relaxing_filters_level_max", target_id=target.id, found=len(comps))
-            # Just take whatever we have from candidates that satisfies Geo
-            existing_ids = {c.id for c in comps}
-            for il, dist in candidates:
-                if il.id in existing_ids: continue
-                
-                # Check Geo only
-                if max_radius_km > 0 and target_lat and target_lon and il.lat and il.lon:
-                    geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
-                    if geo_dist > max_radius_km: continue
-                
-                similarity = 1.0 / (1.0 + dist)
-                comps.append(CompListing(
-                    id=il.id,
-                    price=il.price,
-                    features={
-                        "sqm": il.surface_area_sqm or 0,
-                        "bedrooms": il.bedrooms or 0,
-                        "lat": il.lat or 0,
-                        "lon": il.lon or 0
-                    },
-                    similarity_score=similarity,
-                    snapshot_id=il.snapshot_id
-                ))
-                if len(comps) >= k: break
-                
-        return comps[:k]
+            similarity = 1.0 / (1.0 + dist)
+            results.append(CompListing(
+                id=il.id,
+                price=il.price,
+                features={
+                    "sqm": il.surface_area_sqm or 0,
+                    "bedrooms": il.bedrooms or 0,
+                    "lat": il.lat or 0,
+                    "lon": il.lon or 0
+                },
+                similarity_score=similarity,
+                snapshot_id=il.snapshot_id
+            ))
+
+            if len(results) >= k:
+                break
+
+        return results[:k]
 
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics."""

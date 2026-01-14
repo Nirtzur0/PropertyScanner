@@ -93,7 +93,12 @@ class FeatureFusionService:
         # Image
         if "visual_sentiment" in vlm_data:
             try:
-                 listing.image_sentiment = float(vlm_data["visual_sentiment"])
+                 sentiment = float(vlm_data["visual_sentiment"])
+                 if sentiment > 1.0:
+                     sentiment = 1.0
+                 elif sentiment < -1.0:
+                     sentiment = -1.0
+                 listing.image_sentiment = sentiment
             except: pass
             
         # D. Store Raw VLM Text
