@@ -190,7 +190,7 @@ class TabularEncoder:
         self.feature_names = feature_names or [
             'bedrooms', 'bathrooms', 'surface_area_sqm', 
             'year_built', 'floor', 'lat', 'lon', 'price_per_sqm',
-            'sentiment_score', 'has_elevator'
+            'text_sentiment', 'image_sentiment', 'has_elevator'
         ]
         self.dimension = len(self.feature_names)
         

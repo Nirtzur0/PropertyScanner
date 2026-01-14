@@ -49,7 +49,8 @@ class DBListing(Base):
     vlm_description = Column(Text, nullable=True) # VLM generated text
     
     # AI Analysis
-    sentiment_score = Column(Float, nullable=True) # -1.0 to 1.0 from DescriptionAnalyst
+    text_sentiment = Column(Float, nullable=True) # -1.0 to 1.0 from DescriptionAnalyst
+    image_sentiment = Column(Float, nullable=True) # -1.0 to 1.0 from VLM
     analysis_meta = Column(JSON, default=dict) # Full output from DescriptionAnalyst
     
     tags = Column(JSON, default=list)

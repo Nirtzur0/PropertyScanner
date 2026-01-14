@@ -99,6 +99,13 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.p
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale
 ```
 
+**Clean Start (Reset DB)**
+To purge the database and start fresh:
+```bash
+# WARNING: Deletes all data!
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --clean
+```
+
 #### 2. Run Orchestrator (Agent)
 Ask the AI Agent to find specific properties (complex reasoning).
 ```bash

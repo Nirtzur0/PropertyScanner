@@ -25,20 +25,22 @@ class DescriptionAnalyst:
         if not description or len(description) < 50:
             return {}
 
-        prompt = f"""You are a strict, cynical real estate investor. Analyze this property description.
+        prompt = f"""You are a cynical Real Estate Investment Analyst. Your job is to ignore marketing fluff and assess financial value/risk.
 Description: "{description}"
 
-Task:
-1. Extract FACTS (boolean/int) if present: has_elevator, has_pool, has_garage, renovation_needed, floor_number (int).
-2. Extract LOCATION: `city_or_district` (string) if explicitly mentioned (e.g. "Located in Chamberi", "Heart of Madrid").
-3. Determine SENTIMENT score (-1.0 to 1.0): 
-   - -1.0 = Terrible deal, major red flags, "needs work".
-   - 0.0 = Neutral, factual listing.
-   - 1.0 = Incredible opportunity, "must see", purely positive.
-   Be CRITICAL. Marketing fluff should not boost the score much.
-4. specific_features: List of key strings e.g. ["sea_view", "high_ceilings"].
+Analyze the text and extract the following in strict JSON format:
 
-Output ONLY valid JSON:
+1. **Facts**: Extract boolean/int flags.
+2. **Drivers**:
+   - `positive_drivers`: List of features that DIRECTLY increase rent/sale price (e.g. "terrace", "elevator", "recently_renovated", "exterior").
+   - `negative_drivers`: List of red flags or costs (e.g. "no_elevator", "interior_apartment", "needs_reform", "squatters").
+3. **Sentiment**: `investor_sentiment` (-1.0 to 1.0).
+   - Rating based on ROI potential, NOT how "nice" the description sounds.
+   - -1.0: Toxic asset (e.g. illegal status, ruins).
+   - 0.0: Standard market listing.
+   - 1.0: Urgent buy / Undervalued.
+
+Output JSON ONLY:
 {{
   "facts": {{
     "has_elevator": bool,
@@ -47,11 +49,15 @@ Output ONLY valid JSON:
     "renovation_needed": bool,
     "floor": int or null
   }},
+  "financial_analysis": {{
+    "positive_drivers": ["string"],
+    "negative_drivers": ["string"],
+    "investor_sentiment": float,
+    "summary": "Compact risk/reward assessment (max 15 words)"
+  }},
   "extraction": {{
     "city_or_district": "string or null"
-  }},
-  "sentiment_score": float,
-  "summary": "Short critical assessment"
+  }}
 }}
 """
         

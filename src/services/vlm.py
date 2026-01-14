@@ -131,6 +131,7 @@ class VLMImageDescriber:
                 "{"
                 "\"condition\": \"renovated/good/fair/needs_work\", "
                 "\"quality\": \"luxury/standard/basic\", "
+                "\"visual_sentiment\": 0.0, " 
                 "\"rooms\": [\"kitchen\", \"bedroom\", \"bathroom\", \"balcony\"], "
                 "\"features\": [\"hardwood_floors\", \"modern_kitchen\", \"large_windows\", \"view\", \"pool\", \"terrace\"], "
                 "\"summary\": \"Concise 10-word description of value drivers.\""

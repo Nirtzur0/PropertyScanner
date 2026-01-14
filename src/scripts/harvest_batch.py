@@ -12,8 +12,7 @@ from playwright_stealth import Stealth
 from src.core.domain.schema import RawListing, CanonicalListing
 from src.agents.processors.pisos import PisosNormalizerAgent
 from src.services.enrichment_service import EnrichmentService
-from src.services.vlm import VLMImageDescriber
-from src.services.description_analyst import DescriptionAnalyst
+from src.services.feature_fusion import FeatureFusionService
 from src.services.storage import StorageService
 import logging
 import structlog
@@ -38,8 +37,7 @@ class Harvester:
         self.storage = StorageService()
         self.normalizer = PisosNormalizerAgent()
         self.enricher = EnrichmentService()
-        self.vlm = VLMImageDescriber(model="llava") # or moondream
-        self.analyst = DescriptionAnalyst()
+        self.fusion = FeatureFusionService()
         
     def collect_urls(self) -> List[str]:
         """
@@ -177,12 +175,8 @@ class Harvester:
                      city = self.enricher.get_city(canonical.location.lat, canonical.location.lon)
                      if city != "Unknown": canonical.location.city = city
 
-                # VLM
-                if canonical.image_urls:
-                     # Cast HttpUrl to str
-                     img_urls = [str(u) for u in canonical.image_urls]
-                     desc = self.vlm.describe_images(img_urls)
-                     if desc: canonical.vlm_description = desc
+                # Feature Fusion
+                canonical = self.fusion.fuse(canonical)
                      
                 self.storage.save_listings([canonical])
                 logger.info("Saved listing", id=canonical.id)
@@ -284,11 +278,8 @@ class Harvester:
                             city = self.enricher.get_city(canonical.location.lat, canonical.location.lon)
                             if city != "Unknown": canonical.location.city = city
                     
-                    # VLM
-                    if canonical.image_urls:
-                            img_urls = [str(u) for u in canonical.image_urls]
-                            desc = self.vlm.describe_images(img_urls, max_images=4)
-                            if desc: canonical.vlm_description = desc
+                    # Feature Fusion (LLM + VLM)
+                    canonical = self.fusion.fuse(canonical)
                             
                     self.storage.save_listings([canonical])
                     logger.info("Saved listing", id=canonical.id)
@@ -305,7 +296,17 @@ class Harvester:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="sale", choices=["sale", "rent"], help="Harvest mode: sale or rent")
+    parser.add_argument("--clean", action="store_true", help="Clear database and checkpoints before starting")
     args = parser.parse_args()
+    
+    if args.clean:
+        logger.warning("CLEAN START: Deleting database and checkpoints...")
+        if os.path.exists("data/listings.db"): os.remove("data/listings.db")
+        if os.path.exists(CHECKPOINT_FILE_SALE): os.remove(CHECKPOINT_FILE_SALE)
+        if os.path.exists(CHECKPOINT_FILE_RENT): os.remove(CHECKPOINT_FILE_RENT)
+        # Re-init DB
+        from src.services.storage import StorageService
+        StorageService() # This creates the tables if missing
     
     logger.info("Starting Harvester", mode=args.mode)
     harvester = Harvester(mode=args.mode)

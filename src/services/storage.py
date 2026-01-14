@@ -99,6 +99,15 @@ class StorageService:
                                  db_item.sentiment_score = analysis.get("sentiment_score")
                                  db_item.analysis_meta = analysis
                                  
+                                 if item.text_sentiment:
+                                     db_item.text_sentiment = item.text_sentiment
+                                 
+                                 if item.image_sentiment:
+                                     db_item.image_sentiment = item.image_sentiment
+                                 elif "visual_sentiment" in str(item.vlm_description):
+                                      # Fallback parsing if not set directly (edge case)
+                                      pass
+
                                  # Fill missing facts
                                  facts = analysis.get("facts", {})
                                  if facts:
