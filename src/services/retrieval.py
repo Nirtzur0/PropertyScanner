@@ -4,6 +4,7 @@ Provides semantic search with metadata filtering for comparable listings.
 """
 import os
 import json
+import re
 import structlog
 import numpy as np
 import faiss
@@ -15,11 +16,16 @@ from src.core.domain.schema import CanonicalListing, CompListing
 
 logger = structlog.get_logger()
 
+METADATA_VERSION = 2
+
 @dataclass
 class IndexedListing:
     """Cached listing data for fast retrieval."""
     id: str
     int_id: int
+    external_id: Optional[str]
+    source_id: Optional[str]
+    url: Optional[str]
     title: str
     price: float
     listing_type: str # "sale" or "rent"
@@ -29,6 +35,9 @@ class IndexedListing:
     lat: Optional[float]
     lon: Optional[float]
     snapshot_id: str
+    listed_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    status: Optional[str] = None
     indexed_at: datetime = field(default_factory=datetime.now)
 
 class CompRetriever:
@@ -47,11 +56,16 @@ class CompRetriever:
         self, 
         index_path: str = "data/vector_index.faiss",
         metadata_path: str = "data/vector_metadata.json",
-        model_name: str = 'all-MiniLM-L6-v2'
+        model_name: str = 'all-MiniLM-L6-v2',
+        strict_model_match: bool = True,
+        vlm_policy: str = "gated"
     ):
         self.index_path = index_path
         self.metadata_path = metadata_path
-        
+        self.model_name = model_name
+        self.strict_model_match = strict_model_match
+        self.vlm_policy = vlm_policy
+
         # Load embedding model
         self.model = SentenceTransformer(model_name)
         self.dimension = self.model.get_sentence_embedding_dimension()
@@ -68,20 +82,51 @@ class CompRetriever:
         self.listings: Dict[int, IndexedListing] = {}
         self.id_to_int: Dict[str, int] = {}
         self.next_int_id = 0
+        self.metadata_version = 0
+        self.metadata_model_name = None
+        self.metadata_index_fingerprint = None
+        self.metadata_vlm_policy = None
         
         if os.path.exists(metadata_path):
             self._load_metadata()
+        elif self.strict_model_match:
+            raise FileNotFoundError("retrieval_metadata_missing")
 
     def _load_metadata(self):
         """Load listing metadata from disk."""
         try:
             with open(self.metadata_path, "r") as f:
                 data = json.load(f)
+                self.metadata_version = data.get("version", 0)
+                self.metadata_model_name = data.get("model_name")
+                self.metadata_index_fingerprint = data.get("index_fingerprint")
+                self.metadata_vlm_policy = data.get("vlm_policy")
+
+                if self.metadata_version < METADATA_VERSION and self.strict_model_match:
+                    raise ValueError("retrieval_metadata_version_mismatch")
+
+                if self.metadata_model_name and self.metadata_model_name != self.model_name:
+                    msg = "retrieval_model_mismatch"
+                    if self.strict_model_match:
+                        raise ValueError(msg)
+                    logger.warning(msg, expected=self.model_name, found=self.metadata_model_name)
+                elif not self.metadata_model_name and self.strict_model_match:
+                    raise ValueError("retrieval_model_missing")
+
+                if self.metadata_vlm_policy and self.metadata_vlm_policy != self.vlm_policy:
+                    msg = "retrieval_vlm_policy_mismatch"
+                    if self.strict_model_match:
+                        raise ValueError(msg)
+                    logger.warning(msg, expected=self.vlm_policy, found=self.metadata_vlm_policy)
+
                 self.next_int_id = data.get("next_int_id", 0)
                 for item in data.get("listings", []):
                     il = IndexedListing(
                         id=item["id"],
                         int_id=item["int_id"],
+                        external_id=item.get("external_id"),
+                        source_id=item.get("source_id"),
+                        url=item.get("url"),
                         title=item["title"],
                         price=item["price"],
                         listing_type=item.get("listing_type", "sale"),
@@ -90,7 +135,10 @@ class CompRetriever:
                         bedrooms=item.get("bedrooms"),
                         lat=item.get("lat"),
                         lon=item.get("lon"),
-                        snapshot_id=item.get("snapshot_id", "")
+                        snapshot_id=item.get("snapshot_id", ""),
+                        listed_at=item.get("listed_at"),
+                        updated_at=item.get("updated_at"),
+                        status=item.get("status")
                     )
                     self.listings[il.int_id] = il
                     self.id_to_int[il.id] = il.int_id
@@ -106,6 +154,9 @@ class CompRetriever:
                 items.append({
                     "id": il.id,
                     "int_id": il.int_id,
+                    "external_id": il.external_id,
+                    "source_id": il.source_id,
+                    "url": il.url,
                     "title": il.title,
                     "price": il.price,
                     "listing_type": il.listing_type,
@@ -114,10 +165,21 @@ class CompRetriever:
                     "bedrooms": il.bedrooms,
                     "lat": il.lat,
                     "lon": il.lon,
-                    "snapshot_id": il.snapshot_id
+                    "snapshot_id": il.snapshot_id,
+                    "listed_at": il.listed_at,
+                    "updated_at": il.updated_at,
+                    "status": il.status
                 })
             with open(self.metadata_path, "w") as f:
-                json.dump({"next_int_id": self.next_int_id, "listings": items}, f)
+                json.dump({
+                    "version": METADATA_VERSION,
+                    "model_name": self.model_name,
+                    "vlm_policy": self.vlm_policy,
+                    "index_fingerprint": self._index_fingerprint(),
+                    "created_at": datetime.now().isoformat(),
+                    "next_int_id": self.next_int_id,
+                    "listings": items
+                }, f)
         except Exception as e:
             logger.error("metadata_save_failed", error=str(e))
 
@@ -134,6 +196,48 @@ class CompRetriever:
         c = 2 * atan2(sqrt(a), sqrt(1-a))
         
         return R * c
+
+    def _index_fingerprint(self) -> Dict[str, Any]:
+        if not os.path.exists(self.index_path):
+            return {}
+        stat = os.stat(self.index_path)
+        return {"size": stat.st_size, "mtime": int(stat.st_mtime)}
+
+    def _parse_dt(self, value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _is_vlm_safe(self, text: str) -> bool:
+        if not text:
+            return False
+        cleaned = text.strip()
+        if len(cleaned) < 30 or len(cleaned) > 600:
+            return False
+        lower = cleaned.lower()
+        for bad in ("no image", "image not available", "unknown", "n/a", "not provided", "no description"):
+            if bad in lower:
+                return False
+        tokens = [t for t in re.split(r"[^a-z0-9]+", lower) if t]
+        if len(tokens) < 5:
+            return False
+        uniq_ratio = len(set(tokens)) / max(len(tokens), 1)
+        return uniq_ratio >= 0.4
+
+    def _build_text(self, title: str, description: str, vlm_description: Optional[str]) -> str:
+        parts = [title or "", description or ""]
+        if self.vlm_policy != "off":
+            if self._is_vlm_safe(vlm_description or ""):
+                parts.append(vlm_description or "")
+        return " ".join(p for p in parts if p).strip()
 
     def add_listings(
         self, 
@@ -164,10 +268,7 @@ class CompRetriever:
                 continue
                 
             # Create embedding from text
-            text_parts = [l.title or "", l.description or ""]
-            if getattr(l, "vlm_description", None):
-                text_parts.append(l.vlm_description or "")
-            text = " ".join(t for t in text_parts if t).strip()
+            text = self._build_text(l.title or "", l.description or "", getattr(l, "vlm_description", None))
             vec = self.model.encode(text, normalize_embeddings=True)
             vectors.append(vec)
             
@@ -178,6 +279,9 @@ class CompRetriever:
             il = IndexedListing(
                 id=l.id,
                 int_id=int_id,
+                external_id=getattr(l, "external_id", None),
+                source_id=getattr(l, "source_id", None),
+                url=str(getattr(l, "url", "")) if getattr(l, "url", None) else None,
                 title=l.title or "",
                 price=l.price,
                 listing_type=l.listing_type if hasattr(l, "listing_type") and l.listing_type else "sale",
@@ -186,7 +290,10 @@ class CompRetriever:
                 bedrooms=l.bedrooms,
                 lat=l.location.lat if l.location else None,
                 lon=l.location.lon if l.location else None,
-                snapshot_id=snapshot_ids.get(l.id, "")
+                snapshot_id=snapshot_ids.get(l.id, ""),
+                listed_at=l.listed_at.isoformat() if getattr(l, "listed_at", None) else None,
+                updated_at=l.updated_at.isoformat() if getattr(l, "updated_at", None) else None,
+                status=str(getattr(l, "status", None)) if getattr(l, "status", None) else None
             )
             
             self.listings[int_id] = il
@@ -213,7 +320,9 @@ class CompRetriever:
         max_radius_km: float = 5.0,
         exclude_self: bool = True,
         strict_filters: bool = True,
-        listing_type: Optional[str] = None
+        listing_type: Optional[str] = None,
+        max_listed_at: Optional[datetime] = None,
+        exclude_duplicate_external: bool = True
     ) -> List[CompListing]:
         """
         Find K similar listings with optional geo-filtering and logical compatibility.
@@ -249,10 +358,7 @@ class CompRetriever:
                 raise ValueError("missing_target_surface_area")
             
         # Create query embedding
-        text_parts = [target.title or "", target.description or ""]
-        if getattr(target, "vlm_description", None):
-            text_parts.append(target.vlm_description or "")
-        text = " ".join(t for t in text_parts if t).strip()
+        text = self._build_text(target.title or "", target.description or "", getattr(target, "vlm_description", None))
         query_vec = self.model.encode(text, normalize_embeddings=True)
         query_vec = query_vec.reshape(1, -1).astype('float32')
         
@@ -281,9 +387,28 @@ class CompRetriever:
         allowed_bedroom_diff = 1
         allowed_sqm_ratio = 0.2
 
+        target_external_id = getattr(target, "external_id", None)
+        target_url = str(getattr(target, "url", "")) if getattr(target, "url", None) else None
+
         for il, dist in candidates:
             if listing_type and il.listing_type != listing_type:
                 continue
+            if exclude_duplicate_external and target_external_id and il.external_id == target_external_id:
+                continue
+            if target_url and il.url and il.url == target_url:
+                continue
+
+            if max_listed_at:
+                comp_dt = self._parse_dt(il.listed_at) or self._parse_dt(il.updated_at)
+                if comp_dt is None:
+                    continue
+                as_of = max_listed_at
+                if comp_dt.tzinfo is not None:
+                    comp_dt = comp_dt.replace(tzinfo=None)
+                if as_of.tzinfo is not None:
+                    as_of = as_of.replace(tzinfo=None)
+                if comp_dt > as_of:
+                    continue
 
             if target_property_type and il.property_type and il.property_type != target_property_type:
                 continue

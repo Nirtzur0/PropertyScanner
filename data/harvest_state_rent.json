@@ -30,19 +30,19 @@
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": "https://www.pisos.com/alquiler/pisos-alicante/44",
-      "done": false,
-      "last_signature": "d8ef0e666998010949fbf7d0409cdb62d13ba865ebc75765160f024edfe4b823",
-      "pages_visited": 45,
+      "current_url": "https://www.pisos.com/alquiler/pisos-alicante/72",
+      "done": true,
+      "last_signature": "0f2655f8c2816830d9d47a408c0bef72a17500fab73e00091674438eb844d4d6",
+      "pages_visited": 74,
       "start_url": "https://www.pisos.com/alquiler/pisos-alicante"
     },
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": null,
+      "current_url": "https://www.pisos.com/alquiler/pisos-almeria/17",
       "done": false,
-      "last_signature": null,
-      "pages_visited": 0,
+      "last_signature": "4e1e6f42374b4bb394ab9c607cb4f3ceb46dfb4b8015d8300abec8aa1babc31b",
+      "pages_visited": 18,
       "start_url": "https://www.pisos.com/alquiler/pisos-almeria"
     },
     {
@@ -955,7 +955,7 @@
       "start_url": "https://www.pisos.com/alquiler/casas-zaragoza"
     }
   ],
-  "current_area_index": 3,
+  "current_area_index": 4,
   "mode": "rent",
   "target_count": 20000,
   "version": 1

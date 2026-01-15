@@ -3,14 +3,15 @@ PyTorch Dataset for PropertyFusionModel Training.
 Loads listings directly from SQLite database and encodes on-the-fly or uses cached embeddings.
 """
 import sqlite3
-import ast
 import json
+import re
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from typing import List, Dict, Tuple, Optional, Any
 from collections import defaultdict
 from pathlib import Path
+from datetime import datetime
 import structlog
 from PIL import Image
 import io
@@ -35,11 +36,21 @@ class PropertyDataset(Dataset):
         cache_embeddings: bool = True,
         text_model: str = "all-MiniLM-L6-v2",
         use_vlm: bool = True,
+        listing_type: str = "sale",
+        label_source: str = "ask",
         min_price: float = 10_000,
         max_price: float = 15_000_000,
         geo_radius_km: float = 5.0,
         size_ratio_tolerance: float = 0.2,
-        require_same_property_type: bool = True
+        require_same_property_type: bool = True,
+        time_safe_comps: bool = True,
+        normalize_to: str = "latest",
+        use_retriever: bool = False,
+        retriever_index_path: str = "data/vector_index.faiss",
+        retriever_metadata_path: str = "data/vector_metadata.json",
+        retriever_model_name: str = "all-MiniLM-L6-v2",
+        retriever_vlm_policy: str = "gated",
+        require_hedonic: bool = True
     ):
         """
         Args:
@@ -52,31 +63,68 @@ class PropertyDataset(Dataset):
             geo_radius_km: Geo radius (km) for stage-1 filtering
             size_ratio_tolerance: Allowed +/- ratio for sqm compatibility
             require_same_property_type: Require same property_type for comps
+            time_safe_comps: Enforce comp dates <= target date
+            normalize_to: "latest", "none", or ISO date for hedonic normalization
+            use_retriever: Use FAISS retriever for comps (frozen distribution)
+            retriever_*: Retriever config (model/index/metadata/policy)
+            require_hedonic: Drop samples if hedonic normalization fails
         """
         self.db_path = db_path
         self.num_comps = num_comps
         self.cache_embeddings = cache_embeddings
         self.use_vlm = use_vlm
+        self.listing_type = listing_type
+        self.label_source = label_source
         self.min_price = min_price
         self.max_price = max_price
         self.geo_radius_km = float(geo_radius_km)
         self.size_ratio_tolerance = float(size_ratio_tolerance)
         self.require_same_property_type = bool(require_same_property_type)
+        self.time_safe_comps = bool(time_safe_comps)
+        self.normalize_to = normalize_to
+        self.use_retriever = bool(use_retriever)
+        self.retriever_index_path = retriever_index_path
+        self.retriever_metadata_path = retriever_metadata_path
+        self.retriever_model_name = retriever_model_name
+        self.retriever_vlm_policy = retriever_vlm_policy
+        self.require_hedonic = bool(require_hedonic)
         
         # Load encoder
         from src.services.encoders import TextEncoder, TabularEncoder
         self.text_encoder = TextEncoder(model_name=text_model)
         self.tabular_encoder = TabularEncoder()
+
+        self.hedonic = None
+        if self.normalize_to and self.normalize_to != "none":
+            from src.services.hedonic_index import HedonicIndexService
+            self.hedonic = HedonicIndexService(db_path=self.db_path)
+
+        self.retriever = None
+        if self.use_retriever:
+            from src.services.retrieval import CompRetriever
+            self.retriever = CompRetriever(
+                index_path=self.retriever_index_path,
+                metadata_path=self.retriever_metadata_path,
+                model_name=self.retriever_model_name,
+                strict_model_match=True,
+                vlm_policy=self.retriever_vlm_policy
+            )
         
         # Load all listings from database
         self.listings = self._load_listings()
+        self._listing_by_id = {l["id"]: l for l in self.listings}
+        self._index_by_id = {l["id"]: i for i, l in enumerate(self.listings)}
+
+        self.reference_date = self._resolve_reference_date()
 
         # Build geo index + precompute eligible comps
         self._spatial_index: Dict[Tuple[int, int], List[int]] = defaultdict(list)
         self._bucket_size_deg = self._deg_per_km() * max(self.geo_radius_km, 0.01)
         self._build_spatial_index()
-        self._comp_candidates: Dict[int, List[int]] = {}
+        self._comp_candidates: Dict[int, List[Tuple[int, float]]] = {}
         self._eligible_indices: List[int] = []
+        self._baseline_cache: Dict[int, float] = {}
+        self._target_adj_cache: Dict[int, float] = {}
         self._build_comp_candidates()
         
         # Cache for embeddings
@@ -87,10 +135,16 @@ class PropertyDataset(Dataset):
                    num_listings=len(self.listings),
                    eligible_listings=len(self._eligible_indices),
                    vlm_enabled=use_vlm,
+                   listing_type=self.listing_type,
+                   label_source=self.label_source,
                    price_range=(self.min_price, self.max_price),
                    geo_radius_km=self.geo_radius_km,
                    size_ratio_tolerance=self.size_ratio_tolerance,
-                   require_same_property_type=self.require_same_property_type)
+                   require_same_property_type=self.require_same_property_type,
+                   time_safe_comps=self.time_safe_comps,
+                   normalize_to=self.normalize_to,
+                   reference_date=self.reference_date.isoformat() if self.reference_date else None,
+                   use_retriever=self.use_retriever)
         
         # Fit tabular encoder on the data for proper normalization
         self._fit_tabular_encoder()
@@ -101,14 +155,23 @@ class PropertyDataset(Dataset):
         conn.row_factory = sqlite3.Row
         
         # We query all positive prices first, then filter in python to be safe/flexible
-        cursor = conn.execute("""
-            SELECT id, source_id, title, description, price, city,
+        query = """
+            SELECT id, source_id, external_id, url, title, description, price, city,
                    bedrooms, bathrooms, surface_area_sqm, floor,
                    lat, lon, image_urls, vlm_description, property_type,
-                   listed_at, updated_at, text_sentiment, image_sentiment, has_elevator
+                   listed_at, updated_at, text_sentiment, image_sentiment, has_elevator,
+                   listing_type, status, sold_at
             FROM listings
             WHERE price > 0
-        """)
+        """
+        params: List[Any] = []
+        if self.listing_type and self.listing_type != "all":
+            query += " AND listing_type = ?"
+            params.append(self.listing_type)
+        if self.label_source == "sold":
+            query += " AND status = 'sold'"
+
+        cursor = conn.execute(query, params)
         
         raw_listings = [dict(row) for row in cursor.fetchall()]
         conn.close()
@@ -125,10 +188,26 @@ class PropertyDataset(Dataset):
                 
         if dropped_count > 0:
             logger.warning("outliers_dropped", count=dropped_count, min_price=self.min_price, max_price=self.max_price)
-            
+
+        deduped: Dict[str, Dict[str, Any]] = {}
+        duplicates = 0
         for l in valid_listings:
             l["property_type"] = self._normalize_property_type(l.get("property_type"))
-        return valid_listings
+            l["obs_date"] = self._listing_observed_date(l)
+            l["_dedupe_key"] = self._dedupe_key(l)
+            key = l["_dedupe_key"]
+            if key in deduped:
+                duplicates += 1
+                existing = deduped[key]
+                if self._prefer_listing(l, existing):
+                    deduped[key] = l
+            else:
+                deduped[key] = l
+
+        if duplicates > 0:
+            logger.info("duplicate_listings_dropped", count=duplicates)
+
+        return list(deduped.values())
 
     def _normalize_property_type(self, value: Any) -> Optional[str]:
         if value is None:
@@ -138,6 +217,58 @@ class PropertyDataset(Dataset):
             text = text.split(".")[-1]
         text = text.lower()
         return text or None
+
+    def _parse_dt(self, value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None) if value.tzinfo else value
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text.replace('Z', '+00:00'))
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+        except ValueError:
+            return None
+
+    def _listing_observed_date(self, listing: Dict[str, Any]) -> Optional[datetime]:
+        sold_at = self._parse_dt(listing.get("sold_at"))
+        listed_at = self._parse_dt(listing.get("listed_at"))
+        updated_at = self._parse_dt(listing.get("updated_at"))
+        if self.label_source == "sold" and sold_at:
+            return sold_at
+        return listed_at or updated_at or sold_at
+
+    def _dedupe_key(self, listing: Dict[str, Any]) -> str:
+        source = listing.get("source_id") or ""
+        external = listing.get("external_id")
+        if external:
+            return f"{source}:{external}"
+        url = listing.get("url")
+        if url:
+            return str(url)
+        return str(listing.get("id"))
+
+    def _prefer_listing(self, candidate: Dict[str, Any], existing: Dict[str, Any]) -> bool:
+        cand_dt = candidate.get("obs_date") or self._listing_observed_date(candidate)
+        exist_dt = existing.get("obs_date") or self._listing_observed_date(existing)
+        if cand_dt and exist_dt:
+            return cand_dt > exist_dt
+        if cand_dt and not exist_dt:
+            return True
+        if exist_dt and not cand_dt:
+            return False
+        return False
+
+    def _resolve_reference_date(self) -> Optional[datetime]:
+        if not self.normalize_to or self.normalize_to == "none":
+            return None
+        if self.normalize_to == "latest":
+            dates = [l.get("obs_date") for l in self.listings if l.get("obs_date")]
+            return max(dates) if dates else None
+        # ISO date string
+        return self._parse_dt(self.normalize_to)
     
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
         """Safely convert value to float."""
@@ -173,6 +304,92 @@ class PropertyDataset(Dataset):
         
         self.tabular_encoder.fit(feature_dicts)
         logger.info("tabular_encoder_fitted", num_samples=len(feature_dicts))
+
+    def _region_id(self, listing: Dict[str, Any]) -> Optional[str]:
+        city = listing.get("city")
+        if not city:
+            return None
+        return str(city).lower().strip()
+
+    def _label_weight(self, listing: Dict[str, Any]) -> float:
+        status = str(listing.get("status") or "").lower()
+        if status == "sold":
+            return 1.0
+        if self.label_source == "sold":
+            return 0.0
+        listed_at = listing.get("obs_date")
+        updated_at = self._parse_dt(listing.get("updated_at"))
+        if listed_at and updated_at and updated_at > listed_at:
+            return 0.7
+        return 0.5
+
+    def _time_normalize_price(
+        self,
+        raw_price: float,
+        region_id: Optional[str],
+        obs_date: Optional[datetime]
+    ) -> Optional[float]:
+        if raw_price <= 0:
+            return None
+        if not self.reference_date or not self.hedonic:
+            return float(raw_price)
+        if not region_id or not obs_date:
+            if self.require_hedonic:
+                return None
+            return float(raw_price)
+        try:
+            adj_price, _, meta = self.hedonic.adjust_comp_price(
+                raw_price=raw_price,
+                region_id=region_id,
+                comp_timestamp=obs_date,
+                target_timestamp=self.reference_date
+            )
+            if meta.get("comp_index_fallback") or meta.get("target_index_fallback"):
+                if self.require_hedonic:
+                    return None
+            return float(adj_price)
+        except Exception:
+            if self.require_hedonic:
+                return None
+            return float(raw_price)
+
+    def _robust_baseline(self, values: np.ndarray, weights: np.ndarray) -> Optional[float]:
+        if len(values) == 0:
+            return None
+        median = float(np.median(values))
+        mad = float(np.median(np.abs(values - median)))
+        if mad <= 0:
+            mad = max(median * 0.05, 1.0)
+        mask = np.abs(values - median) <= (3.0 * mad)
+        if mask.sum() < max(1, min(self.num_comps, len(values))):
+            return None
+        values = values[mask]
+        weights = weights[mask]
+        weight_sum = float(weights.sum())
+        if weight_sum <= 0:
+            weights = np.ones_like(values) / len(values)
+        else:
+            weights = weights / weight_sum
+        order = np.argsort(values)
+        cum = np.cumsum(weights[order])
+        idx = int(np.searchsorted(cum, 0.5))
+        return float(values[order][min(idx, len(values) - 1)])
+
+    def _is_vlm_safe(self, text: str) -> bool:
+        if not text:
+            return False
+        cleaned = str(text).strip()
+        if len(cleaned) < 30 or len(cleaned) > 600:
+            return False
+        lower = cleaned.lower()
+        for bad in ("no image", "image not available", "unknown", "n/a", "not provided", "no description"):
+            if bad in lower:
+                return False
+        tokens = [t for t in re.split(r"[^a-z0-9]+", lower) if t]
+        if len(tokens) < 5:
+            return False
+        uniq_ratio = len(set(tokens)) / max(len(tokens), 1)
+        return uniq_ratio >= 0.4
     
     def _extract_year_built(self, listing: Dict) -> int:
         """Extract year_built from listing, with fallback estimation."""
@@ -214,6 +431,87 @@ class PropertyDataset(Dataset):
             if lat is None or lon is None:
                 continue
             self._spatial_index[self._bucket_key(lat, lon)].append(idx)
+
+    def _retriever_candidates(self, target_idx: int) -> List[Tuple[int, float]]:
+        target = self.listings[target_idx]
+        if not self.retriever:
+            return []
+
+        target_date = target.get("obs_date")
+        max_date = target_date if self.time_safe_comps else None
+
+        from src.core.domain.schema import CanonicalListing, GeoLocation
+
+        loc = None
+        if target.get("lat") is not None and target.get("lon") is not None:
+            loc = GeoLocation(
+                lat=target.get("lat"),
+                lon=target.get("lon"),
+                address_full=target.get("title") or "",
+                city=target.get("city") or "Unknown",
+                country="ES",
+            )
+
+        prop_type = target.get("property_type") or "apartment"
+        if prop_type not in ("apartment", "house", "land", "commercial", "other"):
+            prop_type = "other"
+
+        target_listing = CanonicalListing(
+            id=str(target.get("id")),
+            source_id=str(target.get("source_id") or "unknown"),
+            external_id=str(target.get("external_id") or target.get("id")),
+            url=target.get("url") or "http://example.invalid",
+            title=target.get("title") or "listing",
+            description=target.get("description"),
+            price=target.get("price") or 0.0,
+            currency="EUR",
+            listing_type=target.get("listing_type") or "sale",
+            property_type=prop_type,
+            bedrooms=target.get("bedrooms"),
+            bathrooms=target.get("bathrooms"),
+            surface_area_sqm=target.get("surface_area_sqm"),
+            floor=target.get("floor"),
+            has_elevator=target.get("has_elevator"),
+            location=loc,
+            image_urls=[],
+            vlm_description=target.get("vlm_description"),
+            text_sentiment=target.get("text_sentiment"),
+            image_sentiment=target.get("image_sentiment"),
+            listed_at=target.get("listed_at"),
+            updated_at=target.get("updated_at"),
+            status=target.get("status") or "active",
+        )
+
+        comps = self.retriever.retrieve_comps(
+            target=target_listing,
+            k=max(self.num_comps, 10),
+            max_radius_km=self.geo_radius_km,
+            exclude_self=True,
+            strict_filters=True,
+            listing_type=self.listing_type if self.listing_type != "all" else None,
+            max_listed_at=max_date,
+            exclude_duplicate_external=True
+        )
+
+        target_key = target.get("_dedupe_key")
+        results: List[Tuple[int, float]] = []
+        for comp in comps:
+            comp_row = self._listing_by_id.get(comp.id)
+            if not comp_row:
+                continue
+            if comp_row.get("_dedupe_key") == target_key:
+                continue
+            if self.time_safe_comps and target_date:
+                comp_date = comp_row.get("obs_date")
+                if not comp_date or comp_date > target_date:
+                    continue
+            idx = self._index_by_id.get(comp.id)
+            if idx is None:
+                continue
+            weight = comp.similarity_score or 0.0
+            results.append((idx, weight))
+
+        return results
 
     def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         from math import radians, sin, cos, sqrt, atan2
@@ -271,6 +569,8 @@ class PropertyDataset(Dataset):
         target = self.listings[target_idx]
         target_type = target.get("property_type")
         target_sqm = self._safe_float(target.get("surface_area_sqm"), default=0.0)
+        target_date = target.get("obs_date")
+        target_key = target.get("_dedupe_key")
         if target_sqm <= 0:
             return []
         if self.require_same_property_type and not target_type:
@@ -281,6 +581,12 @@ class PropertyDataset(Dataset):
         max_ratio = 1.0 + self.size_ratio_tolerance
         for idx, dist_km in candidates:
             cand = self.listings[idx]
+            if cand.get("_dedupe_key") == target_key:
+                continue
+            if self.time_safe_comps and target_date:
+                cand_date = cand.get("obs_date")
+                if not cand_date or cand_date > target_date:
+                    continue
             cand_type = cand.get("property_type")
             if self.require_same_property_type:
                 if not cand_type or cand_type != target_type:
@@ -302,6 +608,8 @@ class PropertyDataset(Dataset):
         missing_geo = 0
         missing_size = 0
         insufficient = 0
+        missing_hedonic = 0
+        baseline_failed = 0
         for idx, listing in enumerate(self.listings):
             if listing.get("lat") is None or listing.get("lon") is None:
                 missing_geo += 1
@@ -309,15 +617,56 @@ class PropertyDataset(Dataset):
             if self._safe_float(listing.get("surface_area_sqm"), default=0.0) <= 0:
                 missing_size += 1
                 continue
+            target_date = listing.get("obs_date")
+            region_id = self._region_id(listing)
+            target_price_adj = self._time_normalize_price(float(listing.get("price", 0)), region_id, target_date)
+            if target_price_adj is None or target_price_adj <= 0:
+                missing_hedonic += 1
+                continue
 
-            geo_candidates = self._geo_candidates(idx)
-            filtered = self._filter_candidates(idx, geo_candidates)
+            if self.use_retriever and self.retriever:
+                filtered = self._retriever_candidates(idx)
+            else:
+                geo_candidates = self._geo_candidates(idx)
+                filtered = self._filter_candidates(idx, geo_candidates)
+
             if len(filtered) < self.num_comps:
                 insufficient += 1
                 continue
-            filtered.sort(key=lambda item: item[1])
-            self._comp_candidates[idx] = [i for i, _ in filtered]
+            filtered.sort(key=lambda item: item[1], reverse=self.use_retriever)
+
+            comp_prices_adj = []
+            weights = []
+            used = []
+            for comp_idx, metric in filtered:
+                comp = self.listings[comp_idx]
+                comp_date = comp.get("obs_date")
+                comp_price_adj = self._time_normalize_price(float(comp.get("price", 0)), region_id, comp_date)
+                if comp_price_adj is None:
+                    continue
+                comp_prices_adj.append(comp_price_adj)
+                weights.append(metric)
+                used.append((comp_idx, metric))
+                if len(comp_prices_adj) >= self.num_comps:
+                    break
+
+            if len(comp_prices_adj) < self.num_comps:
+                baseline_failed += 1
+                continue
+
+            weights_arr = np.array(weights, dtype=float)
+            if not self.use_retriever:
+                weights_arr = 1.0 / (1.0 + np.maximum(weights_arr, 0.0))
+
+            baseline = self._robust_baseline(np.array(comp_prices_adj, dtype=float), weights_arr)
+            if baseline is None or baseline <= 0:
+                baseline_failed += 1
+                continue
+
+            self._comp_candidates[idx] = used
             self._eligible_indices.append(idx)
+            self._baseline_cache[idx] = baseline
+            self._target_adj_cache[idx] = target_price_adj
 
         logger.info(
             "comp_candidate_build",
@@ -325,7 +674,9 @@ class PropertyDataset(Dataset):
             eligible=len(self._eligible_indices),
             missing_geo=missing_geo,
             missing_size=missing_size,
-            insufficient=insufficient
+            insufficient=insufficient,
+            missing_hedonic=missing_hedonic,
+            baseline_failed=baseline_failed
         )
 
         if not self._eligible_indices:
@@ -344,8 +695,10 @@ class PropertyDataset(Dataset):
         
         # Get VLM description (from database)
         vlm_desc = ""
-        if self.use_vlm:
-             vlm_desc = listing.get("vlm_description") or ""
+        if self.use_vlm and self.retriever_vlm_policy != "off":
+            raw_vlm = listing.get("vlm_description") or ""
+            if self._is_vlm_safe(raw_vlm):
+                vlm_desc = raw_vlm
         
         # Combine all text
         text = f"{title}. {description} {vlm_desc}".strip()
@@ -380,7 +733,7 @@ class PropertyDataset(Dataset):
     def __len__(self) -> int:
         return len(self._eligible_indices)
     
-    def _sample_comps(self, target_idx: int) -> List[int]:
+    def _sample_comps(self, target_idx: int) -> List[Tuple[int, float]]:
         """Sample comparable indices, excluding the target."""
         candidates = self._comp_candidates.get(target_idx, [])
         return candidates[: self.num_comps]
@@ -390,21 +743,51 @@ class PropertyDataset(Dataset):
         target = self.listings[target_idx]
         
         # Sample comparables
-        comp_indices = self._sample_comps(target_idx)
+        comp_entries = self._sample_comps(target_idx)
+        comp_indices = [i for i, _ in comp_entries]
+        comp_weights = [w for _, w in comp_entries]
         comps = [self.listings[i] for i in comp_indices]
-        
+
         # Build tensors
         target_text = torch.from_numpy(self._get_text_embedding(target)).float()
         target_tab = torch.from_numpy(self._get_tabular_features(target)).float()
-        target_price = torch.tensor(target["price"], dtype=torch.float32)
-        
-        comp_text = torch.stack([
-            torch.from_numpy(self._get_text_embedding(c)).float() for c in comps
-        ])
-        comp_tab = torch.stack([
-            torch.from_numpy(self._get_tabular_features(c)).float() for c in comps
-        ])
-        comp_prices = torch.tensor([c["price"] for c in comps], dtype=torch.float32)
+        target_price_raw = float(target["price"])
+
+        comp_text = torch.stack([torch.from_numpy(self._get_text_embedding(c)).float() for c in comps])
+        comp_tab = torch.stack([torch.from_numpy(self._get_tabular_features(c)).float() for c in comps])
+
+        target_date = target.get("obs_date")
+        region_id = self._region_id(target)
+        target_price_adj = self._target_adj_cache.get(target_idx)
+        if target_price_adj is None:
+            target_price_adj = self._time_normalize_price(target_price_raw, region_id, target_date)
+        if target_price_adj is None or target_price_adj <= 0:
+            raise ValueError("invalid_target_price_adjusted")
+
+        comp_prices_adj = []
+        for comp in comps:
+            comp_date = comp.get("obs_date")
+            comp_price_adj = self._time_normalize_price(float(comp["price"]), region_id, comp_date)
+            if comp_price_adj is None:
+                comp_price_adj = float(comp["price"])
+            comp_prices_adj.append(comp_price_adj)
+
+        baseline = self._baseline_cache.get(target_idx)
+        if baseline is None:
+            weights = np.array(comp_weights, dtype=float)
+            if not self.use_retriever:
+                weights = 1.0 / (1.0 + np.maximum(weights, 0.0))
+            baseline = self._robust_baseline(np.array(comp_prices_adj, dtype=float), weights)
+        if baseline is None or baseline <= 0:
+            raise ValueError("invalid_comp_baseline")
+
+        target_log = float(np.log(target_price_adj))
+        baseline_log = float(np.log(baseline))
+        target_residual = target_log - baseline_log
+        label_weight = self._label_weight(target)
+
+        comp_prices = torch.tensor(comp_prices_adj, dtype=torch.float32)
+        target_price = torch.tensor(target_residual, dtype=torch.float32)
         
         return {
             "target_text": target_text,
@@ -413,7 +796,10 @@ class PropertyDataset(Dataset):
             "comp_text": comp_text,
             "comp_tab": comp_tab,
             "comp_prices": comp_prices,
-            "num_comps": len(comps)
+            "num_comps": len(comps),
+            "baseline_price": torch.tensor(baseline, dtype=torch.float32),
+            "label_weight": torch.tensor(label_weight, dtype=torch.float32),
+            "target_price_adj": torch.tensor(target_price_adj, dtype=torch.float32)
         }
 
 
@@ -431,6 +817,9 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     target_text = torch.stack([b["target_text"] for b in batch])
     target_tab = torch.stack([b["target_tab"] for b in batch])
     target_price = torch.stack([b["target_price"] for b in batch])
+    baseline_price = torch.stack([b["baseline_price"] for b in batch])
+    label_weight = torch.stack([b["label_weight"] for b in batch])
+    target_price_adj = torch.stack([b["target_price_adj"] for b in batch])
     
     comp_text = torch.zeros(batch_size, max_comps, text_dim)
     comp_tab = torch.zeros(batch_size, max_comps, tab_dim)
@@ -451,7 +840,10 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         "comp_text": comp_text,
         "comp_tab": comp_tab,
         "comp_prices": comp_prices,
-        "comp_mask": comp_mask
+        "comp_mask": comp_mask,
+        "baseline_price": baseline_price,
+        "label_weight": label_weight,
+        "target_price_adj": target_price_adj
     }
 
 
@@ -461,7 +853,16 @@ def create_dataloaders(
     num_comps: int = 5,
     val_split: float = 0.1,
     num_workers: int = 0,
-    use_vlm: bool = True
+    use_vlm: bool = True,
+    listing_type: str = "sale",
+    label_source: str = "ask",
+    time_safe_comps: bool = True,
+    normalize_to: str = "latest",
+    use_retriever: bool = True,
+    retriever_index_path: str = "data/vector_index.faiss",
+    retriever_metadata_path: str = "data/vector_metadata.json",
+    retriever_model_name: str = "all-MiniLM-L6-v2",
+    retriever_vlm_policy: str = "gated"
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Create train and validation dataloaders from the database.
@@ -474,7 +875,20 @@ def create_dataloaders(
         num_workers: Number of data loading workers
         use_vlm: Whether to use VLM for image descriptions
     """
-    dataset = PropertyDataset(db_path=db_path, num_comps=num_comps, use_vlm=use_vlm)
+    dataset = PropertyDataset(
+        db_path=db_path,
+        num_comps=num_comps,
+        use_vlm=use_vlm,
+        listing_type=listing_type,
+        label_source=label_source,
+        time_safe_comps=time_safe_comps,
+        normalize_to=normalize_to,
+        use_retriever=use_retriever,
+        retriever_index_path=retriever_index_path,
+        retriever_metadata_path=retriever_metadata_path,
+        retriever_model_name=retriever_model_name,
+        retriever_vlm_policy=retriever_vlm_policy
+    )
     
     # Split into train/val
     n = len(dataset)

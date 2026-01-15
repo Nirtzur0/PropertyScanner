@@ -148,7 +148,8 @@ if TORCH_AVAILABLE:
 
             comp_prices: torch.Tensor,
             return_attention: bool = False,
-            comp_doms: Optional[torch.Tensor] = None
+            comp_doms: Optional[torch.Tensor] = None,
+            output_mode: str = "price"
         ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
             """
             Forward pass with retrieval-augmented reasoning.
@@ -195,21 +196,24 @@ if TORCH_AVAILABLE:
             )
             attn_weights = attn_weights.squeeze(1)  # (B, K)
             
-            # Compute attention-weighted comp price as anchor
-            # This gives us a baseline prediction based on similar comps
-            price_anchor = (attn_weights * comp_prices).sum(dim=-1, keepdim=True)  # (B, 1)
-            price_std = comp_prices.std(dim=-1, keepdim=True).clamp(min=1000)  # (B, 1)
-            
             # Residual connection
             reasoned = target_emb + attn_out
             reasoned = self.post_attn(reasoned.squeeze(1))  # (B, D)
             
             # Predict RESIDUALS (adjustments) as fraction of price std
             price_residuals = self.price_head(reasoned)  # (B, 3)
-            
-            # Final price = anchor + (residual * std)
-            # This ensures predictions are in the right scale
-            price_q = price_anchor + price_residuals * price_std
+
+            if output_mode == "residual":
+                price_q = price_residuals
+            else:
+                # Compute attention-weighted comp price as anchor
+                # This gives us a baseline prediction based on similar comps
+                price_anchor = (attn_weights * comp_prices).sum(dim=-1, keepdim=True)  # (B, 1)
+                price_std = comp_prices.std(dim=-1, keepdim=True).clamp(min=1000)  # (B, 1)
+
+                # Final price = anchor + (residual * std)
+                # This ensures predictions are in the right scale
+                price_q = price_anchor + price_residuals * price_std
             
             # Rent prediction: ~0.4% of price per month (European average)
             rent_base = price_anchor * 0.004
@@ -241,7 +245,12 @@ if TORCH_AVAILABLE:
             super().__init__()
             self.quantiles = quantiles
             
-        def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        def forward(
+            self,
+            predictions: torch.Tensor,
+            targets: torch.Tensor,
+            weights: Optional[torch.Tensor] = None
+        ) -> torch.Tensor:
             """
             Compute pinball loss.
             
@@ -263,6 +272,8 @@ if TORCH_AVAILABLE:
                     q * error,
                     (q - 1) * error
                 )
+                if weights is not None:
+                    loss = loss * weights
                 losses.append(loss.mean())
                 
             return sum(losses) / len(losses)
@@ -326,7 +337,8 @@ class FusionModelService:
         comp_image_embeddings: List[np.ndarray],
 
         comp_prices: List[float],
-        comp_doms: List[float] = None # Added inputs
+        comp_doms: List[float] = None, # Added inputs
+        output_mode: str = "price"
     ) -> FusionOutput:
         """
         Make predictions for a target listing.
@@ -404,7 +416,8 @@ class FusionModelService:
                 comp_tab, comp_text, comp_image,
                 comp_prices_t,
                 return_attention=True,
-                comp_doms=comp_doms_t
+                comp_doms=comp_doms_t,
+                output_mode=output_mode
             )
         
         return FusionOutput(

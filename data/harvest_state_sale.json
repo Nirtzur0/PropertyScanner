@@ -1,30 +1,30 @@
 {
   "areas": [
     {
-      "consecutive_no_new_pages": 237,
+      "consecutive_no_new_pages": 500,
       "consecutive_same_signature": 0,
-      "current_url": "https://www.pisos.com/venta/pisos-a_coruna/45",
-      "done": false,
-      "last_signature": "3c09d6262fd119f1b7ae73bcc91913324e0492e65652cd943f0dfbb0f5d15df5",
-      "pages_visited": 648,
+      "current_url": "https://www.pisos.com/venta/pisos-a_coruna/40",
+      "done": true,
+      "last_signature": "c7eaa5e56f4173bfb37c3d25545b6a5025c1cf29d7f33efcd7102dbd7f718587",
+      "pages_visited": 1344,
       "start_url": "https://www.pisos.com/venta/pisos-a_coruna"
     },
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": null,
-      "done": false,
-      "last_signature": null,
-      "pages_visited": 0,
+      "current_url": "https://www.pisos.com/venta/pisos-alava_araba/21",
+      "done": true,
+      "last_signature": "bd0e74a6113591493864ef1dd8a49dde2d048216ffcd7037226b7cfff30ad653",
+      "pages_visited": 21,
       "start_url": "https://www.pisos.com/venta/pisos-alava_araba"
     },
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": null,
+      "current_url": "https://www.pisos.com/venta/pisos-albacete/11",
       "done": false,
-      "last_signature": null,
-      "pages_visited": 0,
+      "last_signature": "ffa84e6d6c26344bbae2d599d9112d9d28474edd5ccc410ad941eb7dff2d1a52",
+      "pages_visited": 12,
       "start_url": "https://www.pisos.com/venta/pisos-albacete"
     },
     {
@@ -991,7 +991,7 @@
       "start_url": "https://www.pisos.com/venta/casas-zaragoza"
     }
   ],
-  "current_area_index": 0,
+  "current_area_index": 2,
   "mode": "sale",
   "target_count": 20000,
   "version": 1

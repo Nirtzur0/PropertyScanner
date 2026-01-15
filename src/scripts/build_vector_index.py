@@ -95,6 +95,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--metadata-path", type=str, default="data/vector_metadata.json", help="Metadata output path")
     parser.add_argument("--clear", action="store_true", help="Delete existing index/metadata before building")
     parser.add_argument("--batch-size", type=int, default=200, help="Batch size for indexing")
+    parser.add_argument("--model-name", type=str, default="all-MiniLM-L6-v2", help="SentenceTransformer model name")
+    parser.add_argument("--vlm-policy", type=str, default="gated", choices=["gated", "off"], help="VLM text policy")
     args = parser.parse_args(argv)
 
     if args.clear:
@@ -103,7 +105,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 os.remove(path)
         logger.info("vector_index_cleared", index_path=args.index_path, metadata_path=args.metadata_path)
 
-    retriever = CompRetriever(index_path=args.index_path, metadata_path=args.metadata_path)
+    retriever = CompRetriever(
+        index_path=args.index_path,
+        metadata_path=args.metadata_path,
+        model_name=args.model_name,
+        strict_model_match=False,
+        vlm_policy=args.vlm_policy
+    )
     storage = StorageService(db_url=args.db_url)
     session = storage.get_session()
 

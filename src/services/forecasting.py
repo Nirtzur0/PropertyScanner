@@ -36,12 +36,23 @@ class ForecastingService:
         min_history_months: int = 12,
         return_window_months: int = 12,
         index_source: str = "market",
+        forecast_mode: str = "analytic",
+        tft_model_path: str = "models/tft_forecaster.pt",
     ):
         self.db_path = db_path
         self.area_intelligence = AreaIntelligenceService(db_path)
         self.min_history_months = max(6, int(min_history_months))
         self.return_window_months = max(self.min_history_months, int(return_window_months))
         self.index_source = index_source.strip().lower()
+        self.forecast_mode = forecast_mode.strip().lower()
+        self.tft = None
+
+        if self.forecast_mode == "tft":
+            try:
+                from src.training.forecasting_tft import TFTForecastingService
+                self.tft = TFTForecastingService(db_path=self.db_path, model_path=tft_model_path)
+            except Exception as e:
+                raise RuntimeError("tft_unavailable") from e
 
     def _load_time_series(self, region_id: str) -> pd.DataFrame:
         """Load price index history joined with macro indicators and area intelligence."""
@@ -213,6 +224,12 @@ class ForecastingService:
         current_value: float,
         horizons_months: List[int] = [12, 36, 60],
     ) -> List[ValuationProjection]:
+        if self.forecast_mode == "tft":
+            if not self.tft:
+                raise ValueError("tft_unavailable")
+            results = self.tft.predict(region_id=region_id, current_value=current_value)
+            return self._tft_to_projections(results, horizons_months, metric="price", scenario_name="tft")
+
         df = self._load_time_series(region_id)
         if df.empty:
             raise ValueError("missing_price_index")
@@ -232,6 +249,8 @@ class ForecastingService:
         current_monthly_rent: float,
         horizons_months: List[int] = [12, 36, 60],
     ) -> List[ValuationProjection]:
+        if self.forecast_mode == "tft":
+            raise ValueError("tft_rent_not_supported")
         df = self._load_rent_time_series(region_id)
         if df.empty:
             raise ValueError("missing_rent_index")
@@ -244,3 +263,39 @@ class ForecastingService:
             metric="rent_monthly",
             scenario_name="rent_drift",
         )
+
+    def _tft_to_projections(
+        self,
+        results: dict,
+        horizons_months: List[int],
+        metric: str,
+        scenario_name: str
+    ) -> List[ValuationProjection]:
+        if not results:
+            raise ValueError("tft_missing_predictions")
+
+        projections: List[ValuationProjection] = []
+        for h in horizons_months:
+            q10 = results.get(f"q10_m{h}")
+            q50 = results.get(f"q50_m{h}")
+            q90 = results.get(f"q90_m{h}")
+            if q10 is None or q50 is None or q90 is None:
+                raise ValueError("tft_missing_horizon")
+
+            spread = (q90 - q10) / max(q50, 1.0)
+            confidence = max(0.1, 1.0 - spread)
+
+            projections.append(
+                ValuationProjection(
+                    metric=metric,
+                    months_future=h,
+                    years_future=h / 12.0,
+                    predicted_value=float(q50),
+                    confidence_interval_low=float(q10),
+                    confidence_interval_high=float(q90),
+                    confidence_score=float(confidence),
+                    scenario_name=scenario_name,
+                )
+            )
+
+        return projections

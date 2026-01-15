@@ -16,7 +16,7 @@ References:
 """
 
 import numpy as np
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 from collections import deque
 from dataclasses import dataclass, field
 import structlog
@@ -203,6 +203,34 @@ class ConformalCalibrator:
             upper_avg_error=float(np.mean(upper_arr)),
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "alpha": self.alpha,
+            "window_size": self.window_size,
+            "adapt_rate": self.adapt_rate,
+            "horizon_name": self.horizon_name,
+            "lower_errors": list(self.lower_errors),
+            "upper_errors": list(self.upper_errors),
+            "median_errors": list(self.median_errors),
+            "lower_threshold": self.lower_threshold,
+            "upper_threshold": self.upper_threshold,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "ConformalCalibrator":
+        cal = cls(
+            alpha=payload.get("alpha", 0.1),
+            window_size=payload.get("window_size", 50),
+            adapt_rate=payload.get("adapt_rate", 0.01),
+            horizon_name=payload.get("horizon_name", "spot"),
+        )
+        cal.lower_errors = deque(payload.get("lower_errors", []), maxlen=cal.window_size)
+        cal.upper_errors = deque(payload.get("upper_errors", []), maxlen=cal.window_size)
+        cal.median_errors = deque(payload.get("median_errors", []), maxlen=cal.window_size)
+        cal.lower_threshold = payload.get("lower_threshold", 1.0)
+        cal.upper_threshold = payload.get("upper_threshold", 1.0)
+        return cal
+
 
 class HorizonCalibratorRegistry:
     """
@@ -297,6 +325,133 @@ class HorizonCalibratorRegistry:
         """Check if we have enough data for reliable calibration"""
         calibrator = self.get_calibrator(horizon_months)
         return len(calibrator.lower_errors) >= min_samples
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "horizons": list(self._calibrators.keys()),
+            "alpha": self.alpha,
+            "window_size": self.window_size,
+            "calibrators": {str(h): cal.to_dict() for h, cal in self._calibrators.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "HorizonCalibratorRegistry":
+        horizons = [int(h) for h in payload.get("horizons", [0, 12, 36, 60])]
+        registry = cls(
+            horizons=horizons,
+            alpha=payload.get("alpha", 0.1),
+            window_size=payload.get("window_size", 50),
+        )
+        calibrators = payload.get("calibrators", {})
+        for h_str, cal_payload in calibrators.items():
+            try:
+                h = int(h_str)
+            except ValueError:
+                continue
+            registry._calibrators[h] = ConformalCalibrator.from_dict(cal_payload)
+        return registry
+
+
+class StratifiedCalibratorRegistry:
+    """
+    Bucketed calibrator registry for stratified coverage.
+
+    Buckets are keyed by (region_id, property_type, price_tier).
+    """
+    def __init__(
+        self,
+        horizons: List[int] = [0, 12, 36, 60],
+        alpha: float = 0.1,
+        window_size: int = 50,
+        price_tiers: Optional[List[float]] = None,
+    ):
+        self.horizons = horizons
+        self.alpha = alpha
+        self.window_size = window_size
+        self.price_tiers = price_tiers or [150000, 300000, 600000, 1000000]
+        self._registries: Dict[str, HorizonCalibratorRegistry] = {}
+
+    def _price_tier(self, price: float) -> str:
+        for limit in self.price_tiers:
+            if price <= limit:
+                return f"<= {int(limit)}"
+        return f"> {int(self.price_tiers[-1])}"
+
+    def bucket_key(self, region_id: Optional[str], property_type: Optional[str], price: float) -> str:
+        region = (region_id or "unknown").lower().strip()
+        ptype = (property_type or "unknown").lower().strip()
+        tier = self._price_tier(price)
+        return f"{region}|{ptype}|{tier}"
+
+    def _get_registry(self, key: str) -> HorizonCalibratorRegistry:
+        if key not in self._registries:
+            self._registries[key] = HorizonCalibratorRegistry(
+                horizons=self.horizons,
+                alpha=self.alpha,
+                window_size=self.window_size,
+            )
+        return self._registries[key]
+
+    def update(
+        self,
+        key: str,
+        horizon_months: int,
+        actual: float,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float
+    ):
+        registry = self._get_registry(key)
+        registry.update(horizon_months, actual, pred_q10, pred_q50, pred_q90)
+
+    def calibrate_interval(
+        self,
+        key: str,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float,
+        horizon_months: int
+    ) -> Tuple[float, float, float]:
+        registry = self._get_registry(key)
+        return registry.calibrate_interval(pred_q10, pred_q50, pred_q90, horizon_months=horizon_months)
+
+    def is_calibrated(self, key: str, horizon_months: int = 0, min_samples: int = 20) -> bool:
+        registry = self._get_registry(key)
+        return registry.is_calibrated(horizon_months=horizon_months, min_samples=min_samples)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "horizons": self.horizons,
+            "alpha": self.alpha,
+            "window_size": self.window_size,
+            "price_tiers": self.price_tiers,
+            "registries": {k: v.to_dict() for k, v in self._registries.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "StratifiedCalibratorRegistry":
+        registry = cls(
+            horizons=payload.get("horizons", [0, 12, 36, 60]),
+            alpha=payload.get("alpha", 0.1),
+            window_size=payload.get("window_size", 50),
+            price_tiers=payload.get("price_tiers", [150000, 300000, 600000, 1000000]),
+        )
+        registries = payload.get("registries", {})
+        for key, reg_payload in registries.items():
+            registry._registries[key] = HorizonCalibratorRegistry.from_dict(reg_payload)
+        return registry
+
+    def save(self, path: str):
+        import json
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f)
+
+    @classmethod
+    def load(cls, path: str) -> "StratifiedCalibratorRegistry":
+        import json
+        with open(path, "r") as f:
+            payload = json.load(f)
+        return cls.from_dict(payload)
 
 
 class HierarchicalReconciler:
