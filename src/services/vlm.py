@@ -126,16 +126,20 @@ class VLMImageDescriber:
 
             # Update prompt context
             prompt = (
-                "This image is a composite grid of 4 separate property photos. Analyze the grid as a whole. "
+                "This image is a composite grid of property photos. Analyze the grid as a whole. "
                 "Provide a strict JSON summary of the visible features. Do not use markdown. Format: "
                 "{"
                 "\"condition\": \"renovated/good/fair/needs_work\", "
                 "\"quality\": \"luxury/standard/basic\", "
-                "\"visual_sentiment\": 0.0, " 
+                "\"visual_sentiment\": 0.0, "
                 "\"rooms\": [\"kitchen\", \"bedroom\", \"bathroom\", \"balcony\"], "
                 "\"features\": [\"hardwood_floors\", \"modern_kitchen\", \"large_windows\", \"view\", \"pool\", \"terrace\"], "
                 "\"summary\": \"Concise 10-word description of value drivers.\""
                 "}"
+                " visual_sentiment must be a float in [-1.0, 1.0]: "
+                "-1.0 = severe negatives (dilapidated, unsafe), "
+                "0.0 = neutral/standard condition, "
+                "+1.0 = exceptional quality/renovation."
             )
 
             import time

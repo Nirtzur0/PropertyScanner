@@ -40,10 +40,6 @@ graph TD
         Attn["Cross-Attention Mechanism"]
         Concat_T -->|Query| Attn
         Concat_C -->|"Key/Value"| Attn
-        
-        Anchor["Anchor Calculation"]
-        Attn -.->|Weights| Anchor
-        CompPrices --> Anchor
     end
 
     subgraph "Prediction Heads"
@@ -51,7 +47,9 @@ graph TD
         Attn --> Res
         
         Final["Final Price Calculation"]
-        Anchor --> Final
+        Baseline["Robust Comp Baseline"]
+        CompPrices --> Baseline
+        Baseline --> Final
         Res --> Final
     end
 
@@ -61,15 +59,15 @@ graph TD
 ## Core Concepts
 
 ### 0. Input Composition
-- Text input is `title + description + vlm_description` (when available).
+- Text input is `title + description + vlm_description` (gated/whitelisted when available).
 - Image embeddings are optional and used only if cached.
 
 ### 1. Cross-Attention Pricing
 Traditional models predict price directly from features ($f(x) \rightarrow y$). Our model predicts price **relative to the market** ($f(x, \{comps\}) \rightarrow y$).
 - The **Target Listing** queries the **Comparable Listings**.
 - The model learns "how much better or worse" the target is compared to the comps.
-- **Anchor Price**: The weighted average of comp prices (weighted by similarity).
-- **Residual**: The model predicts a +/- adjustment to this anchor.
+- **Baseline**: A robust comp aggregate (weighted median + MAD filtering) is computed outside the model.
+- **Residual**: The model predicts log-residuals over this baseline.
 
 ### 2. Quantile Regression (Uncertainty)
 Real estate valuation is inherently uncertain. Instead of a single number, the model predicts a probability distribution:
@@ -77,11 +75,13 @@ Real estate valuation is inherently uncertain. Instead of a single number, the m
 - **p50 (Fair)**: Probable market value.
 - **p90 (Optimistic)**: High-end estimate.
 
-This is achieved using **Pinball Loss** during training.
+This is achieved using **weighted Pinball Loss** during training.
+Label weights are quality-aware (sold > updated ask > initial ask).
 
 ### 3. Strict Comparable Selection and Time Adjustment
-- Comps are retrieved from a FAISS index with strict geo + property_type + size filters.
-- Comp prices are time-adjusted via the hedonic index before fusion.
+- Comps are retrieved from a FAISS index with time-safe filtering (comp observed date <= target observed date) and dedupe rules.
+- Retriever metadata (encoder + VLM policy) must match at train/infer to keep distribution frozen.
+- Comp prices are time-adjusted via the hedonic index; targets are trained in log space on residuals over the robust baseline.
 - If indices or comps are missing, valuation fails instead of falling back.
 
 ### 4. Hyperparameters (Current Configuration)
@@ -89,8 +89,8 @@ Defined in `src/services/fusion_model.py`.
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Tabular Dim | 11 | bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, price_per_sqm, text_sentiment, image_sentiment, has_elevator |
-| Text Dim | 384 | SentenceTransformer embedding size (includes VLM descriptions) |
+| Tabular Dim | 11 | bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, price_per_sqm (zeroed), text_sentiment, image_sentiment, has_elevator |
+| Text Dim | 384 | SentenceTransformer embedding size (includes gated VLM descriptions) |
 | Image Dim | 512 | Optional image embedding size |
 | Hidden Dim | 64 | Projection size (Compact for efficiency) |
 | Heads | 2 | Attention heads |
@@ -98,5 +98,6 @@ Defined in `src/services/fusion_model.py`.
 
 ### 5. Runtime Requirements
 - Model artifacts: `models/fusion_model.pt` and `models/fusion_config.json`.
-- Vector index: `data/vector_index.faiss` + `data/vector_metadata.json`.
+- Vector index: `data/vector_index.faiss` + `data/vector_metadata.json` (encoder + VLM policy locked).
 - Market/hedonic indices in `data/listings.db`.
+- Optional calibrators: `models/calibration_registry.json`.

@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 import structlog
 from src.core.domain.schema import MarketProfile, ValuationProjection, CanonicalListing
+from src.services.eri_signals import ERISignalsService
 
 logger = structlog.get_logger(__name__)
 
@@ -16,6 +17,7 @@ class MarketAnalyticsService:
     """
     def __init__(self, db_path: str = "data/listings.db"):
         self.db_path = db_path
+        self.eri = ERISignalsService(db_path=db_path)
 
     def _get_listings_df(self, city: str = None) -> pd.DataFrame:
         """Load listings into a DataFrame for vectorized analysis"""
@@ -125,6 +127,22 @@ class MarketAnalyticsService:
         # 2. Calculate Signals
         growth_rate, confidence = self.calculate_momentum(zone_df)
         liquidity = self.calculate_liquidity(zone_df)
+
+        eri_signals = {}
+        if listing.location and listing.location.city:
+            eri_signals = self.eri.get_signals(
+                listing.location.city.lower(),
+                listing.updated_at if listing.updated_at else datetime.now()
+            )
+
+        if eri_signals:
+            txn_z = eri_signals.get("txn_volume_z", 0.0)
+            eri_liquidity = 1.0 / (1.0 + np.exp(-txn_z))
+            liquidity = 0.5 * liquidity + 0.5 * eri_liquidity
+
+            registral_change = eri_signals.get("registral_price_sqm_change")
+            if registral_change is not None:
+                growth_rate = 0.6 * registral_change + 0.4 * growth_rate
         
         # 3. Calculate Ripple (Simplistic: compare to city avg)
         # If this listing is in a cheaper zone but city is booming

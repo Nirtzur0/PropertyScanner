@@ -45,7 +45,8 @@ Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `Ag
 - Provide explicit `areas` (search paths or URLs) when invoking the cognitive orchestrator.
 - Provide at least one LLM provider (Ollama, Gemini, or OpenAI) for Supervisor + Report.
 - Provide a strategy in state (default: `balanced`) if running the graph directly.
-- Evaluation is delegated to `ValuationService` and requires comps, indices, and model artifacts.
+- Evaluation is delegated to `ValuationService` and requires comps, indices, model artifacts, and a retriever metadata match (encoder + VLM policy).
+- Calibration registry (`models/calibration_registry.json`) is optional but improves interval reliability.
 
 ## Agent Examples
 

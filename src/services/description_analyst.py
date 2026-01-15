@@ -34,11 +34,12 @@ Analyze the text and extract the following in strict JSON format:
 2. **Drivers**:
    - `positive_drivers`: List of features that DIRECTLY increase rent/sale price (e.g. "terrace", "elevator", "recently_renovated", "exterior").
    - `negative_drivers`: List of red flags or costs (e.g. "no_elevator", "interior_apartment", "needs_reform", "squatters").
-3. **Sentiment**: `investor_sentiment` (-1.0 to 1.0).
+3. **Sentiment**: `investor_sentiment` (float in [-1.0, 1.0]).
    - Rating based on ROI potential, NOT how "nice" the description sounds.
-   - -1.0: Toxic asset (e.g. illegal status, ruins).
-   - 0.0: Standard market listing.
-   - 1.0: Urgent buy / Undervalued.
+   - -1.0 = severe red flags / toxic asset (legal issues, ruins).
+   -  0.0 = neutral, standard market listing.
+   - +1.0 = exceptional opportunity / clearly undervalued.
+   - Use values inside the range; prefer 1 decimal precision.
 
 Output JSON ONLY:
 {{

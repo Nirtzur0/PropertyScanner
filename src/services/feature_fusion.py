@@ -87,7 +87,12 @@ class FeatureFusionService:
         # Text
         if "investor_sentiment" in financial:
             try:
-                listing.text_sentiment = float(financial["investor_sentiment"])
+                sentiment = float(financial["investor_sentiment"])
+                if sentiment > 1.0:
+                    sentiment = 1.0
+                elif sentiment < -1.0:
+                    sentiment = -1.0
+                listing.text_sentiment = sentiment
             except: pass
             
         # Image

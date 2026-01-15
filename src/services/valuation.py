@@ -23,7 +23,7 @@ import structlog
 import re
 import os
 from typing import List, Optional, Tuple, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 import numpy as np
 
@@ -40,6 +40,7 @@ from src.services.conformal_calibrator import StratifiedCalibratorRegistry
 from src.services.fusion_model import FusionModelService, FusionOutput
 from src.services.encoders import MultimodalEncoder
 from src.services.retrieval import CompRetriever
+from src.services.eri_signals import ERISignalsService
 
 logger = structlog.get_logger(__name__)
 
@@ -64,6 +65,11 @@ class ValuationConfig:
     retriever_index_path: str = "data/vector_index.faiss"
     retriever_metadata_path: str = "data/vector_metadata.json"
     retriever_vlm_policy: str = "gated"
+
+    # ERI checks
+    eri_lag_days: int = 45
+    eri_disagreement_threshold: float = 0.08
+    eri_uncertainty_multiplier: float = 1.25
     
     # Horizons
     horizons_months: List[int] = None
@@ -119,6 +125,7 @@ class ValuationService:
         )
         self.analytics = MarketAnalyticsService()
         self.hedonic = HedonicIndexService()
+        self.eri = ERISignalsService(db_path="data/listings.db", lag_days=self.config.eri_lag_days)
         self.fusion = FusionModelService()
         retriever_cfg = {}
         if getattr(self.fusion, "config", None):
@@ -347,14 +354,26 @@ class ValuationService:
             # =====================================================================
             # STAGE 1: SPOT VALUATION ("Today's Fair Value")
             # =====================================================================
-            
+
             if comps is None:
                 comps, similarity_by_id = self._retrieve_comps(listing, as_of_date=valuation_date)
             else:
                 similarity_by_id = {}
 
+            eri_disagree, eri_details, eri_signals = self._eri_disagreement(region_id, valuation_date)
+            use_vlm = not eri_disagree
+
             fair_value, uncertainty, evidence = self._compute_spot_value(
-                listing, comps, similarity_by_id, region_id, valuation_date, tracer
+                listing,
+                comps,
+                similarity_by_id,
+                region_id,
+                valuation_date,
+                tracer,
+                use_vlm=use_vlm,
+                external_signals=eri_signals,
+                index_disagreement=eri_disagree,
+                index_disagreement_details=eri_details
             )
             
             if tracer:
@@ -402,6 +421,9 @@ class ValuationService:
                 if cal_q50 > 0:
                     uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
                 evidence.calibration_status = "calibrated"
+
+            if eri_disagree:
+                uncertainty *= self.config.eri_uncertainty_multiplier
             
             # =====================================================================
             # STAGE 1.5: RENT ESTIMATION & YIELD
@@ -422,6 +444,8 @@ class ValuationService:
             score, flags = self._compute_deal_score(
                 listing, fair_value, uncertainty, evidence, market_signals, rental_yield
             )
+            if eri_disagree:
+                flags.append("index_disagreement")
 
             # =====================================================================
             # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
@@ -485,7 +509,11 @@ class ValuationService:
         similarity_by_id: Dict[str, float],
         region_id: str,
         valuation_date: datetime,
-        tracer: Any = None
+        tracer: Any = None,
+        use_vlm: bool = True,
+        external_signals: Optional[Dict[str, float]] = None,
+        index_disagreement: Optional[bool] = None,
+        index_disagreement_details: Optional[Dict[str, float]] = None
     ) -> Tuple[float, float, EvidencePack]:
         """
         Compute today's fair value using fusion-only approach.
@@ -495,7 +523,16 @@ class ValuationService:
             raise ValueError("insufficient_comps_for_fusion")
 
         return self._try_fusion_valuation(
-            listing, comps, similarity_by_id, region_id, valuation_date, tracer
+            listing,
+            comps,
+            similarity_by_id,
+            region_id,
+            valuation_date,
+            tracer,
+            use_vlm=use_vlm,
+            external_signals=external_signals,
+            index_disagreement=index_disagreement,
+            index_disagreement_details=index_disagreement_details
         )
 
     def _is_vlm_safe(self, text: Optional[str]) -> bool:
@@ -521,7 +558,11 @@ class ValuationService:
         similarity_by_id: Dict[str, float],
         region_id: str,
         valuation_date: datetime,
-        tracer: Any = None
+        tracer: Any = None,
+        use_vlm: bool = True,
+        external_signals: Optional[Dict[str, float]] = None,
+        index_disagreement: Optional[bool] = None,
+        index_disagreement_details: Optional[Dict[str, float]] = None
     ) -> Tuple[float, float, EvidencePack]:
         """
         Attempt Fusion Model valuation with time-adjusted comps.
@@ -575,7 +616,7 @@ class ValuationService:
             })
 
         # Get embeddings and features for target
-        target_text, target_tab, target_img = self._get_embeddings(listing)
+        target_text, target_tab, target_img = self._get_embeddings(listing, include_vlm=use_vlm)
 
         # Get embeddings and features for comps
         comp_text_list = []
@@ -585,7 +626,7 @@ class ValuationService:
 
         for item in adjusted_comps:
             comp = item['comp']
-            c_text, c_tab, c_img = self._get_embeddings(comp)
+            c_text, c_tab, c_img = self._get_embeddings(comp, include_vlm=use_vlm)
 
             comp_text_list.append(c_text)
             comp_tab_list.append(c_tab)
@@ -679,12 +720,19 @@ class ValuationService:
             hedonic_fallback_reason=None,
             calibration_status="uncalibrated",
             valuation_date=valuation_date.strftime("%Y-%m-%d"),
-            comp_date_range=comp_date_range
+            comp_date_range=comp_date_range,
+            external_signals=external_signals,
+            index_disagreement=index_disagreement,
+            index_disagreement_details=index_disagreement_details
         )
 
         return (q50, uncertainty, evidence)
 
-    def _get_embeddings(self, listing: CanonicalListing) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    def _get_embeddings(
+        self,
+        listing: CanonicalListing,
+        include_vlm: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
         Helper to extract embeddings and features for a listing.
         Returns: (text_embedding, tabular_features, image_embedding)
@@ -693,7 +741,7 @@ class ValuationService:
         text_parts = [listing.title]
         if listing.description:
             text_parts.append(listing.description)
-        if listing.vlm_description and self.config.retriever_vlm_policy != "off":
+        if include_vlm and listing.vlm_description and self.config.retriever_vlm_policy != "off":
             if self._is_vlm_safe(listing.vlm_description):
                 text_parts.append(listing.vlm_description)
         full_text = " ".join(text_parts)
@@ -1041,6 +1089,85 @@ class ValuationService:
             raise ValueError("invalid_market_index")
 
         return value
+
+    def _get_index_yoy(
+        self,
+        table: str,
+        column: str,
+        region_id: str,
+        valuation_date: datetime
+    ) -> Optional[float]:
+        if not region_id:
+            return None
+
+        month_key = valuation_date.strftime("%Y-%m")
+        prev_date = (valuation_date.replace(day=1) - timedelta(days=365)).strftime("%Y-%m")
+
+        query = text(
+            f"""
+            SELECT month_date, {column}
+            FROM {table}
+            WHERE region_id = :region_id AND month_date LIKE :month_key
+            ORDER BY month_date DESC
+            LIMIT 1
+            """
+        )
+        prev_query = text(
+            f"""
+            SELECT month_date, {column}
+            FROM {table}
+            WHERE region_id = :region_id AND month_date LIKE :month_key
+            ORDER BY month_date DESC
+            LIMIT 1
+            """
+        )
+
+        with self.storage.engine.connect() as conn:
+            row = conn.execute(query, {"region_id": region_id, "month_key": f"{month_key}%"}).fetchone()
+            prev = conn.execute(prev_query, {"region_id": region_id, "month_key": f"{prev_date}%"}).fetchone()
+            if (not row or not prev) and region_id != "all":
+                row = conn.execute(query, {"region_id": "all", "month_key": f"{month_key}%"}).fetchone()
+                prev = conn.execute(prev_query, {"region_id": "all", "month_key": f"{prev_date}%"}).fetchone()
+
+        if not row or not prev:
+            return None
+
+        curr_val = float(row[1]) if row[1] is not None else None
+        prev_val = float(prev[1]) if prev[1] is not None else None
+        if not curr_val or not prev_val or prev_val <= 0:
+            return None
+
+        return curr_val / prev_val - 1.0
+
+    def _eri_disagreement(
+        self,
+        region_id: str,
+        valuation_date: datetime
+    ) -> Tuple[bool, Dict[str, float], Dict[str, float]]:
+        eri_signals = self.eri.get_signals(region_id, valuation_date)
+        if not eri_signals:
+            return False, {}, {}
+
+        eri_yoy = eri_signals.get("registral_price_sqm_change")
+        hedonic_yoy = self._get_index_yoy("hedonic_indices", "hedonic_index_sqm", region_id, valuation_date)
+        market_yoy = self._get_index_yoy("market_indices", "price_index_sqm", region_id, valuation_date)
+
+        details: Dict[str, float] = {}
+        disagree = False
+
+        if eri_yoy is not None and hedonic_yoy is not None:
+            diff = abs(eri_yoy - hedonic_yoy)
+            details["eri_vs_hedonic_yoy_diff"] = diff
+            if diff >= self.config.eri_disagreement_threshold:
+                disagree = True
+
+        if eri_yoy is not None and market_yoy is not None:
+            diff = abs(eri_yoy - market_yoy)
+            details["eri_vs_market_yoy_diff"] = diff
+            if diff >= self.config.eri_disagreement_threshold:
+                disagree = True
+
+        return disagree, details, eri_signals
 
     def _get_market_yield(self, region_id: str, valuation_date: datetime) -> float:
         month_key = valuation_date.strftime("%Y-%m")

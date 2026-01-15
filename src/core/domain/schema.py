@@ -154,6 +154,11 @@ class EvidencePack(BaseModel):
     # Calibration status
     calibration_status: str = "uncalibrated"  # "calibrated", "uncalibrated", "partial"
     calibration_diagnostics: Optional[Dict[str, float]] = None
+
+    # External sanity checks (ERI, etc.)
+    external_signals: Optional[Dict[str, Any]] = None
+    index_disagreement: Optional[bool] = None
+    index_disagreement_details: Optional[Dict[str, float]] = None
     
     # Timestamps
     valuation_date: Optional[str] = None

@@ -18,6 +18,7 @@ At the heart of the system is the **PropertyFusionModel**, a custom PyTorch arch
 *   **Visual Intelligence (VLM)**:
     *   We don't just crop images. We *read* them.
     *   A local **Ollama** agent (running **LLaVA**) acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition, finishes, and architectural style.
+    *   VLM text is gated/whitelisted and sentiment is clamped to [-1, 1] so hallucinations cannot dominate valuation.
 *   **Semantic Extraction**:
     *   **LLaMA 3** is used to parse messy crawler text into clean, structured facts (like `has_elevator`) and perform critical sentiment analysis to filter out "marketing fluff."
 
@@ -30,11 +31,12 @@ The project relies on a modular set of specialized AI models:
 | **Visuals** | `llava` | Ollama | Transcribes property photos into descriptive text. |
 | **Encoding** | `all-MiniLM-L6-v2` | PyTorch | Converts text into 384D mathematical vectors. |
 | **Similarity** | `ViT-B-32` | OpenCLIP | (Optional) Direct image vector encoding for search. |
-| **Predictions** | `PropertyFusionModel`| PyTorch | The custom "Reasoning" model that predicts fair value. |
+| **Predictions** | `PropertyFusionModel`| PyTorch | Cross-attention model that predicts log-residuals over a robust comp baseline. |
+| **Calibration** | `StratifiedCalibratorRegistry` | Custom | Updates prediction intervals from out-of-sample results. |
 
 ### 2. The Logic (Architecture)
 *   **Market Awareness**: The model doesn't look at a property in isolation. It takes standard comps (comparable listings) and learns the *relationship* between the target property and its market context using a **Transformer-based Cross-Attention** mechanism.
-*   **Objective Function**: It is trained using **Quantile Loss**, allowing it to predict not just a single price, but a confidence interval (p10, p50, p90) representing the range of fair value.
+*   **Objective Function**: It is trained using weighted **Pinball (Quantile) Loss** on log-residuals over a robust comp baseline (time-normalized by the hedonic index), yielding p10/p50/p90.
 
 ---
 
@@ -52,8 +54,8 @@ The system operates as a set of autonomous agents and processors.
     *   They invoke the local VLM to generate "visual inspections" (e.g., *"Modern kitchen, stone countertops, good conversational light"*).
 
 3.  **Training**:
-    *   The `Trainer` creates dynamic batches of (Target + Comps) using strict geo + property_type + size filters.
-    *   It optimizes the Fusion Model to minimize error in the median price prediction while calibrating uncertainty.
+    *   The `Trainer` creates dynamic (Target + Comps) batches using the frozen FAISS retriever (time-safe comps only; target + duplicates removed).
+    *   Labels are time-normalized to a reference date via the hedonic index, then the model learns log-residuals over a robust comp baseline with label-quality weights.
 
 ---
 
@@ -123,12 +125,16 @@ Price/rent projections use market + macro time series. After harvesting, build/u
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_market_data.py
 ```
+Optional: load ERI registral metrics into `eri_metrics` for liquidity + index-disagreement checks (lagged, not real-time).
 
 #### 1c. Build Vector Index (for Comps)
 Comparable retrieval requires the FAISS vector index:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_vector_index.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_vector_index.py \
+  --model-name all-MiniLM-L6-v2 \
+  --vlm-policy gated
 ```
+Note: training/inference enforce strict index metadata (encoder + VLM policy). Rebuild the index if you change either.
 
 #### 2. Run Orchestrator (Agent)
 Ask the AI Agent to find specific properties (complex reasoning).
@@ -140,9 +146,27 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/main.py "Find undervalu
 #### 3. Train Models
 Run the training pipeline (requires data in `data/listings.db`).
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/training/train.py --epochs 10
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/training/train.py \
+  --epochs 10 \
+  --listing-type sale \
+  --label-source sold \
+  --use-retriever \
+  --retriever-index data/vector_index.faiss \
+  --retriever-metadata data/vector_metadata.json \
+  --retriever-model all-MiniLM-L6-v2 \
+  --retriever-vlm-policy gated \
+  --time-safe-comps \
+  --normalize-to latest
 ```
 This writes `models/fusion_model.pt` and `models/fusion_config.json`.
+
+#### 3b. Update Calibration (optional but recommended)
+Use out-of-sample valuation results to refresh stratified conformal calibrators:
+```bash
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/update_calibrators.py \
+  --input data/calibration_samples.jsonl \
+  --output models/calibration_registry.json
+```
 
 #### 4. Launch Dashboard
 Visualize listings, valuations, and VLM insights.

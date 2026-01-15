@@ -119,8 +119,24 @@ def run_migrations(db_path="data/listings.db"):
             source_urls TEXT
         )
     """)
+
+    # 6. ERI (Registral) Metrics
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS eri_metrics (
+            id TEXT PRIMARY KEY, -- "region_id|period_date"
+            region_id TEXT,
+            period_date DATE,
+            txn_count INT,
+            mortgage_count INT,
+            price_sqm FLOAT,
+            price_sqm_yoy FLOAT,
+            price_sqm_qoq FLOAT,
+            updated_at DATETIME
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_eri_region_date ON eri_metrics (region_id, period_date)")
     
-    # 6. Update macro_scenarios schema for SOTA V3 (cite-or-drop)
+    # 7. Update macro_scenarios schema for SOTA V3 (cite-or-drop)
     try:
         conn.execute("ALTER TABLE macro_scenarios ADD COLUMN source_id TEXT")
         conn.execute("ALTER TABLE macro_scenarios ADD COLUMN horizon_year INT")
