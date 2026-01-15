@@ -1,12 +1,12 @@
 {
   "areas": [
     {
-      "consecutive_no_new_pages": 0,
+      "consecutive_no_new_pages": 237,
       "consecutive_same_signature": 0,
-      "current_url": "https://www.pisos.com/venta/pisos-a_coruna/52",
+      "current_url": "https://www.pisos.com/venta/pisos-a_coruna/45",
       "done": false,
-      "last_signature": "082e603a685707841a2253e3f8baa533e30d682ca8fc561a4b79edffba7d6a5e",
-      "pages_visited": 53,
+      "last_signature": "3c09d6262fd119f1b7ae73bcc91913324e0492e65652cd943f0dfbb0f5d15df5",
+      "pages_visited": 648,
       "start_url": "https://www.pisos.com/venta/pisos-a_coruna"
     },
     {
