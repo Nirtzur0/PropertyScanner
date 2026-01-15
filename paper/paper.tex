@@ -1,0 +1,190 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{bm}
+\usepackage{microtype}
+\usepackage{enumitem}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\softmax}{\mathrm{softmax}}
+\newcommand{\diag}{\mathrm{diag}}
+
+\title{PropertyScanner: Cross-Attention Comp Fusion for Market Valuation}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note documents the valuation model and evaluation protocol used in
+PropertyScanner. I focus on the mathematics that connects market reasoning with
+modern representation learning: comparable retrieval, time-adjusted anchors,
+cross-attention fusion, quantile regression, and conformal calibration. The
+goal is not only prediction but a defensible interval around fair value.
+Throughout, I adopt notation that keeps the economics visible, because in my
+experience in financial modeling, a model without an anchor to market structure
+is a model that drifts.
+\end{abstract}
+
+\section{Setup and Notation}
+Each listing $i$ has observed price $y_i > 0$ and three modalities:
+tabular features $x_i \in \R^{d_x}$, text embedding $t_i \in \R^{d_t}$, and
+optional image embedding $v_i \in \R^{d_v}$.
+In the current implementation, $d_x = 11$, $d_t = 384$, $d_v = 512$.
+The tabular vector includes location, size, floor, sentiment, and a
+price-per-sqm proxy; text includes title, description, and optionally
+vision-language descriptions.
+
+Given a target listing $0$, we retrieve $K$ comparables
+$\mathcal{C} = \{1,\ldots,K\}$ with prices $y_j$ and features
+$(x_j,t_j,v_j)$.
+Let $r$ denote the region (city) of the target and let $m(i)$ denote the month
+of listing $i$.
+The overall pipeline is:
+\[
+\text{retrieve comps} \rightarrow \text{time-adjust prices} \rightarrow
+\text{cross-attention fusion} \rightarrow \text{quantile outputs} \rightarrow
+\text{calibration} \rightarrow \text{evaluation}.
+\]
+
+\section{Comparable Retrieval}
+Semantic retrieval uses dense text embeddings with a FAISS index, followed by
+structural filters. Let $e(\cdot)$ be the text encoder. A query vector
+$q = e(\text{title}_0 \oplus \text{desc}_0 \oplus \text{vlm}_0)$ is compared to
+candidate vectors by inner product (normalized cosine similarity).
+The candidate pool is then filtered by distance, property type, and size:
+\begin{align}
+\text{dist}(j,0) &\leq R, \\
+\text{type}(j) &= \text{type}(0), \\
+1-\rho \leq \frac{\text{sqm}_j}{\text{sqm}_0} &\leq 1+\rho.
+\end{align}
+This two-stage filter reflects a key valuation principle: similarity must be
+semantic and structural.
+
+\section{Hedonic Time Adjustment}
+Comparable prices are time-adjusted to the valuation date using a hedonic index.
+The index is estimated by a monthly regression
+\begin{equation}
+\log P = \beta^\top f + \gamma_{\text{nh}} + \varepsilon,
+\end{equation}
+where $f$ contains size, bedrooms, bathrooms, elevator, and floor, and
+$\gamma_{\text{nh}}$ is a neighborhood fixed effect.
+Let $I_r(m)$ be the quality-adjusted price-per-sqm index for region $r$ at month
+$m$. For comp $j$ observed at month $m(j)$ and valued at month $m(0)$,
+\begin{equation}
+y_j^\ast = y_j \cdot \frac{I_r(m(0))}{I_r(m(j))}.
+\end{equation}
+This prevents leakage from temporal price drift and gives the model a
+current-market anchor.
+
+\section{Multimodal Encoding and Fusion}
+Each modality is projected into a shared hidden dimension $d$:
+\begin{align}
+h_x &= \phi_x(W_x x + b_x), \\
+h_t &= W_t t, \\
+h_v &= W_v v, \\
+h &= \phi_f([h_x;h_t;h_v]),
+\end{align}
+with $d=64$ in the deployed model. The projection layers are shallow by design:
+they align features without erasing structure, a common failure mode in
+over-parameterized tabular fusion.
+
+For the target and its comps, define $h_0 \in \R^d$ and
+$H \in \R^{K \times d}$.
+Cross-attention uses the target as query and comps as keys and values:
+\begin{align}
+A &= \softmax\left(\frac{h_0 H^\top}{\sqrt{d}}\right) \in \R^{1 \times K}, \\
+z &= A H \in \R^{1 \times d}, \\
+r &= g(h_0 + z),
+\end{align}
+where $g(\cdot)$ is a small post-attention MLP.
+The attention weights $A$ also serve as interpretable comp weights.
+
+\section{Anchored Residual Prediction}
+From a finance perspective, the safest predictive strategy is to anchor to
+market evidence and learn residual adjustments. We form an attention-weighted
+price anchor
+\begin{equation}
+a = \sum_{j=1}^K A_j y_j^\ast,
+\end{equation}
+and a scale term
+\begin{equation}
+s = \mathrm{std}(y_1^\ast,\ldots,y_K^\ast).
+\end{equation}
+For quantile $q \in \{0.1,0.5,0.9\}$, the model predicts a residual
+${u}_q = w_q^\top r + b_q$, and outputs
+\begin{equation}
+\hat{y}_q = a + s \cdot {u}_q.
+\end{equation}
+This simple decomposition keeps the model honest: it can only move predictions
+relative to what the market comps support, and the residual scale adapts to
+local dispersion.
+
+\section{Training Objective}
+We use quantile regression with the pinball loss. For a single target with
+prediction $\hat{y}_q$:
+\begin{equation}
+\ell_q(y,\hat{y}_q) =
+\max\left(q(y-\hat{y}_q), (q-1)(y-\hat{y}_q)\right).
+\end{equation}
+The training loss is the mean across the three quantiles:
+\begin{equation}
+\mathcal{L} = \frac{1}{3} \sum_{q \in \{0.1,0.5,0.9\}} \ell_q(y,\hat{y}_q).
+\end{equation}
+Only price quantiles are optimized in the current training loop; other heads
+are deployed but not yet trained on explicit labels.
+Optimization uses AdamW with gradient clipping and early stopping.
+The dataset samples comps using a geo-radius and size filter, and can be
+evaluated using a standard holdout split or K-fold cross validation.
+
+\section{Uncertainty and Calibration}
+The raw uncertainty proxy is the relative half-width:
+\begin{equation}
+u = \frac{\hat{y}_{0.9} - \hat{y}_{0.1}}{2\hat{y}_{0.5}}.
+\end{equation}
+Intervals are then calibrated by adaptive conformal prediction per horizon.
+Given residuals
+\begin{align}
+e^- &= \max(0, \hat{y}_{0.1} - y), \\
+e^+ &= \max(0, y - \hat{y}_{0.9}),
+\end{align}
+we compute quantiles $c^- = Q_{1-\alpha}(e^-)$ and
+$c^+ = Q_{1-\alpha}(e^+)$ on a rolling window, and widen the interval:
+\begin{equation}
+\tilde{y}_{0.1} = \hat{y}_{0.1} - c^-, \quad
+\tilde{y}_{0.9} = \hat{y}_{0.9} + c^+.
+\end{equation}
+This asymmetric calibration matches market intuition: downside and upside errors
+behave differently in illiquid markets.
+
+\section{Evaluation Protocol}
+Evaluation is organized around two axes: point accuracy and interval quality.
+Point accuracy uses the median prediction $\hat{y}_{0.5}$:
+\begin{align}
+\mathrm{MAE} &= \frac{1}{N}\sum_{i=1}^N |y_i - \hat{y}_{i,0.5}|, \\
+\mathrm{MAPE} &= \frac{100}{N}\sum_{i=1}^N
+\frac{|y_i - \hat{y}_{i,0.5}|}{\max(y_i,1)}, \\
+\mathrm{MedAE} &= \mathrm{median}_i |y_i - \hat{y}_{i,0.5}|.
+\end{align}
+Interval quality is evaluated by empirical coverage and width:
+\begin{align}
+\mathrm{Coverage} &= \frac{1}{N} \sum_{i=1}^N
+\mathbf{1}\{\tilde{y}_{i,0.1} \le y_i \le \tilde{y}_{i,0.9}\}, \\
+\mathrm{Width} &= \frac{1}{N} \sum_{i=1}^N
+(\tilde{y}_{i,0.9} - \tilde{y}_{i,0.1}).
+\end{align}
+These metrics align with the deployment goal: the model must be accurate enough
+to rank opportunities, and calibrated enough to communicate risk.
+
+\section{Closing Perspective}
+The model is intentionally modest in parameter count but precise in market
+structure. From long experience in financial modeling, the hardest part is not
+learning a price function; it is respecting how the market sets prices today,
+and how uncertainty should be priced into decisions. Cross-attention delivers a
+modern inductive bias for comp reasoning, and conformal calibration turns that
+reasoning into intervals that survive regime shifts. That combination is the
+core engineering thesis of PropertyScanner.
+
+\end{document}
