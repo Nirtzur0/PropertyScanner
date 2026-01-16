@@ -15,7 +15,7 @@ def _run_streamlit(args: List[str]) -> int:
 
 
 def main(argv: List[str] = None) -> int:
-    parser = argparse.ArgumentParser(description="Property Scanner CLI")
+    parser = argparse.ArgumentParser(description="Property Scanner CLI (preflight is the canonical entry point)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def passthrough(name: str, help_text: str) -> None:
@@ -32,6 +32,7 @@ def main(argv: List[str] = None) -> int:
     passthrough("calibrators", "Update conformal calibrators (wraps src.workflows.calibration)")
     passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.workflows.maintenance)")
     passthrough("preflight", "Refresh stale data and artifacts (wraps src.workflows.preflight)")
+    passthrough("schedule", "Run scheduled preflight refreshes (wraps src.workflows.scheduler)")
 
     args = parser.parse_args(argv)
     cmd_args = getattr(args, "args", []) or []
@@ -46,6 +47,7 @@ def main(argv: List[str] = None) -> int:
         "calibrators": "src.workflows.calibration",
         "clean-data": "src.workflows.maintenance",
         "preflight": "src.workflows.preflight",
+        "schedule": "src.workflows.scheduler",
     }
 
     if args.command == "dashboard":

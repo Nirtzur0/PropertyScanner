@@ -37,6 +37,13 @@ class AgentState(TypedDict):
     strategy: str
     pipeline_status: Dict[str, Any]
     pipeline_checked: bool
+
+    # Plan-executor orchestration
+    plan: Optional[Dict[str, Any]]
+    plan_step_index: int
+    plan_status: str
+    tool_usage: Dict[str, int]
+    tool_budgets: Dict[str, int]
     
     # Final output
     final_report: Optional[str]

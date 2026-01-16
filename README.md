@@ -1,124 +1,115 @@
-# 🦅 The Scout V2: Agentic Property Valuation System
+# 🦅 The Scout V2: Agentic Property Intelligence System
 
-> **"Comparable sales tell you the price. The Scout V2 tells you the *value*."**
+> **"Comparable sales tell you the price. The Scout V2 tells you the value."**
 
-Traditional automated valuation models (AVMs) look at numbers: square meters, bedroom counts, and zip codes. But real estate is visual and contextual. A "renovated kitchen" creates value that a spreadsheet row can't capture.
-
-**The Scout V2** is an experimental AI Agent system that **"sees"** real estate. It creates a holistic valuation by fusing quantitative market data with qualitative insights extracted from property photos using Vision Multi-Modal Large Language Models (VLM).
+The Scout V2 is a local-first property intelligence stack. It harvests listings, enriches them with multimodal signals, and produces investment-grade valuations that blend comps, income potential, and area intelligence.
 
 ---
 
-## 🦅 The New "Command Center"
-The system now features a **state-of-the-art Dashboard** designed with a "Luxurious Utility" philosophy ("Midnight Gold" theme). It serves as an Investment Command Center:
-*   **Strategic Map**: Heatmaps overlaid with deal opportunities.
-*   **Investment Memo**: Auto-generated deal sheets with projected yield, fair value, and comparisons.
-*   **AI Vision Analysis**: Side-by-side comparison of agent descriptions vs. VLM visual inspections.
+## The Command Center
+The dashboard is the primary interface. It is designed as a premium intelligence cockpit:
+- **Atlas View** for geospatial deal discovery.
+- **Investment Memo** with comps, projections, and thesis.
+- **Signal Lab** for momentum, yield, and area sentiment.
+- **Pipeline Freshness** so you always know what is stale and what is live.
 
 ---
 
-## 🧠 The Brain: Multimodal Late-Fusion Model
-
-At the heart of the system is the **PropertyFusionModel**, a custom PyTorch architecture designed to reason like a human appraiser.
-
-### 1. The Senses (Inputs)
-*   **Structured Data**: Verified specs (sqm, floor, built year).
-*   **Official Ground Truth**: Anchored by **INE (Instituto Nacional de Estadística)** housing indices and **ERI (Registral Statistics)** for liquidity verification.
-*   **Visual Intelligence (VLM)**: A local **Ollama (LLaVA)** agent acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition and finishes.
-
-### 🤖 The Model Stack
-The project relies on a modular set of specialized AI models:
-
-| Task | Model | Platform | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Logic/Cleaning** | `llama3` | Ollama | Parses descriptions, extracts facts, and assigns sentiment. |
-| **Orchestrator** | `gpt-oss` | Ollama | Cognitive agent supervisor (custom model). |
-| **Visuals** | `llava` | Ollama | Transcribes property photos into descriptive text. |
-| **Encoding** | `all-MiniLM-L6-v2` | PyTorch | Converts text into 384D mathematical vectors. |
-| **Predictions** | `PropertyFusionModel`| PyTorch | Cross-attention model that predicts log-residuals over a robust comp baseline (anchored by INE). |
+## What Makes It Different
+- **Multimodal fusion model** (PropertyFusionModel) predicts log-residuals over a robust comp baseline.
+- **Income-aware valuation** blends rent estimates with market yield to reward higher rental alpha.
+- **Area intelligence** adds sentiment and development signals from market indices.
+- **Preflight orchestration** is the canonical entry point; it checks freshness and runs only what is stale.
+- **Quality gates** stop bad harvests before they pollute the lake, with run logs in `pipeline_runs`.
 
 ---
 
-## ⚙️ The Pipeline
-
-The system operates as a set of autonomous agents and processors.
-
-1.  **Discovery & Ingestion**:
-    *   `CrawlerAgents` scour target real estate portals.
-    *   **OfficialSourcesAgent** fetches authenticated government stats (INE IPV, ERI Transactions) to serve as macro anchors.
-    *   Data is immutable and stored in a local SQLite data lake (`data/listings.db`).
-
-2.  **Enrichment (The "VLM Pass")**:
-    *   Agents identify listings with images but no deep descriptions.
-    *   They invoke the local VLM to generate "visual inspections" (e.g., *"Modern kitchen, stone countertops, good conversational light"*).
-
-3.  **Valuation & Intelligence**:
-    *   **HedonicIndexService** computes time-adjustments, falling back to INE indices if local data is sparse.
-    *   **ERISignalsService** validates liquidity assumptions against real registry volume.
-    *   The model predicts a probability distribution (p10/p50/p90) for fair value.
+## How It Works (High Level)
+1) **Harvest**: crawl, normalize, fuse, and augment listings.
+2) **Market data**: build macro, market indices, hedonic indices, and area intelligence.
+3) **Vector index**: build FAISS for time-safe comps.
+4) **Training**: train the fusion model and optional calibrators.
+5) **Valuation**: comps + model + income blend + area adjustments.
 
 ---
 
-## 🚀 Getting Started
+## Quick Start
 
-### Prerequisites
-
-### 0. Start Ollama (Required)
-The AI engine needs to be running in the background.
+### 0) Start Ollama (required for local LLM/VLM)
 ```bash
 ollama serve
 ```
 
-### Installation
+### 1) Install dependencies
 ```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/property_scanner.git
-cd property_scanner
-
-# 2. Install dependencies
+# Option A (Poetry)
 poetry install
 
-# 3. Pull the required models
-ollama pull llava
-ollama pull llama3
-ollama pull gpt-oss # Or: ollama cp llama3 gpt-oss
+# Option B (pip)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Usage
-All commands below assume you're in the project root. Use the unified CLI to wrap core scripts:
-`python -m src.cli <command> -- [args]`
-
-#### 1. Collect Data (Bulk Harvest)
+### 2) Launch the dashboard (runs preflight by default)
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale
+python3 -m src.cli dashboard
 ```
 
-#### 1b. Build Market Data (Official & Derived)
-This step now ingests **INE & ERI Government Data** and builds hedonic indices.
+If you want UI only:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-market
-```
-
-#### 1c. Build Vector Index (for Comps)
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-index --model-name all-MiniLM-L6-v2
-```
-
-#### 2. Train Models
-Run the training pipeline (requires data + indices).
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli train --listing-type sale --normalize-to latest
-```
-
-#### 3. Launch "The Scout V2" Dashboard
-Visualize listings, valuations, and VLM insights in the new Command Center.
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli dashboard
+python3 -m src.cli dashboard -- --skip-preflight
 ```
 
 ---
 
-## 🔮 Future Roadmap
+## CLI Commands
+All commands run from the project root.
 
-*   [ ] **Negotiation Agent**: An LLM that uses the valuation delta to draft offer letters.
-*   [ ] **Geo-Spatial Layer**: Integration with OSM for proximity features (distance to metro/parks).
-*   [ ] **RLHF for Pricing**: Fine-tuning the model based on user feedback on "good deals".
+```bash
+python3 -m src.cli preflight                 # Refresh stale data and artifacts
+python3 -m src.cli schedule                  # Scheduled preflight refreshes
+python3 -m src.cli harvest -- --mode sale     # Harvest listings
+python3 -m src.cli build-market               # Macro + market + hedonic data
+python3 -m src.cli build-index                # Build vector index for comps
+python3 -m src.cli train -- --listing-type sale
+python3 -m src.cli backfill                   # Backfill cached valuations
+python3 -m src.cli calibrators -- --input <samples.jsonl>
+python3 -m src.cli dashboard                  # Streamlit UI
+python3 -m src.cli agent "Find deals" <areas>
+```
+
+---
+
+## Automation (Scheduler)
+Preflight is the canonical automation entry point. Run the scheduler to keep the pipeline fresh:
+
+```bash
+python3 -m src.cli schedule --interval-minutes 360
+python3 -m src.cli schedule --cron "0 3 * * *"
+```
+
+The scheduler uses the same preflight checks, so only stale steps run.
+
+---
+
+## Core Components
+- **Agents**: Crawlers and normalizers in `src/agents/`.
+- **Workflows**: Batch entry points in `src/workflows/` (harvest, market data, indexing, preflight).
+- **Repositories**: Centralized data access in `src/repositories/` (no service-level raw SQL).
+- **Services**: Valuation, forecasting, retrieval, and augmentation in `src/services/`.
+- **Dashboard**: Premium UI in `src/dashboard/`.
+
+---
+
+## Docs
+- `docs/01_system_overview.md`
+- `docs/02_data_pipeline.md`
+- `docs/03_model_architecture.md`
+
+---
+
+## Roadmap
+- [ ] Negotiation agent to draft offers from valuation deltas.
+- [ ] Geo-spatial feature layer (transit, parks, schools).
+- [ ] Feedback loop for continuous calibration.

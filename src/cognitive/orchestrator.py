@@ -49,7 +49,8 @@ class CognitiveOrchestrator:
         self, 
         query: str, 
         areas: Optional[List[str]] = None,
-        stream: bool = False
+        stream: bool = False,
+        plan: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run the cognitive agent with a natural language query.
@@ -58,6 +59,7 @@ class CognitiveOrchestrator:
             query: Natural language query (e.g., "Find investment opportunities in Barcelona")
             areas: Optional list of search paths/URLs to crawl
             stream: If True, yield intermediate states
+            plan: Optional deterministic plan override
             
         Returns:
             Final state dict containing:
@@ -71,7 +73,11 @@ class CognitiveOrchestrator:
         if not areas:
             raise ValueError("areas_required")
 
-        initial_state = create_initial_state(query, areas)
+        plan_payload = plan
+        if plan is not None and hasattr(plan, "model_dump"):
+            plan_payload = plan.model_dump(mode="json")
+
+        initial_state = create_initial_state(query, areas, plan=plan_payload)
         
         config = {
             "recursion_limit": self.max_iterations

@@ -1,5 +1,4 @@
 
-import sqlite3
 import json
 import tqdm
 import argparse
@@ -9,6 +8,7 @@ from src.services.vlm import VLMImageDescriber
 import ast
 import structlog
 from src.core.config import DEFAULT_DB_PATH
+from src.repositories.listings import ListingsRepository
 
 logger = structlog.get_logger()
 
@@ -46,7 +46,7 @@ def batch_process_vlm(db_path=str(DEFAULT_DB_PATH), override=False, max_workers=
     Batch process listings to generate VLM descriptions.
     
     Args:
-        db_path: Path to SQLite database
+        db_path: Path to listings database
         override: If True, re-process listings that already have descriptions
         max_workers: Number of parallel threads for VLM inference
     """
@@ -56,32 +56,15 @@ def batch_process_vlm(db_path=str(DEFAULT_DB_PATH), override=False, max_workers=
         print("VLM not available. Ensure Ollama is running.")
         return
 
-    # Load listings needing processing
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    
-    query = """
-        SELECT id, image_urls 
-        FROM listings 
-        WHERE image_urls IS NOT NULL AND image_urls != '[]' AND image_urls != ''
-    """
-    
-    if not override:
-        query += " AND (vlm_description IS NULL OR vlm_description = '')"
-        
-    cursor = conn.execute(query)
-    rows = cursor.fetchall()
-    conn.close()
+    repo = ListingsRepository(db_path=db_path)
+    rows = repo.fetch_vlm_candidates(override=override)
 
     if not rows:
         print("All listings already have VLM descriptions (use --override to re-process).")
         return
 
     print(f"Processing {len(rows)} listings with VLM (workers={max_workers})...")
-    
-    # We use a separate connection for writing to avoid threading issues
-    write_conn = sqlite3.connect(db_path)
-    
+
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
@@ -95,6 +78,7 @@ def batch_process_vlm(db_path=str(DEFAULT_DB_PATH), override=False, max_workers=
             
             # Process results as they complete
             processed_count = 0
+            pending_updates = []
             for future in tqdm.tqdm(as_completed(future_to_id), total=len(rows)):
                 listing_id, desc, error = future.result()
                 
@@ -103,24 +87,20 @@ def batch_process_vlm(db_path=str(DEFAULT_DB_PATH), override=False, max_workers=
                     continue
                     
                 if desc:
-                    write_conn.execute(
-                        "UPDATE listings SET vlm_description = ? WHERE id = ?",
-                        (desc, listing_id)
-                    )
-                    processed_count += 1
+                    pending_updates.append((listing_id, desc))
                     
                     # Commit every 10 updates to balance safety and speed
-                    if processed_count % 10 == 0:
-                        write_conn.commit()
-            
-            write_conn.commit()
+                    if len(pending_updates) >= 10:
+                        processed_count += repo.update_vlm_descriptions(pending_updates)
+                        pending_updates = []
+
+            if pending_updates:
+                processed_count += repo.update_vlm_descriptions(pending_updates)
             print(f"Completed. Updated {processed_count} listings.")
             
     except KeyboardInterrupt:
         print("\nStopping...")
         executor.shutdown(wait=False, cancel_futures=True)
-    finally:
-        write_conn.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate VLM descriptions for listings")

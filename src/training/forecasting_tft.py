@@ -20,9 +20,9 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
-import sqlite3
 import structlog
 from src.core.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
+from src.repositories.market_data import MarketDataRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -232,38 +232,12 @@ class TFTForecastingService:
         
     def _load_training_data(self) -> pd.DataFrame:
         """Load and prepare training data from hedonic indices"""
-        conn = sqlite3.connect(self.db_path)
-        
-        query = """
-            SELECT 
-                hi.region_id,
-                hi.month_date,
-                hi.hedonic_index_sqm,
-                mi.inventory_count,
-                mac.euribor_12m,
-                COALESCE(mac.spain_cpi, 2.5) as inflation
-            FROM hedonic_indices hi
-            LEFT JOIN market_indices mi ON hi.region_id = mi.region_id AND hi.month_date = mi.month_date
-            LEFT JOIN macro_indicators mac ON hi.month_date = mac.date
-            ORDER BY hi.region_id, hi.month_date
-        """
-        
+        repo = MarketDataRepository(db_path=self.db_path)
         try:
-            # Fast existence check to avoid noisy warnings in cold-start DBs.
-            cur = conn.cursor()
-            has_hedonic = cur.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hedonic_indices'"
-            ).fetchone()
-            if not has_hedonic:
-                return pd.DataFrame()
-
-            df = pd.read_sql(query, conn)
-            return df
+            return repo.load_tft_training_data()
         except Exception as e:
             logger.warning("tft_training_data_load_failed", error=str(e))
             return pd.DataFrame()
-        finally:
-            conn.close()
     
     def train(self, epochs: int = 100, lr: float = 0.001):
         """Train the TFT model"""

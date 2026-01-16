@@ -16,7 +16,6 @@ References:
 """
 
 import json
-import sqlite3
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -24,6 +23,7 @@ import structlog
 from src.core.config import DEFAULT_DB_PATH
 from bs4 import BeautifulSoup
 from src.agents.base import BaseAgent, AgentResponse
+from src.repositories.macro_scenarios import MacroScenariosRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +108,7 @@ class MacroEvidenceAgent(BaseAgent):
         self.session.headers.update({
             "User-Agent": "PropertyScanner/1.0 (Research; contact@example.com)"
         })
+        self.scenario_repo = MacroScenariosRepository(db_path=db_path)
     
     def run(self, input_payload: dict) -> AgentResponse:
         """
@@ -249,53 +250,29 @@ class MacroEvidenceAgent(BaseAgent):
     
     def _save_scenarios(self, scenarios: List[MacroScenario]):
         """Save scenarios to database with full citation metadata"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Ensure table exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS macro_scenarios (
-                id TEXT PRIMARY KEY,
-                date DATE,
-                source_id TEXT,
-                source_url TEXT,
-                scenario_name TEXT,
-                horizon_year INT,
-                euribor_12m_forecast FLOAT,
-                inflation_forecast FLOAT,
-                gdp_growth_forecast FLOAT,
-                confidence_text TEXT,
-                retrieved_at DATETIME
-            )
-        """)
-        
+        if not scenarios:
+            return
+
+        payloads = []
+        today = datetime.now().strftime("%Y-%m-%d")
         for s in scenarios:
-            record_id = f"{s.source_id}|{s.scenario_name}|{s.horizon_year}"
-            
-            cursor.execute("""
-                INSERT OR REPLACE INTO macro_scenarios 
-                (id, date, source_id, source_url, scenario_name, horizon_year, 
-                 euribor_12m_forecast, inflation_forecast, gdp_growth_forecast, 
-                 confidence_text, retrieved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                record_id,
-                datetime.now().strftime("%Y-%m-%d"),
-                s.source_id,
-                s.source_url,
-                s.scenario_name,
-                s.horizon_year,
-                s.euribor_12m,
-                s.inflation,
-                s.gdp_growth,
-                s.confidence,
-                s.retrieved_at
-            ))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info("macro_scenarios_saved", count=len(scenarios))
+            payloads.append(
+                {
+                    "date": today,
+                    "source_id": s.source_id,
+                    "source_url": s.source_url,
+                    "scenario_name": s.scenario_name,
+                    "horizon_year": s.horizon_year,
+                    "euribor_12m_forecast": s.euribor_12m,
+                    "inflation_forecast": s.inflation,
+                    "gdp_growth_forecast": s.gdp_growth,
+                    "confidence_text": s.confidence,
+                    "retrieved_at": s.retrieved_at,
+                }
+            )
+
+        saved = self.scenario_repo.upsert_records(payloads)
+        logger.info("macro_scenarios_saved", count=saved)
 
 
 # Backward compatibility alias

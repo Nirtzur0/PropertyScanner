@@ -10,11 +10,12 @@ These sources provide the authoritative "macro" signal to anchor our "micro" lis
 
 import requests
 import pandas as pd
-import sqlite3
 import structlog
 from datetime import datetime
 from typing import Optional, List, Dict
 from src.core.config import DEFAULT_DB_PATH
+from src.repositories.eri_metrics import ERIMetricsRepository
+from src.repositories.ine_ipv import IneIpvRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +26,8 @@ class OfficialSourcesAgent:
         self.session.headers.update({
             "User-Agent": "PropertyScanner/1.0 (Research; contact@example.com)"
         })
+        self.ine_repo = IneIpvRepository(db_path=db_path)
+        self.eri_repo = ERIMetricsRepository(db_path=db_path)
 
     def run(self):
         """Main execution flow."""
@@ -160,60 +163,28 @@ class OfficialSourcesAgent:
         self._save_eri_metrics(records)
 
     def _save_ine_ipv(self, records: List[tuple]):
-        if not records: return
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS ine_ipv (
-                period TEXT,
-                region_id TEXT,
-                housing_type TEXT,
-                metric TEXT,
-                value FLOAT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (period, region_id, housing_type, metric)
-            )
-        """)
-        
-        c.executemany("""
-            INSERT OR REPLACE INTO ine_ipv (period, region_id, housing_type, metric, value)
-            VALUES (?, ?, ?, ?, ?)
-        """, records)
-        conn.commit()
-        conn.close()
-        logger.info("ine_ipv_saved", count=len(records))
+        if not records:
+            return
+        saved = self.ine_repo.upsert_records(records)
+        logger.info("ine_ipv_saved", count=saved)
 
     def _save_eri_metrics(self, records: List[Dict]):
-        if not records: return
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        
-        # Ensure schema (idempotent with migrations.py)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS eri_metrics (
-                id TEXT PRIMARY KEY,
-                region_id TEXT,
-                period_date DATE,
-                txn_count INT,
-                mortgage_count INT,
-                price_sqm FLOAT,
-                price_sqm_yoy FLOAT,
-                price_sqm_qoq FLOAT,
-                updated_at DATETIME
+        if not records:
+            return
+        payloads = []
+        for record in records:
+            payloads.append(
+                {
+                    "id": f"{record['region_id']}|{record['period_date']}",
+                    "region_id": record["region_id"],
+                    "period_date": record["period_date"],
+                    "txn_count": record["txn_count"],
+                    "mortgage_count": record["mortgage_count"],
+                    "price_sqm": record["price_sqm"],
+                }
             )
-        """)
-        
-        for r in records:
-            rid = f"{r['region_id']}|{r['period_date']}"
-            c.execute("""
-                INSERT OR REPLACE INTO eri_metrics 
-                (id, region_id, period_date, txn_count, mortgage_count, price_sqm, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (rid, r['region_id'], r['period_date'], r['txn_count'], r['mortgage_count'], r['price_sqm']))
-            
-        conn.commit()
-        conn.close()
-        logger.info("eri_metrics_saved", count=len(records))
+        saved = self.eri_repo.upsert_records(payloads)
+        logger.info("eri_metrics_saved", count=saved)
 
 if __name__ == "__main__":
     OfficialSourcesAgent().run()

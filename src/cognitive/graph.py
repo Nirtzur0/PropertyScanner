@@ -1,23 +1,27 @@
 """
 LangGraph Workflow for Cognitive Property Scanner.
-Implements a supervisor-based graph with conditional routing.
+Implements a plan-executor graph with deterministic run plans.
 """
+import json
 import os
 import structlog
-from typing import Literal, Dict, Any, List
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from typing import Literal, Dict, Any, List, Optional, Tuple
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
 
 from src.cognitive.state import AgentState
+from src.cognitive.plan import ActionType, AgentPlan, build_default_plan, coerce_plan, default_action_budgets
 from src.cognitive.tools import (
-    TOOLS,
     crawl_listings,
     normalize_listings,
     evaluate_listing,
     enrich_listings,
     filter_listings,
     preflight_pipeline,
+    harvest_pipeline,
+    build_market_data_workflow,
+    build_vector_index_workflow,
+    train_model_workflow,
 )
 
 logger = structlog.get_logger()
@@ -58,51 +62,58 @@ def get_llm(temperature: float = 0):
     
     raise RuntimeError("No LLM provider available. Install Ollama, set GOOGLE_API_KEY, or set OPENAI_API_KEY")
 
+PLANNER_PROMPT = """You are a workflow planner for a property investment agent.
+Return a JSON plan only (no markdown, no commentary).
 
+JSON schema:
+{{
+  "objective": "<string>",
+  "deterministic": true,
+  "budgets": {{
+    "max_steps": <int>,
+    "max_action_calls": {default_budgets}
+  }},
+  "steps": [
+    {{"action": "<action>", "params": {{"...": "..."}}, "rationale": "<optional>"}}
+  ]
+}}
 
-# System prompt for the supervisor
-# System prompt for the supervisor
-SUPERVISOR_PROMPT = """You are a property investment analyst agent. Your job is to help users find and evaluate real estate opportunities.
+Available actions:
+preflight, harvest, build_market_data, build_index, train_model,
+crawl, normalize, enrich, filter, evaluate, report
 
-You have access to the following tools:
-- crawl_listings: Fetch property listings from real estate websites
-- normalize_listings: Convert raw listings to structured format
-- enrich_listings: Add location details (city) to listings
-- filter_listings: Remove low-quality listings (QC)
-- evaluate_listing: Analyze a listing for investment potential
-- retrieve_comparables: Find similar properties for comparison
-- pipeline_status: Inspect pipeline freshness (listings, indices, index, model)
-- preflight_pipeline: Refresh stale data and artifacts
+Rules:
+- Use deterministic plans only.
+- If pipeline_status indicates refresh needed, include missing pipeline actions first.
+- End with report.
 
-Based on the current state, decide what action to take next.
-
-Current state:
-- Query: {query}
-- Target areas: {target_areas}
-- Sources crawled: {sources_crawled}
-- Raw listings found: {raw_count}
-- Canonical Listings (Normalized): {listings_count}
-- Enriched listings: {enriched_count}
-- Enrichment status: {enrichment_status}
-- Filtered listings count: {filtered_count}
-- Evaluations completed: {evaluations_count}
-- Pipeline status: {pipeline_status}
-- Pipeline checked: {pipeline_checked}
-
-Typical flow: Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report
-
-If pipeline status indicates data is stale and pipeline_checked is False, choose "preflight" first.
-If you have unprocessed raw listings, choose "normalize".
-If you have normalized listings but status is pending, choose "enrich".
-If you have enriched listings, choose "filter".
-If you have filtered listings, choose "evaluate".
-If you have evaluations, generate a final report.
-
-Respond with one of: "preflight", "crawl", "normalize", "enrich", "filter", "evaluate", "report", or "end"
+Context:
+query: {query}
+target_areas: {target_areas}
+pipeline_status: {pipeline_status}
 """
 
 
-def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
+def _parse_plan_payload(content: str) -> Optional[Dict[str, Any]]:
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        return json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def create_initial_state(
+    query: str,
+    areas: List[str] = None,
+    plan: Optional[Dict[str, Any]] = None,
+    tool_budgets: Optional[Dict[str, int]] = None,
+) -> AgentState:
     """Create initial state for a new agent run."""
     try:
         from src.services.pipeline_state import PipelineStateService
@@ -118,7 +129,7 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         evaluations=[],
         messages=[],
         current_stage="init",
-        next_action="crawl",
+        next_action="plan",
         error_count=0,
         sources_crawled=[],
         listings_count=0,
@@ -129,93 +140,85 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         strategy="balanced",
         pipeline_status=pipeline_status,
         pipeline_checked=False,
+        plan=plan,
+        plan_step_index=0,
+        plan_status="pending",
+        tool_usage={},
+        tool_budgets=tool_budgets or {},
     )
 
 
-def supervisor_node(state: AgentState) -> Dict[str, Any]:
-    """
-    LLM-powered supervisor that decides the next action.
-    Uses GPT-4 to reason about what to do next.
-    """
+def planner_node(state: AgentState) -> Dict[str, Any]:
+    """Plan a deterministic execution sequence and budgets."""
     try:
         pipeline_status = state.get("pipeline_status", {})
-        if pipeline_status.get("needs_refresh") and not state.get("pipeline_checked"):
-            logger.info("pipeline_preflight_required", reasons=pipeline_status.get("reasons"))
-            return {
-                "next_action": "preflight",
-                "current_stage": "supervisor",
-                "messages": [{"role": "supervisor", "content": "pipeline preflight required"}],
-            }
+        incoming_plan = state.get("plan")
 
-        llm = get_llm(temperature=0)
-        
-        prompt = SUPERVISOR_PROMPT.format(
-            query=state["query"],
-            target_areas=state["target_areas"],
-            sources_crawled=state["sources_crawled"],
-            raw_count=len(state["raw_listings"]),
-            listings_count=state["listings_count"],
-            enriched_count=state.get("enriched_count", 0),
-            enrichment_status=state.get("enrichment_status", "pending"),
-            filtered_count=state.get("filtered_count", 0),
-            evaluations_count=len(state["evaluations"]),
-            pipeline_status=state.get("pipeline_status"),
-            pipeline_checked=state.get("pipeline_checked"),
-        )
-        
-        messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content=f"What should be the next action? Current stage: {state['current_stage']}")
-        ]
-        
-        response = llm.invoke(messages)
-        
-        # Handle both ChatModel (returns AIMessage) and LLM (returns string)
-        if hasattr(response, 'content'):
-            decision = response.content.strip().lower()
+        if incoming_plan:
+            plan = coerce_plan(incoming_plan, pipeline_status=pipeline_status)
         else:
-            decision = str(response).strip().lower()
-        
-        # Parse decision
-        if "preflight" in decision or "refresh" in decision:
-            next_action = "preflight"
-        elif "crawl" in decision:
-            next_action = "crawl"
-            # Prevent infinite loop if we already have raw listings
-            if len(state["raw_listings"]) > 0 and state["listings_count"] == 0:
-                 next_action = "normalize"
-        elif "normalize" in decision:
-            next_action = "normalize"
-            # Prevent infinite loop if we already normalized
-            if state["listings_count"] > 0:
-                next_action = "enrich"
-        elif "enrich" in decision:
-            next_action = "enrich"
-            if state.get("enrichment_status") == "success":
-                next_action = "filter"
-        elif "filter" in decision:
-            next_action = "filter"
-            if state.get("filtered_count", 0) > 0:
-                next_action = "evaluate"
-        elif "evaluate" in decision:
-            next_action = "evaluate"
-            if len(state["evaluations"]) > 0:
-                next_action = "report"
-        elif "report" in decision:
-            next_action = "report"
-        else:
-            next_action = "end"
-            
-        logger.info("supervisor_decision", decision=next_action, raw=decision)
-        
+            try:
+                llm = get_llm(temperature=0)
+                prompt = PLANNER_PROMPT.format(
+                    query=state["query"],
+                    target_areas=state["target_areas"],
+                    pipeline_status=pipeline_status,
+                    default_budgets=json.dumps(default_action_budgets()),
+                )
+                messages = [
+                    SystemMessage(content=prompt),
+                    HumanMessage(content="Generate the plan JSON."),
+                ]
+                response = llm.invoke(messages)
+
+                if hasattr(response, "content"):
+                    content = response.content
+                else:
+                    content = str(response)
+
+                payload = _parse_plan_payload(content)
+                if payload:
+                    try:
+                        plan = AgentPlan.model_validate(payload)
+                    except Exception as e:
+                        logger.warning("plan_payload_invalid", error=str(e))
+                        plan = build_default_plan(
+                            state["query"],
+                            state["target_areas"],
+                            pipeline_status=pipeline_status,
+                        )
+                else:
+                    logger.warning("plan_payload_missing")
+                    plan = build_default_plan(
+                        state["query"],
+                        state["target_areas"],
+                        pipeline_status=pipeline_status,
+                    )
+            except Exception as e:
+                logger.warning("planner_llm_failed", error=str(e))
+                plan = build_default_plan(
+                    state["query"],
+                    state["target_areas"],
+                    pipeline_status=pipeline_status,
+                )
+
+        plan = coerce_plan(plan, pipeline_status=pipeline_status)
+        plan_payload = plan.model_dump(mode="json")
+        tool_budgets = plan_payload.get("budgets", {}).get("max_action_calls", {}) or {}
+        tool_usage = {action: 0 for action in tool_budgets.keys()}
+        plan_status = "completed" if not plan_payload.get("steps") else "active"
+
         return {
-            "next_action": next_action,
-            "current_stage": "supervisor",
-            "messages": [{"role": "supervisor", "content": decision}]
+            "plan": plan_payload,
+            "plan_step_index": 0,
+            "plan_status": plan_status,
+            "tool_budgets": tool_budgets,
+            "tool_usage": tool_usage,
+            "current_stage": "planner",
+            "messages": [{"role": "planner", "content": "plan ready"}],
         }
-        
     except Exception as e:
-        logger.error("supervisor_failed", error=str(e))
+        logger.error("planner_failed", error=str(e))
         raise
 
 
@@ -479,51 +482,174 @@ Write a professional investment brief (2-3 paragraphs) summarizing:
         raise
 
 
-def route_supervisor(state: AgentState) -> Literal["preflight", "crawl", "normalize", "enrich", "filter", "evaluate", "report", "end"]:
-    """Route based on supervisor decision."""
-    return state.get("next_action", "end")
+def _refresh_pipeline_status() -> Dict[str, Any]:
+    try:
+        from src.services.pipeline_state import PipelineStateService
+
+        return PipelineStateService().snapshot().to_dict()
+    except Exception as e:
+        return {"error": str(e), "needs_refresh": False, "reasons": ["pipeline_status_failed"]}
+
+
+def _run_workflow_action(
+    state: AgentState,
+    tool,
+    action_label: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], bool]:
+    payload = dict(params or {})
+    result = tool.invoke(payload)
+    success = result.get("status") == "success"
+    content = f"{action_label} completed" if success else f"{action_label} failed: {result.get('error')}"
+    update = {
+        "messages": [{"role": action_label, "content": content}],
+        "current_stage": action_label,
+        "pipeline_checked": True,
+    }
+    if success:
+        update["pipeline_status"] = _refresh_pipeline_status()
+    return update, success
+
+
+def _run_preflight_action(state: AgentState, params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
+    payload = {
+        "skip_harvest": False,
+        "skip_market_data": False,
+        "skip_index": False,
+        "skip_training": False,
+    }
+    if params:
+        payload.update(params)
+    return _run_workflow_action(state, preflight_pipeline, "preflight", payload)
+
+
+def _wrap_node(fn):
+    def _runner(state: AgentState, params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
+        return fn(state), True
+
+    return _runner
+
+
+def executor_node(state: AgentState) -> Dict[str, Any]:
+    """Execute the next step in the deterministic plan."""
+    plan_data = state.get("plan") or {}
+    steps = plan_data.get("steps") or []
+    step_index = state.get("plan_step_index", 0)
+
+    budgets_data = plan_data.get("budgets") or {}
+    max_steps = budgets_data.get("max_steps")
+    if max_steps is not None and step_index >= max_steps:
+        return {
+            "plan_status": "budget_exhausted",
+            "current_stage": "executor",
+            "messages": [{"role": "executor", "content": "plan step budget exhausted"}],
+        }
+
+    if step_index >= len(steps):
+        return {
+            "plan_status": "completed",
+            "current_stage": "executor",
+            "messages": [{"role": "executor", "content": "plan complete"}],
+        }
+
+    step = steps[step_index]
+    if isinstance(step, dict):
+        action = step.get("action")
+        params = step.get("params") or {}
+    else:
+        action = getattr(step, "action", None)
+        params = getattr(step, "params", {}) or {}
+
+    if isinstance(action, ActionType):
+        action = action.value
+
+    tool_budgets = state.get("tool_budgets") or {}
+    tool_usage = dict(state.get("tool_usage") or {})
+    budget = tool_budgets.get(action)
+
+    if budget is not None and tool_usage.get(action, 0) >= budget:
+        return {
+            "plan_status": "budget_exhausted",
+            "current_stage": "executor",
+            "messages": [{"role": "executor", "content": f"budget exhausted for {action}"}],
+        }
+
+    runner = ACTION_RUNNERS.get(action)
+    if not runner:
+        return {
+            "plan_status": "failed",
+            "current_stage": "executor",
+            "messages": [{"role": "executor", "content": f"unknown action {action}"}],
+        }
+
+    update, success = runner(state, params)
+    tool_usage[action] = tool_usage.get(action, 0) + 1
+    update["tool_usage"] = tool_usage
+    update["plan_step_index"] = step_index + 1
+    if "current_stage" not in update:
+        update["current_stage"] = f"execute:{action}"
+
+    messages = list(update.get("messages", []))
+    if not success:
+        messages.append({"role": "executor", "content": f"action {action} failed"})
+        update["plan_status"] = "failed"
+        update["error_count"] = state.get("error_count", 0) + 1
+    else:
+        update["plan_status"] = "active"
+
+    update["messages"] = messages
+
+    if update["plan_step_index"] >= len(steps) and success:
+        update["plan_status"] = "completed"
+
+    return update
+
+
+ACTION_RUNNERS = {
+    ActionType.PREFLIGHT.value: _run_preflight_action,
+    ActionType.HARVEST.value: lambda state, params: _run_workflow_action(state, harvest_pipeline, "harvest", params),
+    ActionType.BUILD_MARKET_DATA.value: lambda state, params: _run_workflow_action(
+        state, build_market_data_workflow, "build_market_data", params
+    ),
+    ActionType.BUILD_INDEX.value: lambda state, params: _run_workflow_action(
+        state, build_vector_index_workflow, "build_index", params
+    ),
+    ActionType.TRAIN_MODEL.value: lambda state, params: _run_workflow_action(
+        state, train_model_workflow, "train_model", params
+    ),
+    ActionType.CRAWL.value: _wrap_node(crawl_node),
+    ActionType.NORMALIZE.value: _wrap_node(normalize_node),
+    ActionType.ENRICH.value: _wrap_node(enrich_node),
+    ActionType.FILTER.value: _wrap_node(filter_node),
+    ActionType.EVALUATE.value: _wrap_node(evaluate_node),
+    ActionType.REPORT.value: _wrap_node(report_node),
+}
+
+
+def route_executor(state: AgentState) -> Literal["executor", "end"]:
+    status = state.get("plan_status")
+    if status in {"completed", "failed", "budget_exhausted"}:
+        return "end"
+    return "executor"
 
 
 def create_cognitive_graph():
     """Build and compile the LangGraph workflow."""
     graph = StateGraph(AgentState)
-    
-    # Add nodes
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("preflight", preflight_node)
-    graph.add_node("crawl", crawl_node)
-    graph.add_node("normalize", normalize_node)
-    graph.add_node("enrich", enrich_node)
-    graph.add_node("filter", filter_node)
-    graph.add_node("evaluate", evaluate_node)
-    graph.add_node("report", report_node)
-    
-    # Conditional routing from supervisor
+
+    graph.add_node("planner", planner_node)
+    graph.add_node("executor", executor_node)
+
+    graph.add_edge("planner", "executor")
     graph.add_conditional_edges(
-        "supervisor",
-        route_supervisor,
+        "executor",
+        route_executor,
         {
-            "preflight": "preflight",
-            "crawl": "crawl",
-            "normalize": "normalize",
-            "enrich": "enrich",
-            "filter": "filter",
-            "evaluate": "evaluate",
-            "report": "report",
-            "end": END
-        }
+            "executor": "executor",
+            "end": END,
+        },
     )
-    
-    # All action nodes return to supervisor
-    graph.add_edge("crawl", "supervisor")
-    graph.add_edge("normalize", "supervisor")
-    graph.add_edge("enrich", "supervisor")
-    graph.add_edge("filter", "supervisor")
-    graph.add_edge("preflight", "supervisor")
-    graph.add_edge("evaluate", "supervisor")
-    graph.add_edge("report", END)
-    
-    # Entry point
-    graph.set_entry_point("supervisor")
-    
+
+    graph.set_entry_point("planner")
+
     return graph.compile()

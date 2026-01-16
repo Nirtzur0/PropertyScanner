@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import text
@@ -114,4 +114,86 @@ class ListingsRepository(RepositoryBase):
         )
         with self.engine.begin() as conn:
             result = conn.execute(query)
+        return int(result.rowcount or 0)
+
+    def load_listings_for_training(
+        self,
+        *,
+        listing_type: str = "sale",
+        label_source: str = "ask",
+    ) -> List[Dict[str, Any]]:
+        extra_cols = []
+        if self.has_column("listings", "plot_area_sqm"):
+            extra_cols.append("plot_area_sqm")
+        if self.has_column("listings", "image_embeddings"):
+            extra_cols.append("image_embeddings")
+
+        base_cols = [
+            "id",
+            "source_id",
+            "external_id",
+            "url",
+            "title",
+            "description",
+            "price",
+            "city",
+            "bedrooms",
+            "bathrooms",
+            "surface_area_sqm",
+            "floor",
+            "lat",
+            "lon",
+            "image_urls",
+            "vlm_description",
+            "property_type",
+            "listed_at",
+            "updated_at",
+            "text_sentiment",
+            "image_sentiment",
+            "has_elevator",
+            "listing_type",
+            "status",
+            "sold_at",
+        ]
+        select_cols = base_cols + extra_cols
+
+        query = f"""
+            SELECT {", ".join(select_cols)}
+            FROM listings
+            WHERE price > 0
+        """
+        params: Dict[str, Any] = {}
+        if listing_type and listing_type != "all" and self.has_column("listings", "listing_type"):
+            query += " AND listing_type = :listing_type"
+            params["listing_type"] = listing_type
+        if label_source == "sold" and self.has_column("listings", "status"):
+            query += " AND status = 'sold'"
+
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(query), params).fetchall()
+        return [dict(row._mapping) for row in rows]
+
+    def fetch_vlm_candidates(self, *, override: bool = False) -> List[Dict[str, Any]]:
+        if not self.has_column("listings", "image_urls"):
+            return []
+
+        query = """
+            SELECT id, image_urls
+            FROM listings
+            WHERE image_urls IS NOT NULL AND image_urls != '[]' AND image_urls != ''
+        """
+        if not override and self.has_column("listings", "vlm_description"):
+            query += " AND (vlm_description IS NULL OR vlm_description = '')"
+
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(query)).fetchall()
+        return [dict(row._mapping) for row in rows]
+
+    def update_vlm_descriptions(self, updates: List[Tuple[str, str]]) -> int:
+        if not updates or not self.has_column("listings", "vlm_description"):
+            return 0
+        query = text("UPDATE listings SET vlm_description = :desc WHERE id = :listing_id")
+        payloads = [{"desc": desc, "listing_id": listing_id} for listing_id, desc in updates]
+        with self.engine.begin() as conn:
+            result = conn.execute(query, payloads)
         return int(result.rowcount or 0)

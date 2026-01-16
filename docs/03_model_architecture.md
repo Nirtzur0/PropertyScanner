@@ -1,6 +1,6 @@
 # Model Architecture: PropertyFusionModel
 
-The **PropertyFusionModel** is the "brain" of the system. It uses an attention-based architecture to estimate the fair market value of a property by reasoning over its attributes and its relationship to the market.
+The PropertyFusionModel is the core model that predicts fair value by reasoning over a target listing and its comps. It is designed to predict residuals over a comp baseline rather than raw price.
 
 ## Architecture Diagram
 
@@ -39,16 +39,16 @@ graph TD
     subgraph "Reasoning Core"
         Attn["Cross-Attention Mechanism"]
         Concat_T -->|Query| Attn
-        Concat_C -->|"Key/Value"| Attn
+        Concat_C -->|Key/Value| Attn
     end
 
     subgraph "Prediction Heads"
         Res["Residual Predictor"]
         Attn --> Res
-        
+
         Final["Final Price Calculation"]
         Baseline["Robust Comp Baseline"]
-        CompPrices --> Baseline
+        CompPrices["Comp Prices"] --> Baseline
         Baseline --> Final
         Res --> Final
     end
@@ -58,47 +58,57 @@ graph TD
 
 ## Core Concepts
 
-### 0. Input Composition
-- Text input is `title + description + vlm_description` (gated/whitelisted when available).
-- Image embeddings are optional and used only if cached.
-
 ### 1. Cross-Attention Pricing
-Traditional models predict price directly from features ($f(x) \rightarrow y$). Our model predicts price **relative to the market** ($f(x, \{comps\}) \rightarrow y$).
-- The **Target Listing** queries the **Comparable Listings**.
-- The model learns "how much better or worse" the target is compared to the comps.
-- **Baseline**: A robust comp aggregate (weighted median + MAD filtering) is computed outside the model.
-- **Anchoring**: If internal comp density is low, the baseline calculation is **anchored** by the official **INE IPV** index to prevent model drift in sparse areas.
-- **Residual**: The model predicts log-residuals over this baseline.
+The model predicts price relative to the market:
+- The target listing queries comparable listings.
+- A robust comp baseline (weighted median + MAD filtering) is computed outside the model.
+- The model predicts log-residuals over the baseline.
+- Hedonic indices time-adjust comps; INE IPV anchors are used when local data is thin.
 
 ### 2. Quantile Regression (Uncertainty)
-Real estate valuation is inherently uncertain. Instead of a single number, the model predicts a probability distribution:
-- **p10 (Conservative)**: "Quick sale" price.
-- **p50 (Fair)**: Probable market value.
-- **p90 (Optimistic)**: High-end estimate.
+The model outputs a distribution, not a single number:
+- p10: conservative price
+- p50: fair value
+- p90: optimistic price
 
-This is achieved using **weighted Pinball Loss** during training.
-Label weights are quality-aware (sold > updated ask > initial ask).
+Weighted pinball loss trains the quantile heads and encodes label reliability.
 
-### 3. Strict Comparable Selection and Time Adjustment
-- Comps are retrieved from a FAISS index with time-safe filtering (comp observed date <= target observed date) and dedupe rules.
-- Retriever metadata (encoder + VLM policy) must match at train/infer to keep distribution frozen.
-- Comp prices are time-adjusted via the hedonic index; targets are trained in log space on residuals over the robust baseline.
-- If indices or comps are missing, valuation fails instead of falling back.
+### 3. Strict Comparable Selection
+- Comps are time-safe (comp date <= target date).
+- Retriever metadata (encoder + VLM policy) must match across train and infer.
+- If comps or indices are missing, valuation fails instead of guessing.
 
-### 4. Hyperparameters (Current Configuration)
+## System-Level Valuation Blend
+The model output is combined with income and area intelligence signals:
+
+```mermaid
+flowchart LR
+    Base["Model Fair Value"] --> Blend["Income Blend"]
+    Rent["Estimated Rent"] --> Blend
+    Yield["Market Yield"] --> Blend
+    Blend --> AreaAdj["Area Adjustment"]
+    Area["Area Intelligence"] --> AreaAdj
+    AreaAdj --> Final["Adjusted Fair Value"]
+```
+
+- **Income blend** rewards listings with stronger rent-to-price economics.
+- **Area adjustment** nudges valuation based on sentiment and development scores.
+- Evidence is recorded in `external_signals` for transparency.
+
+## Hyperparameters (Current Configuration)
 Defined in `src/services/fusion_model.py`.
 
 | Parameter | Value | Description |
-|-----------|-------|-------------|
+| --- | --- | --- |
 | Tabular Dim | 11 | bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, price_per_sqm (zeroed), text_sentiment, image_sentiment, has_elevator |
-| Text Dim | 384 | SentenceTransformer embedding size (includes gated VLM descriptions) |
+| Text Dim | 384 | SentenceTransformer embedding size |
 | Image Dim | 512 | Optional image embedding size |
-| Hidden Dim | 64 | Projection size (Compact for efficiency) |
+| Hidden Dim | 64 | Projection size |
 | Heads | 2 | Attention heads |
-| Parameters | ~92k | Lightweight, runs on CPU |
+| Parameters | ~92k | Lightweight, CPU-friendly |
 
-### 5. Runtime Requirements
+## Runtime Requirements
 - Model artifacts: `models/fusion_model.pt` and `models/fusion_config.json`.
-- Vector index: `data/vector_index.faiss` + `data/vector_metadata.json` (encoder + VLM policy locked).
-- Market/hedonic indices in `data/listings.db`.
+- Vector index: `data/vector_index.faiss` + `data/vector_metadata.json`.
+- Market tables in `data/listings.db`: `market_indices`, `hedonic_indices`, `macro_indicators`, `area_intelligence`.
 - Optional calibrators: `models/calibration_registry.json`.

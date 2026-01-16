@@ -1,8 +1,7 @@
 """
 PyTorch Dataset for PropertyFusionModel Training.
-Loads listings directly from SQLite database and encodes on-the-fly or uses cached embeddings.
+Loads listings from the listings repository and encodes on-the-fly or uses cached embeddings.
 """
-import sqlite3
 import json
 import re
 import numpy as np
@@ -17,13 +16,14 @@ from PIL import Image
 import io
 from src.services.feature_sanitizer import sanitize_listing_dict, sanitize_year_built
 from src.core.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
+from src.repositories.listings import ListingsRepository
 
 logger = structlog.get_logger()
 
 
 class PropertyDataset(Dataset):
     """
-    Dataset that loads listings directly from SQLite database.
+    Dataset that loads listings via the listings repository.
     
     Encodes text using SentenceTransformer (cached after first use).
     Uses VLM descriptions if available in the database (no on-the-fly generation).
@@ -56,7 +56,7 @@ class PropertyDataset(Dataset):
     ):
         """
         Args:
-            db_path: Path to SQLite database with listings table
+            db_path: Path to database with listings table
             num_comps: Number of comparables to sample per target
             cache_embeddings: Cache text embeddings in memory
             text_model: SentenceTransformer model name
@@ -152,46 +152,12 @@ class PropertyDataset(Dataset):
         self._fit_tabular_encoder()
     
     def _load_listings(self) -> List[Dict[str, Any]]:
-        """Load all valid listings from SQLite database."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-
-        try:
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
-        except Exception:
-            cols = set()
-
-        extra_cols = []
-        if "plot_area_sqm" in cols:
-            extra_cols.append("plot_area_sqm")
-        if "image_embeddings" in cols:
-            extra_cols.append("image_embeddings")
-        
-        # We query all positive prices first, then filter in python to be safe/flexible
-        base_cols = [
-            "id", "source_id", "external_id", "url", "title", "description", "price", "city",
-            "bedrooms", "bathrooms", "surface_area_sqm", "floor",
-            "lat", "lon", "image_urls", "vlm_description", "property_type",
-            "listed_at", "updated_at", "text_sentiment", "image_sentiment", "has_elevator",
-            "listing_type", "status", "sold_at",
-        ]
-        select_cols = base_cols + extra_cols
-        query = f"""
-            SELECT {", ".join(select_cols)}
-            FROM listings
-            WHERE price > 0
-        """
-        params: List[Any] = []
-        if self.listing_type and self.listing_type != "all":
-            query += " AND listing_type = ?"
-            params.append(self.listing_type)
-        if self.label_source == "sold":
-            query += " AND status = 'sold'"
-
-        cursor = conn.execute(query, params)
-        
-        raw_listings = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        """Load all valid listings from the listings repository."""
+        repo = ListingsRepository(db_path=self.db_path)
+        raw_listings = repo.load_listings_for_training(
+            listing_type=self.listing_type,
+            label_source=self.label_source,
+        )
         
         # Filter outliers
         valid_listings = []

@@ -118,6 +118,91 @@ p, span, div {
   color: var(--muted);
 }
 
+.pipeline-card {
+  padding: 1.6rem 1.8rem;
+  border-radius: var(--radius-xl);
+  background: var(--surface-strong);
+  border: 1px solid rgba(27, 26, 23, 0.08);
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 1.8rem;
+  animation: fadeUp 0.8s ease both;
+}
+
+.pipeline-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.pipeline-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.pipeline-title {
+  font-size: 1.6rem;
+  font-family: "Fraunces", serif;
+  color: var(--accent-ink);
+}
+
+.pipeline-reason {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.pipeline-badge {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.pipeline-badge--fresh {
+  background: rgba(111, 143, 130, 0.18);
+  border-color: rgba(111, 143, 130, 0.4);
+  color: var(--accent-sage);
+}
+
+.pipeline-badge--stale {
+  background: rgba(198, 118, 68, 0.18);
+  border-color: rgba(198, 118, 68, 0.4);
+  color: var(--accent-copper);
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.8rem;
+  margin-top: 1.2rem;
+}
+
+.pipeline-grid div {
+  padding: 0.8rem 0.9rem;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid rgba(27, 26, 23, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.pipeline-grid span {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pipeline-grid strong {
+  font-size: 0.95rem;
+  color: var(--accent-ink);
+}
+
 .kpi-card {
   padding: 1.2rem 1.3rem;
   border-radius: var(--radius-lg);
@@ -316,5 +401,10 @@ footer {
 @media (max-width: 900px) {
   .lux-hero {
     flex-direction: column;
+  }
+
+  .pipeline-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

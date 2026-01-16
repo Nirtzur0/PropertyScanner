@@ -64,6 +64,7 @@ def run_preflight(
         if state.needs_harvest:
             for mode in modes:
                 logger.info("preflight_harvest", mode=mode)
+
                 def _harvest_run(target_mode: str = mode) -> None:
                     if target_count > 0:
                         Harvester(
@@ -125,8 +126,7 @@ def run_preflight(
     return results
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Preflight pipeline: refresh stale data and artifacts.")
+def add_preflight_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH), help="SQLite DB path")
     parser.add_argument("--mode", action="append", choices=["sale", "rent"], help="Harvest mode(s)")
     parser.add_argument("--target-count", type=int, default=0, help="Target count per harvest run (0 = default)")
@@ -139,6 +139,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--skip-market-data", action="store_true")
     parser.add_argument("--skip-index", action="store_true")
     parser.add_argument("--skip-training", action="store_true")
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Preflight pipeline: refresh stale data and artifacts.")
+    add_preflight_args(parser)
 
     args = parser.parse_args(argv)
 

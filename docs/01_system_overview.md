@@ -1,23 +1,25 @@
 # System Architecture Overview
 
-Property Scanner is a local-first pipeline that harvests listings, enriches them, and produces valuations, projections, and recommendations with strict data requirements.
+Property Scanner is a local-first pipeline that harvests listings, enriches them, and produces valuations, projections, and recommendations with strict data and freshness requirements.
 
 ## System Map
 
 ```mermaid
 flowchart LR
     subgraph Acquisition
-        HB["harvest_batch.py"]
-        AG["LangGraph agent workflow"]
+        Harvest["src/workflows/harvest.py"]
+        Agent["LangGraph agent"]
         Gov["OfficialSourcesAgent (INE/ERI)"]
     end
 
     subgraph Processing
         Norm["Normalizer agents"]
-        Fusion["FeatureFusionService (VLM + sentiment clamp)"]
-        Store["StorageService (enrich + analyze)"]
-        BuildIndex["build_vector_index.py"]
-        BuildMarket["build_market_data.py"]
+        Fusion["FeatureFusionService (VLM + sentiment)"]
+        Aug["ListingAugmentor (rent + city fixes)"]
+        Store["StorageService (persistence only)"]
+        BuildIndex["src/workflows/indexing.py"]
+        BuildMarket["src/workflows/market_data.py"]
+        Preflight["src/workflows/preflight.py"]
     end
 
     subgraph Data
@@ -27,50 +29,65 @@ flowchart LR
         VectorIndex[("FAISS: vector_index.faiss + metadata")]
         Indices[("market/hedonic/macro/area tables")]
         GovData[("ine_ipv + eri_metrics")]
+        Runs[("pipeline_runs")]
         Calib[("models/calibration_registry.json")]
     end
 
     subgraph Intelligence
         Retriever["CompRetriever (FAISS + time-safe filters)"]
-        Market["MarketAnalyticsService (liquidity + ERI)"]
+        Market["MarketAnalyticsService"]
         Model["PropertyFusionModel"]
         Forecast["ForecastingService (analytic/TFT)"]
-        Calibrator["Stratified Calibrators"]
-        Val["ValuationService (fusion + rent + yield)"]
-        Hedonic["HedonicIndexService (INE Anchored)"]
+        Hedonic["HedonicIndexService"]
+        Area["AreaIntelligenceService"]
+        Val["ValuationService (comp + income + area blend)"]
     end
 
     subgraph Interface
-        CLI["Scripts / CLI"]
-        Dash["The Scout V2 (Streamlit)"]
+        CLI["src/cli.py"]
+        Dash["Scout Intelligence (Streamlit)"]
+        Scheduler["src/workflows/scheduler.py"]
     end
 
-    HB --> Seen
-    HB --> State
-    HB --> Norm
-    AG --> Norm
+    Harvest --> Seen
+    Harvest --> State
+    Harvest --> Norm
+    Agent --> Norm
     Gov --> GovData
-    Norm --> Fusion --> Store --> Listings
+    Norm --> Fusion --> Aug --> Store --> Listings
+
     Listings --> BuildIndex --> VectorIndex --> Retriever
     Listings --> BuildMarket --> Indices
     GovData --> BuildMarket --> Indices
-    GovData --> Market --> Val
     GovData --> Hedonic --> Val
-    Calib --> Calibrator --> Val
+    Indices --> Market --> Val
+    Indices --> Area --> Val
     Retriever --> Val
     Model --> Val
+
+    Preflight --> Harvest
+    Preflight --> BuildMarket
+    Preflight --> BuildIndex
+    Preflight --> Runs
+    Scheduler --> Preflight
+
     Val --> Dash
     Val --> CLI
 ```
 
 ## Components in One Line Each
-- Acquisition: bulk harvesting via `src/scripts/harvest_batch.py`, and `OfficialSourcesAgent` for government stats (INE/ERI).
-- Processing: normalize, fuse VLM-derived signals, clamp sentiment, then persist via StorageService.
-- Data: SQLite is the system of record. `ine_ipv` and `eri_metrics` form the official ground truth layer.
-- Intelligence: time-safe comp retrieval, fusion valuation on log-residuals (anchored by INE indices), and calibrated uncertainty.
-- Interface: "The Scout V2" Dashboard and CLI scripts.
+- Acquisition: `src/workflows/harvest.py`, plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
+- Processing: normalize, fuse VLM signals, augment listings, then persist via StorageService.
+- Data: SQLite is the system of record; `pipeline_runs` records operational health.
+- Intelligence: time-safe comps, hedonic indices, income-aware valuation, and area intelligence.
+- Interface: CLI and the Scout Intelligence dashboard.
+- Automation: scheduled preflight keeps data and artifacts fresh without manual runs.
 
 ## Module Boundaries (Contract)
-- Agents (`src/agents/**`): crawling, normalization, and enrichment of raw source data into `CanonicalListing`.
-- Services (`src/services/**`): storage, encoding, retrieval, valuation, forecasting, and model artifacts; no direct crawling.
-- Scripts/CLI (`src/scripts/**`, `src/cli.py`): orchestration glue and user-facing entrypoints.
+- `src/agents/**`: crawling and normalization from raw sources to `CanonicalListing`.
+- `src/workflows/**`: batch orchestration (harvest, market data, indexing, preflight).
+- `src/repositories/**`: centralized data access; services do not execute raw SQL.
+- `src/services/**`: valuation, retrieval, forecasting, and data augmentation.
+- `src/cognitive/**`: LangGraph agent tools and orchestrator.
+- `src/scripts/**`: thin wrappers for legacy entry points.
+- `src/dashboard/**`: Streamlit UI.

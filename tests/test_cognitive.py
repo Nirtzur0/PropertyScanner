@@ -2,6 +2,7 @@
 Comprehensive tests for the Cognitive Agent module.
 Verifies state schema, tool wrappers, graph nodes, and orchestrator.
 """
+import json
 import pytest
 from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage, HumanMessage
@@ -111,22 +112,31 @@ class TestGraphNodes:
     """Tests for individual LangGraph nodes."""
 
     @patch("src.cognitive.graph.get_llm")
-    def test_supervisor_node_logic(self, mock_get_llm):
-        """Test supervisor node decision making."""
-        from src.cognitive.graph import supervisor_node
-        
-        # Mock LLM to return "crawl"
+    def test_planner_node_logic(self, mock_get_llm):
+        """Test planner node plan creation."""
+        from src.cognitive.graph import planner_node
+
+        plan_payload = {
+            "objective": "Find deals",
+            "deterministic": True,
+            "budgets": {"max_steps": 4, "max_action_calls": {"crawl": 1, "report": 1}},
+            "steps": [
+                {"action": "crawl", "params": {}},
+                {"action": "report", "params": {}},
+            ],
+        }
+
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = AIMessage(content="crawl")
+        mock_llm.invoke.return_value = AIMessage(content=json.dumps(plan_payload))
         mock_get_llm.return_value = mock_llm
-        
-        state = create_initial_state("Find deals")
+
+        state = create_initial_state("Find deals", areas=["/madrid/"])
         state["pipeline_status"] = {"needs_refresh": False}
-        state["pipeline_checked"] = True
-        result = supervisor_node(state)
-        
-        assert result["next_action"] == "crawl"
-        assert result["current_stage"] == "supervisor"
+        result = planner_node(state)
+
+        assert result["plan_status"] == "active"
+        assert result["plan_step_index"] == 0
+        assert result["plan"]["steps"][0]["action"] == "crawl"
 
     @patch("src.cognitive.graph.crawl_listings")
     def test_crawl_node_execution(self, mock_crawl_tool):
@@ -187,16 +197,25 @@ class TestIntegration:
     def test_full_workflow_path(self, mock_eval, mock_norm, mock_crawl, mock_get_llm, mock_snapshot):
         """Test a full successful path through the graph."""
         mock_snapshot.return_value = MagicMock(to_dict=lambda: {"needs_refresh": False})
-        # 1. Mock LLM decisions
+        # 1. Mock planner plan + report content
         mock_llm = MagicMock()
-        # Supervisor decisions: crawl -> normalize -> evaluate -> report -> end
-        # Plus the report content itself
+        plan_payload = {
+            "objective": "Find deals",
+            "deterministic": True,
+            "budgets": {
+                "max_steps": 6,
+                "max_action_calls": {"crawl": 1, "normalize": 1, "evaluate": 1, "report": 1},
+            },
+            "steps": [
+                {"action": "crawl", "params": {}},
+                {"action": "normalize", "params": {}},
+                {"action": "evaluate", "params": {}},
+                {"action": "report", "params": {}},
+            ],
+        }
         mock_llm.invoke.side_effect = [
-            AIMessage(content="crawl"),
-            AIMessage(content="normalize"),
-            AIMessage(content="evaluate"),
-            AIMessage(content="report"),
-            AIMessage(content="Analysis complete report.") # For report_node
+            AIMessage(content=json.dumps(plan_payload)),
+            AIMessage(content="Analysis complete report."),
         ]
         mock_get_llm.return_value = mock_llm
         

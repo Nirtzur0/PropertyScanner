@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, List
 
 import pandas as pd
 from sqlalchemy import text
@@ -7,6 +7,57 @@ from src.repositories.base import RepositoryBase
 
 
 class ERIMetricsRepository(RepositoryBase):
+    def ensure_schema(self) -> None:
+        if self.has_table("eri_metrics"):
+            return
+        query = text(
+            """
+            CREATE TABLE IF NOT EXISTS eri_metrics (
+                id TEXT PRIMARY KEY,
+                region_id TEXT,
+                period_date DATE,
+                txn_count INT,
+                mortgage_count INT,
+                price_sqm FLOAT,
+                price_sqm_yoy FLOAT,
+                price_sqm_qoq FLOAT,
+                updated_at DATETIME
+            )
+            """
+        )
+        with self.engine.begin() as conn:
+            conn.execute(query)
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_eri_region_date ON eri_metrics (region_id, period_date)")
+            )
+
+    def upsert_records(self, records: List[Dict[str, object]]) -> int:
+        if not records:
+            return 0
+        self.ensure_schema()
+        query = text(
+            """
+            INSERT OR REPLACE INTO eri_metrics
+            (id, region_id, period_date, txn_count, mortgage_count, price_sqm, updated_at)
+            VALUES (:id, :region_id, :period_date, :txn_count, :mortgage_count, :price_sqm, CURRENT_TIMESTAMP)
+            """
+        )
+        payloads = []
+        for record in records:
+            payloads.append(
+                {
+                    "id": record["id"],
+                    "region_id": record["region_id"],
+                    "period_date": record["period_date"],
+                    "txn_count": record["txn_count"],
+                    "mortgage_count": record["mortgage_count"],
+                    "price_sqm": record["price_sqm"],
+                }
+            )
+        with self.engine.begin() as conn:
+            result = conn.execute(query, payloads)
+        return int(result.rowcount or 0)
+
     def load_series(self, region_id: str) -> pd.DataFrame:
         query = text(
             """
