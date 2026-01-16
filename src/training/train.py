@@ -15,6 +15,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from src.services.fusion_model import PropertyFusionModel, QuantileLoss, TORCH_AVAILABLE
+from src.core.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH, MODELS_DIR
 from src.training.dataset import create_dataloaders
 
 logger = structlog.get_logger()
@@ -32,7 +33,7 @@ class Trainer:
         lr: float = 1e-4,
         weight_decay: float = 0.01,
         device: str = "cpu",
-        checkpoint_dir: str = "models"
+        checkpoint_dir: str = str(MODELS_DIR)
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -272,7 +273,7 @@ class Trainer:
 
 
 def train_model(
-    db_path: str = "data/listings.db",
+    db_path: str = str(DEFAULT_DB_PATH),
     epochs: int = 100,
     batch_size: int = 32,
     lr: float = 1e-4,
@@ -288,8 +289,8 @@ def train_model(
     time_safe_comps: bool = True,
     normalize_to: str = "latest",
     use_retriever: bool = True,
-    retriever_index_path: str = "data/vector_index.faiss",
-    retriever_metadata_path: str = "data/vector_metadata.json",
+    retriever_index_path: str = str(VECTOR_INDEX_PATH),
+    retriever_metadata_path: str = str(VECTOR_METADATA_PATH),
     retriever_model_name: str = "all-MiniLM-L6-v2",
     retriever_vlm_policy: str = "gated"
 ) -> List[Dict[str, Any]]:
@@ -419,7 +420,7 @@ def train_model(
             val_loader=val_loader,
             lr=lr,
             device=device,
-            checkpoint_dir=f"models/fold_{fold_id}" if k_folds > 1 else "models"
+            checkpoint_dir=str(MODELS_DIR / f"fold_{fold_id}") if k_folds > 1 else str(MODELS_DIR)
         )
 
         config_path = trainer.checkpoint_dir / "fusion_config.json"
@@ -457,7 +458,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Train PropertyFusionModel")
-    parser.add_argument("--db", default="data/listings.db", help="SQLite database path")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -476,8 +477,8 @@ if __name__ == "__main__":
     parser.add_argument("--use-retriever", action="store_true", help="Use FAISS retriever for comps")
     parser.add_argument("--no-retriever", dest="use_retriever", action="store_false")
     parser.set_defaults(use_retriever=True)
-    parser.add_argument("--retriever-index", default="data/vector_index.faiss")
-    parser.add_argument("--retriever-metadata", default="data/vector_metadata.json")
+    parser.add_argument("--retriever-index", default=str(VECTOR_INDEX_PATH))
+    parser.add_argument("--retriever-metadata", default=str(VECTOR_METADATA_PATH))
     parser.add_argument("--retriever-model", default="all-MiniLM-L6-v2")
     parser.add_argument("--retriever-vlm-policy", default="gated", choices=["gated", "off"])
     

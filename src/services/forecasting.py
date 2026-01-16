@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import structlog
 
+from src.core.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
 from src.core.domain.schema import ValuationProjection
 from src.services.area_intelligence import AreaIntelligenceService
 
@@ -32,12 +33,12 @@ class ForecastingService:
 
     def __init__(
         self,
-        db_path: str = "data/listings.db",
+        db_path: str = str(DEFAULT_DB_PATH),
         min_history_months: int = 12,
         return_window_months: int = 12,
         index_source: str = "market",
         forecast_mode: str = "analytic",
-        tft_model_path: str = "models/tft_forecaster.pt",
+        tft_model_path: str = str(TFT_MODEL_PATH),
     ):
         self.db_path = db_path
         self.area_intelligence = AreaIntelligenceService(db_path)

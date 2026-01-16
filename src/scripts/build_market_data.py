@@ -5,6 +5,7 @@ from typing import List, Optional
 import structlog
 
 from src.core.migrations import run_migrations
+from src.core.config import DEFAULT_DB_PATH
 from src.services.hedonic_index import HedonicIndexService
 from src.services.macro_data import MacroDataService
 from src.services.market_indices import MarketIndexService
@@ -30,7 +31,7 @@ def _list_cities(db_path: str) -> List[str]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Build macro data + market/hedonic indices for projections.")
-    parser.add_argument("--db", type=str, default="data/listings.db", help="Path to SQLite DB")
+    parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH), help="Path to SQLite DB")
     parser.add_argument("--skip-migrations", action="store_true", help="Skip schema migrations")
     parser.add_argument("--skip-macro", action="store_true", help="Skip macro_indicators refresh")
     parser.add_argument("--skip-market-indices", action="store_true", help="Skip market_indices recompute")
@@ -84,4 +85,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

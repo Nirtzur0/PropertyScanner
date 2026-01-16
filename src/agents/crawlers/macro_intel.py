@@ -21,6 +21,7 @@ import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import structlog
+from src.core.config import DEFAULT_DB_PATH
 from bs4 import BeautifulSoup
 from src.agents.base import BaseAgent, AgentResponse
 
@@ -100,7 +101,7 @@ class MacroEvidenceAgent(BaseAgent):
     4. No LLM hallucination of numbers
     """
     
-    def __init__(self, db_path: str = "data/listings.db"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         super().__init__(name="MacroEvidence")
         self.db_path = db_path
         self.session = requests.Session()

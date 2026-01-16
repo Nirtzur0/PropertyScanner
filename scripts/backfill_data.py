@@ -9,6 +9,7 @@ from datetime import datetime
 sys.path.append(os.getcwd())
 
 from src.core.domain.schema import RawListing
+from src.core.config import SNAPSHOTS_DIR
 from src.services.storage import StorageService
 from src.agents.processors.idealista import IdealistaNormalizerAgent
 from src.agents.processors.pisos import PisosNormalizerAgent
@@ -24,7 +25,7 @@ def backfill_data():
         "immobiliare_it": ImmobiliareNormalizerAgent()
     }
     
-    base_dir = "data/snapshots"
+    base_dir = str(SNAPSHOTS_DIR)
     count = 0
     updated = 0
     

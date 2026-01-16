@@ -15,6 +15,8 @@ from datetime import datetime
 import structlog
 from PIL import Image
 import io
+from src.services.feature_sanitizer import sanitize_listing_dict, sanitize_year_built
+from src.core.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 
 logger = structlog.get_logger()
 
@@ -31,7 +33,7 @@ class PropertyDataset(Dataset):
     """
     def __init__(
         self,
-        db_path: str = "data/listings.db",
+        db_path: str = str(DEFAULT_DB_PATH),
         num_comps: int = 5,
         cache_embeddings: bool = True,
         text_model: str = "all-MiniLM-L6-v2",
@@ -46,8 +48,8 @@ class PropertyDataset(Dataset):
         time_safe_comps: bool = True,
         normalize_to: str = "latest",
         use_retriever: bool = False,
-        retriever_index_path: str = "data/vector_index.faiss",
-        retriever_metadata_path: str = "data/vector_metadata.json",
+        retriever_index_path: str = str(VECTOR_INDEX_PATH),
+        retriever_metadata_path: str = str(VECTOR_METADATA_PATH),
         retriever_model_name: str = "all-MiniLM-L6-v2",
         retriever_vlm_policy: str = "gated",
         require_hedonic: bool = True
@@ -153,14 +155,29 @@ class PropertyDataset(Dataset):
         """Load all valid listings from SQLite database."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+        except Exception:
+            cols = set()
+
+        extra_cols = []
+        if "plot_area_sqm" in cols:
+            extra_cols.append("plot_area_sqm")
+        if "image_embeddings" in cols:
+            extra_cols.append("image_embeddings")
         
         # We query all positive prices first, then filter in python to be safe/flexible
-        query = """
-            SELECT id, source_id, external_id, url, title, description, price, city,
-                   bedrooms, bathrooms, surface_area_sqm, floor,
-                   lat, lon, image_urls, vlm_description, property_type,
-                   listed_at, updated_at, text_sentiment, image_sentiment, has_elevator,
-                   listing_type, status, sold_at
+        base_cols = [
+            "id", "source_id", "external_id", "url", "title", "description", "price", "city",
+            "bedrooms", "bathrooms", "surface_area_sqm", "floor",
+            "lat", "lon", "image_urls", "vlm_description", "property_type",
+            "listed_at", "updated_at", "text_sentiment", "image_sentiment", "has_elevator",
+            "listing_type", "status", "sold_at",
+        ]
+        select_cols = base_cols + extra_cols
+        query = f"""
+            SELECT {", ".join(select_cols)}
             FROM listings
             WHERE price > 0
         """
@@ -182,7 +199,7 @@ class PropertyDataset(Dataset):
         for l in raw_listings:
             p = l.get("price", 0)
             if self.min_price <= p <= self.max_price:
-                valid_listings.append(l)
+                valid_listings.append(sanitize_listing_dict(l))
             else:
                 dropped_count += 1
                 
@@ -287,10 +304,13 @@ class PropertyDataset(Dataset):
         feature_dicts = []
         for listing in self.listings:
             # NOTE: price is NOT included - it's the target variable
+            area = self._safe_float(listing.get("surface_area_sqm"), default=0.0)
+            price = self._safe_float(listing.get("price"), default=0.0)
+            price_per_sqm = price / area if area > 0 else 0.0
             features = {
                 "bedrooms": self._safe_float(listing.get("bedrooms")),
                 "bathrooms": self._safe_float(listing.get("bathrooms")),
-                "surface_area_sqm": self._safe_float(listing.get("surface_area_sqm")),
+                "surface_area_sqm": area,
                 "year_built": self._safe_float(self._extract_year_built(listing)),
                 "floor": self._safe_float(listing.get("floor")),
                 "lat": self._safe_float(listing.get("lat")),
@@ -298,7 +318,7 @@ class PropertyDataset(Dataset):
                 "text_sentiment": self._safe_float(listing.get("text_sentiment")),
                 "image_sentiment": self._safe_float(listing.get("image_sentiment")),
                 "has_elevator": 1.0 if listing.get("has_elevator") else 0.0,
-                "price_per_sqm": self._safe_float(listing.get("price")) / max(self._safe_float(listing.get("surface_area_sqm"), 1.0), 1.0),
+                "price_per_sqm": price_per_sqm,
             }
             feature_dicts.append(features)
         
@@ -395,7 +415,9 @@ class PropertyDataset(Dataset):
         """Extract year_built from listing, with fallback estimation."""
         # Try direct field first (if it exists in the DB)
         if listing.get("year_built"):
-            return int(listing["year_built"])
+            year = sanitize_year_built(listing.get("year_built"))
+            if year:
+                return year
         
         # Estimate from listed_at date (assume ~10 years old on average)
         listed_at = listing.get("listed_at")
@@ -406,7 +428,10 @@ class PropertyDataset(Dataset):
                     year = datetime.fromisoformat(listed_at.replace('Z', '+00:00')).year
                 else:
                     year = listed_at.year
-                return year - 10  # Estimate built 10 years before listing
+                est_year = year - 10  # Estimate built 10 years before listing
+                sanitized = sanitize_year_built(est_year)
+                if sanitized:
+                    return sanitized
             except:
                 pass
         
@@ -848,7 +873,7 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 
 
 def create_dataloaders(
-    db_path: str = "data/listings.db",
+    db_path: str = str(DEFAULT_DB_PATH),
     batch_size: int = 32,
     num_comps: int = 5,
     val_split: float = 0.1,
@@ -859,8 +884,8 @@ def create_dataloaders(
     time_safe_comps: bool = True,
     normalize_to: str = "latest",
     use_retriever: bool = True,
-    retriever_index_path: str = "data/vector_index.faiss",
-    retriever_metadata_path: str = "data/vector_metadata.json",
+    retriever_index_path: str = str(VECTOR_INDEX_PATH),
+    retriever_metadata_path: str = str(VECTOR_METADATA_PATH),
     retriever_model_name: str = "all-MiniLM-L6-v2",
     retriever_vlm_policy: str = "gated"
 ) -> Tuple[DataLoader, Optional[DataLoader]]:

@@ -6,9 +6,10 @@ from PIL import Image
 import requests
 import base64
 import matplotlib.pyplot as plt
+from src.core.config import DEFAULT_DB_PATH
 
 # Connect to DB
-conn = sqlite3.connect('data/listings.db')
+conn = sqlite3.connect(str(DEFAULT_DB_PATH))
 cursor = conn.cursor()
 
 # Get a listing with images

@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
+from src.core.config import VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 from src.core.domain.schema import CanonicalListing, CompListing
 
 logger = structlog.get_logger()
@@ -54,8 +55,8 @@ class CompRetriever:
     
     def __init__(
         self, 
-        index_path: str = "data/vector_index.faiss",
-        metadata_path: str = "data/vector_metadata.json",
+        index_path: str = str(VECTOR_INDEX_PATH),
+        metadata_path: str = str(VECTOR_METADATA_PATH),
         model_name: str = 'all-MiniLM-L6-v2',
         strict_model_match: bool = True,
         vlm_policy: str = "gated"

@@ -1,10 +1,11 @@
 
 import sqlite3
 import structlog
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger(__name__)
 
-def run_migrations(db_path="data/listings.db"):
+def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     """
     Applies all schema changes in order. Idempotent check should be improved in production (using version table).
     """
@@ -88,6 +89,32 @@ def run_migrations(db_path="data/listings.db"):
             )
         except Exception:
             pass
+    except Exception:
+        pass
+
+    # 4c. Location metadata (zip, country)
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN zip_code TEXT")
+        logger.info("migration_zip_code_added")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN country TEXT")
+        logger.info("migration_country_added")
+    except Exception:
+        pass
+
+    # 4d. Plot area + image embeddings
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN plot_area_sqm FLOAT")
+        logger.info("migration_plot_area_added")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN image_embeddings JSON")
+        logger.info("migration_image_embeddings_added")
     except Exception:
         pass
     

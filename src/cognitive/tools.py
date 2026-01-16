@@ -121,6 +121,7 @@ def normalize_listings(raw_listings: List[Dict[str, Any]], source_id: str) -> Di
     """
     from src.agents.factory import AgentFactory
     from src.core.domain.schema import RawListing
+    from src.services.feature_sanitizer import sanitize_listing_dict, sanitize_listing_features
     
     try:
         normalizer = AgentFactory.create_normalizer(source_id)
@@ -139,9 +140,10 @@ def normalize_listings(raw_listings: List[Dict[str, Any]], source_id: str) -> Di
         listings_data = []
         for listing in result.data or []:
             if hasattr(listing, 'model_dump'):
+                sanitize_listing_features(listing)
                 listings_data.append(listing.model_dump())
             elif isinstance(listing, dict):
-                listings_data.append(listing)
+                listings_data.append(sanitize_listing_dict(listing))
                 
         return {
             "status": result.status,

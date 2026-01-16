@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 import structlog
 from src.core.domain.schema import MarketProfile, ValuationProjection, CanonicalListing
+from src.core.config import DEFAULT_DB_PATH
 from src.services.eri_signals import ERISignalsService
 
 logger = structlog.get_logger(__name__)
@@ -15,7 +16,7 @@ class MarketAnalyticsService:
     Computes market trends, liquidity scores, and value projections.
     Implements the "Triple-Signal" approach.
     """
-    def __init__(self, db_path: str = "data/listings.db"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
         self.eri = ERISignalsService(db_path=db_path)
 

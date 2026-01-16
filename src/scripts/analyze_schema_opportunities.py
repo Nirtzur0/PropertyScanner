@@ -2,7 +2,9 @@ import sqlite3
 import requests
 import json
 
-DB_PATH = "data/listings.db"
+from src.core.config import DEFAULT_DB_PATH
+
+DB_PATH = str(DEFAULT_DB_PATH)
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "llama3"
 

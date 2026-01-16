@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 from src.core.domain.schema import CanonicalListing
 from src.services.vlm import VLMImageDescriber
 from src.services.description_analyst import DescriptionAnalyst
+from src.services.feature_sanitizer import sanitize_listing_features
 
 logger = structlog.get_logger()
 
@@ -109,5 +110,5 @@ class FeatureFusionService:
         # D. Store Raw VLM Text
         if vlm_text:
             listing.vlm_description = vlm_text
-            
-        return listing
+
+        return sanitize_listing_features(listing)

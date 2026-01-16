@@ -8,6 +8,7 @@ import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any
 import structlog
+from src.core.config import SNAPSHOTS_DIR
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
@@ -32,7 +33,7 @@ class SnapshotService:
     - Structured metadata (JSON sidecar files)
     - Organized by source and date for easy retrieval/cleanup
     """
-    def __init__(self, base_dir: str = "data/snapshots"):
+    def __init__(self, base_dir: str = str(SNAPSHOTS_DIR)):
         self.base_dir = base_dir
         os.makedirs(self.base_dir, exist_ok=True)
         self._metadata_cache: Dict[str, SnapshotMetadata] = {}

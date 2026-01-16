@@ -9,14 +9,15 @@ from src.core.domain.models import Base, DBListing
 from src.core.domain.schema import CanonicalListing
 from src.core.migrations import run_migrations
 from src.services.enrichment_service import EnrichmentService
-from src.services.enrichment_service import EnrichmentService
+from src.services.feature_sanitizer import sanitize_listing_features
+from src.core.config import DEFAULT_DB_URL
 from src.services.description_analyst import DescriptionAnalyst
 from src.services.rent_estimator import RentEstimator
 
 logger = structlog.get_logger()
 
 class StorageService:
-    def __init__(self, db_url: str = "sqlite:///data/listings.db"):
+    def __init__(self, db_url: str = DEFAULT_DB_URL):
         connect_args = {}
         try:
             url = make_url(db_url)
@@ -54,6 +55,7 @@ class StorageService:
         try:
             for item in listings:
                 try:
+                    sanitize_listing_features(item)
                     # Convert Pydantic -> ORM
                     # Note: Simplified for MVP. Ideally check if exists and update fields if changed.
                     db_item = session.query(DBListing).filter_by(id=item.id).first()
@@ -105,11 +107,8 @@ class StorageService:
                     
                     if item.description:
                          db_item.description = item.description
-                         
-                    # Overwrite description with structured JSON if available (User Request)
+
                     if hasattr(item, "analysis_meta") and item.analysis_meta:
-                        import json
-                        db_item.description = json.dumps(item.analysis_meta, ensure_ascii=False, indent=2)
                         db_item.analysis_meta = item.analysis_meta
                     
                     # AI Analysis Results
@@ -122,6 +121,7 @@ class StorageService:
 
                     # Explicit field mapping
                     if item.bathrooms is not None: db_item.bathrooms = item.bathrooms
+                    if item.plot_area_sqm is not None: db_item.plot_area_sqm = item.plot_area_sqm
                     if item.floor is not None: db_item.floor = item.floor
                     if item.has_elevator is not None: db_item.has_elevator = item.has_elevator
                     
@@ -138,6 +138,10 @@ class StorageService:
                          db_item.address_full = item.location.address_full
                          if item.location.city:
                              db_item.city = item.location.city
+                         if item.location.zip_code:
+                             db_item.zip_code = item.location.zip_code
+                         if item.location.country:
+                             db_item.country = item.location.country
                          
                          # Fix: Persist Coordinates
                          db_item.lat = item.location.lat
@@ -147,6 +151,8 @@ class StorageService:
                     if item.image_urls:
                         # Ensure we store generic JSON list, not Pydantic HttpUrl objects
                         db_item.image_urls = [str(u) for u in item.image_urls]
+                    if item.image_embeddings:
+                        db_item.image_embeddings = item.image_embeddings
                     
                     # Enrichment (Main Flow)
                     # Automatically fill missing city/data

@@ -84,7 +84,8 @@ ollama pull llama3
 ```
 
 ### Usage
-All commands below assume you're in the project root.
+All commands below assume you're in the project root. Use the unified CLI to wrap core scripts:
+`python -m src.cli <command> -- [args]`
 
 #### 1. Collect Data (Bulk Harvest)
 Run the bulk harvester. You **must** run in Rent mode first to build the yield estimator stats.
@@ -94,43 +95,43 @@ The harvester de-dupes URLs using a disk-backed store at `data/harvest_seen_urls
 **Option A: Harvest Rentals (Baseline)**
 *Required for Yield Estimation.*
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode rent
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode rent
 ```
 
 **Option B: Harvest Sales (Main)**
 *Finds active listings and estimates value/yield.*
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale
 ```
 Example: harvest only Madrid sales:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --start-url "https://www.pisos.com/venta/pisos-madrid/"
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --start-url "https://www.pisos.com/venta/pisos-madrid/"
 ```
 
 **Option C: Clean Start (Reset & Restart)**
 If you want to wipe the local database (`data/listings.db`), harvest state, and URL de-dupe store to start from scratch:
 ```bash
 # WARNING: This deletes all previously collected data!
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --clean
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --clean
 ```
 Note: You can use `--clean` with either `--mode sale` or `--mode rent`.
 
 Tip: If you run out of memory, reduce parallelism and/or batch size:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/harvest_batch.py --mode sale --max-workers 1 --process-batch-size 10 --no-vlm
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --max-workers 1 --process-batch-size 10 --no-vlm
 ```
 
 #### 1b. Build Indices (for Projections)
 Price/rent projections use market + macro time series. After harvesting, build/update them:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_market_data.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-market
 ```
 Optional: load ERI registral metrics into `eri_metrics` for liquidity + index-disagreement checks (lagged, not real-time).
 
 #### 1c. Build Vector Index (for Comps)
 Comparable retrieval requires the FAISS vector index:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/build_vector_index.py \
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-index -- \
   --model-name all-MiniLM-L6-v2 \
   --vlm-policy gated
 ```
@@ -140,19 +141,17 @@ Note: training/inference enforce strict index metadata (encoder + VLM policy). R
 Ask the AI Agent to find specific properties (complex reasoning).
 Requires at least one explicit area/URL.
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/main.py "Find undervalued apartments in Madrid" "https://www.pisos.com/venta/pisos-madrid/"
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli agent -- "Find undervalued apartments in Madrid" "https://www.pisos.com/venta/pisos-madrid/"
 ```
 
 #### 3. Train Models
 Run the training pipeline (requires data in `data/listings.db`).
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/training/train.py \
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli train -- \
   --epochs 10 \
   --listing-type sale \
   --label-source sold \
   --use-retriever \
-  --retriever-index data/vector_index.faiss \
-  --retriever-metadata data/vector_metadata.json \
   --retriever-model all-MiniLM-L6-v2 \
   --retriever-vlm-policy gated \
   --time-safe-comps \
@@ -163,7 +162,7 @@ This writes `models/fusion_model.pt` and `models/fusion_config.json`.
 #### 3b. Update Calibration (optional but recommended)
 Use out-of-sample valuation results to refresh stratified conformal calibrators:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/update_calibrators.py \
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli calibrators -- \
   --input data/calibration_samples.jsonl \
   --output models/calibration_registry.json
 ```
@@ -171,17 +170,17 @@ export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/update_calibrat
 #### 4. Launch Dashboard
 Visualize listings, valuations, and VLM insights.
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/streamlit run src/dashboard.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli dashboard
 ```
 Tip: For large databases, precompute/cache valuations (includes price/rent/yield projections) so the dashboard doesn’t re-run models on every refresh:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/backfill_valuations.py --listing-type sale
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli backfill -- --listing-type sale
 ```
 
 #### 5. Utilities
 Fix metadata, timestamps, or geocoding issues in the existing data (does **not** delete records).
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python src/scripts/clean_data.py
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli clean-data
 ```
 
 ---

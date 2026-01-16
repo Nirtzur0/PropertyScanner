@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import json
+from src.core.config import DEFAULT_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class AreaIntelligenceService:
     Simulates web crawling/scraping for news, sentiment, and development plans.
     """
 
-    def __init__(self, db_path: str = "data/listings.db"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
         self._ensure_table()
 

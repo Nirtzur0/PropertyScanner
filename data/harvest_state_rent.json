@@ -39,19 +39,19 @@
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": "https://www.pisos.com/alquiler/pisos-almeria/17",
-      "done": false,
-      "last_signature": "4e1e6f42374b4bb394ab9c607cb4f3ceb46dfb4b8015d8300abec8aa1babc31b",
-      "pages_visited": 18,
+      "current_url": "https://www.pisos.com/alquiler/pisos-almeria/21",
+      "done": true,
+      "last_signature": "f6a687f25b2cb0568c98bfc7eff8a7518ad82175372a9e7e5b6937d736d4d0a6",
+      "pages_visited": 23,
       "start_url": "https://www.pisos.com/alquiler/pisos-almeria"
     },
     {
       "consecutive_no_new_pages": 0,
       "consecutive_same_signature": 0,
-      "current_url": null,
+      "current_url": "https://www.pisos.com/alquiler/pisos-andorra_andorra/5",
       "done": false,
-      "last_signature": null,
-      "pages_visited": 0,
+      "last_signature": "111221eb90d51ff548219ac63c64ba2f66612aa97aff3afa7a0fc5190b9df070",
+      "pages_visited": 5,
       "start_url": "https://www.pisos.com/alquiler/pisos-andorra_andorra"
     },
     {
@@ -955,7 +955,7 @@
       "start_url": "https://www.pisos.com/alquiler/casas-zaragoza"
     }
   ],
-  "current_area_index": 4,
+  "current_area_index": 5,
   "mode": "rent",
   "target_count": 20000,
   "version": 1

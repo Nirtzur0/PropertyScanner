@@ -4,6 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import structlog
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -12,7 +13,7 @@ class MarketIndexService:
     Data Engineering Service.
     Aggregates raw listings into monthly Time Series Indices.
     """
-    def __init__(self, db_path: str = "data/listings.db"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
 
     def _get_monthly_buckets(self, start_date: datetime, end_date: datetime) -> List[datetime]:

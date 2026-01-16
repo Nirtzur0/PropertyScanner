@@ -8,6 +8,7 @@ from src.services.vlm import VLMImageDescriber
 
 import ast
 import structlog
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger()
 
@@ -40,7 +41,7 @@ def process_single_listing(describer, row):
     except Exception as e:
         return listing_id, None, str(e)
 
-def batch_process_vlm(db_path="data/listings.db", override=False, max_workers=4):
+def batch_process_vlm(db_path=str(DEFAULT_DB_PATH), override=False, max_workers=4):
     """
     Batch process listings to generate VLM descriptions.
     
@@ -123,7 +124,7 @@ def batch_process_vlm(db_path="data/listings.db", override=False, max_workers=4)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate VLM descriptions for listings")
-    parser.add_argument("--db", default="data/listings.db", help="Path to database")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to database")
     parser.add_argument("--override", action="store_true", help="Override existing descriptions")
     parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers")
     

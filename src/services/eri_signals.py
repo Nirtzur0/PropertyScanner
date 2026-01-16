@@ -4,6 +4,7 @@ import sqlite3
 import structlog
 import pandas as pd
 import numpy as np
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -15,7 +16,7 @@ class ERISignalsService:
     ERI data is lagged (~45 days); we treat it as a quarterly regime signal.
     """
 
-    def __init__(self, db_path: str = "data/listings.db", lag_days: int = 45, trailing_years: int = 3):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), lag_days: int = 45, trailing_years: int = 3):
         self.db_path = db_path
         self.lag_days = int(lag_days)
         self.trailing_years = int(trailing_years)

@@ -5,6 +5,7 @@ import structlog
 from datetime import datetime
 from typing import List, Optional
 from src.core.domain.schema import RawListing, CanonicalListing
+from src.core.config import SNAPSHOTS_DIR
 from src.agents.processors.normalizer import IdealistaNormalizerAgent
 
 logger = structlog.get_logger()
@@ -13,7 +14,7 @@ class DatasetBuilder:
     """
     Replays historical snapshots to build training datasets.
     """
-    def __init__(self, snapshot_dir: str = "data/snapshots"):
+    def __init__(self, snapshot_dir: str = str(SNAPSHOTS_DIR)):
         self.snapshot_dir = snapshot_dir
         self.normalizer = IdealistaNormalizerAgent()
 

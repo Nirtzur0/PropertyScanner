@@ -8,6 +8,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.getcwd())
 
+from src.core.config import DEFAULT_DB_PATH
 from src.services.storage import StorageService
 from src.agents.crawlers.idealista import IdealistaCrawlerAgent
 from src.agents.crawlers.pisos import PisosCrawlerAgent
@@ -40,7 +41,7 @@ def recrawl_database():
     
     print("Fetching listings with missing data from DB...")
     
-    conn = sqlite3.connect('data/listings.db')
+    conn = sqlite3.connect(str(DEFAULT_DB_PATH))
     # Focus on those missing critical fields
     query = """
     SELECT id, source_id, external_id, url 

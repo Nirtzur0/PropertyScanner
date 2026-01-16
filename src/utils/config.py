@@ -1,9 +1,10 @@
 import yaml
 from pathlib import Path
 from typing import Dict, Any
+from src.core.config import CONFIG_DIR
 
 class ConfigLoader:
-    def __init__(self, config_dir: str = "config"):
+    def __init__(self, config_dir: str = str(CONFIG_DIR)):
         self.config_paths = Path(config_dir).resolve()
         
     def load_yaml(self, filename: str) -> Dict[str, Any]:

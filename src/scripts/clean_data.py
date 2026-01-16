@@ -1,7 +1,9 @@
 import sqlite3
 from datetime import datetime
 
-DB_PATH = "data/listings.db"
+from src.core.config import DEFAULT_DB_PATH
+
+DB_PATH = str(DEFAULT_DB_PATH)
 
 def clean_data():
     conn = sqlite3.connect(DB_PATH)

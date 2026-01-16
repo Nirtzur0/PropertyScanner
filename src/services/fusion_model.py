@@ -8,6 +8,7 @@ import structlog
 import numpy as np
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
+from src.core.config import FUSION_MODEL_PATH, FUSION_CONFIG_PATH
 
 logger = structlog.get_logger()
 
@@ -286,8 +287,8 @@ class FusionModelService:
     """
     def __init__(
         self,
-        model_path: str = "models/fusion_model.pt",
-        config_path: str = "models/fusion_config.json"
+        model_path: str = str(FUSION_MODEL_PATH),
+        config_path: str = str(FUSION_CONFIG_PATH)
     ):
         self.model_path = model_path
         self.config_path = config_path

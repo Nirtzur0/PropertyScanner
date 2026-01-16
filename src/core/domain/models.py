@@ -28,12 +28,15 @@ class DBListing(Base):
     bedrooms = Column(Integer, nullable=True)
     bathrooms = Column(Integer, nullable=True)
     surface_area_sqm = Column(Float, nullable=True)
+    plot_area_sqm = Column(Float, nullable=True)
     floor = Column(Integer, nullable=True)
     has_elevator = Column(Boolean, nullable=True)
     
     # Location (JSON/Composite in real PG, flat here for simplicity)
     address_full = Column(String, nullable=True)
     city = Column(String, nullable=True)
+    zip_code = Column(String, nullable=True)
+    country = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lon = Column(Float, nullable=True)
     geohash = Column(String, nullable=True, index=True)
@@ -46,6 +49,7 @@ class DBListing(Base):
     # Meta
     image_urls = Column(JSON, default=list)
     vlm_description = Column(Text, nullable=True) # VLM generated text
+    image_embeddings = Column(JSON, default=list)
     
     # AI Analysis
     text_sentiment = Column(Float, nullable=True) # -1.0 to 1.0 from DescriptionAnalyst

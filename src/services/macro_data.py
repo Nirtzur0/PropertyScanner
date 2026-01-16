@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 import structlog
 from bs4 import BeautifulSoup
 import re
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -16,7 +17,7 @@ class MacroDataService:
     2. Euribor (Scraped)
     3. National Housing Indices (Idealista Scraped)
     """
-    def __init__(self, db_path: str = "data/listings.db"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
         self.session = requests.Session()
         self.session.headers.update({

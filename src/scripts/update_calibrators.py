@@ -4,6 +4,7 @@ from typing import Dict, Any, Iterable
 
 import structlog
 
+from src.core.config import CALIBRATION_PATH
 from src.services.conformal_calibrator import StratifiedCalibratorRegistry
 
 logger = structlog.get_logger(__name__)
@@ -21,7 +22,7 @@ def _iter_samples(path: str) -> Iterable[Dict[str, Any]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Update stratified conformal calibrators from JSONL samples.")
     parser.add_argument("--input", required=True, help="Path to JSONL calibration samples")
-    parser.add_argument("--output", default="models/calibration_registry.json", help="Output calibration registry path")
+    parser.add_argument("--output", default=str(CALIBRATION_PATH), help="Output calibration registry path")
     parser.add_argument("--alpha", type=float, default=0.1)
     parser.add_argument("--window-size", type=int, default=50)
     args = parser.parse_args()

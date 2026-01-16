@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 from typing import Iterable, List
+from src.core.config import HARVEST_SEEN_URLS_DB
 
 
 class SeenUrlStore:
@@ -12,7 +13,7 @@ class SeenUrlStore:
     provides stable resume behavior across runs.
     """
 
-    def __init__(self, path: str = "data/harvest_seen_urls.sqlite3"):
+    def __init__(self, path: str = str(HARVEST_SEEN_URLS_DB)):
         self.path = path
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.conn = sqlite3.connect(path)
@@ -78,4 +79,3 @@ class SeenUrlStore:
                 if cur.rowcount == 1:
                     new_urls.append(url)
         return new_urls
-

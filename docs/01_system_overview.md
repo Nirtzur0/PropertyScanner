@@ -65,3 +65,8 @@ flowchart LR
 - Data: SQLite is the system of record; vector index/metadata, market indices, and (optional) ERI metrics are rebuildable artifacts.
 - Intelligence: time-safe comp retrieval with frozen retriever metadata, fusion valuation on log-residuals over a robust comp baseline, calibrated uncertainty, and analytic/TFT projections.
 - Interface: Streamlit dashboard and CLI scripts (build indices, vector index, backfill valuations, training).
+
+## Module Boundaries (Contract)
+- Agents (`src/agents/**`): crawling, normalization, and enrichment of raw source data into `CanonicalListing`.
+- Services (`src/services/**`): storage, encoding, retrieval, valuation, forecasting, and model artifacts; no direct crawling.
+- Scripts/CLI (`src/scripts/**`, `src/cli.py`): orchestration glue and user-facing entrypoints.

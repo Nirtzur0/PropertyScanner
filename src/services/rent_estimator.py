@@ -6,11 +6,12 @@ from sqlalchemy.orm import sessionmaker
 
 from src.core.domain.models import DBListing
 from src.core.domain.schema import CanonicalListing
+from src.core.config import DEFAULT_DB_URL
 
 logger = structlog.get_logger()
 
 class RentEstimator:
-    def __init__(self, db_url="sqlite:///data/listings.db"):
+    def __init__(self, db_url: str = DEFAULT_DB_URL):
         self.engine = create_engine(db_url)
         self.Session = sessionmaker(bind=self.engine)
         self.rental_stats: Dict[str, float] = {} # city -> avg_price_sqm

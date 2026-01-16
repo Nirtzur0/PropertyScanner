@@ -3,11 +3,12 @@ Batch Data Collector for Training Pipeline.
 Scrapes property listings from Pisos.com to build training dataset.
 Target: 1500+ listings to properly train 92k param model.
 """
-import sqlite3
 import time
 import structlog
-import json
-from datetime import datetime
+from src.core.config import DEFAULT_DB_PATH
+from src.services.feature_sanitizer import sanitize_listing_dict
+from src.services.storage import StorageService
+from src.core.domain.schema import CanonicalListing
 from typing import List, Dict
 
 from src.agents.crawlers.pisos import PisosCrawlerAgent
@@ -97,103 +98,28 @@ CITY_URLS = [
 ]
 
 
-def save_listings_to_db(listings: List[Dict], db_path: str = "data/listings.db"):
+def save_listings_to_db(listings: List[Dict], db_path: str = str(DEFAULT_DB_PATH)):
     """Save normalized listings to SQLite database."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Ensure table exists with correct schema
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS listings (
-            id TEXT PRIMARY KEY,
-            source_id TEXT,
-            title TEXT,
-            description TEXT,
-            price REAL,
-            city TEXT,
-            bedrooms INTEGER,
-            bathrooms INTEGER,
-            surface_area_sqm REAL,
-            floor INTEGER,
-            lat REAL,
-            lon REAL,
-            image_urls TEXT,
-            vlm_description TEXT,
-            listed_at TEXT,
-            updated_at TEXT
-        )
-    """)
-    
-    inserted = 0
+    db_path_str = str(db_path)
+    db_url = db_path_str if db_path_str.startswith("sqlite:") else f"sqlite:///{db_path_str}"
+    storage = StorageService(db_url=db_url)
+
+    canonical_listings: List[CanonicalListing] = []
     for listing in listings:
         try:
-            # Extract city from nested location object
-            location = listing.get("location") or {}
-            city = location.get("city", "Unknown") if isinstance(location, dict) else "Unknown"
-            lat = location.get("lat", 0) if isinstance(location, dict) else 0
-            lon = location.get("lon", 0) if isinstance(location, dict) else 0
-            
-            # Handle image_urls - could be list of HttpUrl objects
-            image_urls = listing.get("image_urls", [])
-            if image_urls and hasattr(image_urls[0], '__str__'):
-                image_urls = [str(u) for u in image_urls]
-            
-            listing_id = listing.get("id") or listing.get("external_id") or f"gen_{inserted}"
-            external_id = listing.get("external_id") or listing_id
-            url = listing.get("url", "")
-            if hasattr(url, '__str__') and not isinstance(url, str):
-                url = str(url)
-            
-            cursor.execute("""
-                INSERT INTO listings 
-                (id, source_id, external_id, url, title, description, price, city, bedrooms, bathrooms,
-                 surface_area_sqm, floor, lat, lon, image_urls, listed_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    source_id=excluded.source_id,
-                    external_id=excluded.external_id,
-                    url=excluded.url,
-                    title=excluded.title,
-                    description=excluded.description,
-                    price=excluded.price,
-                    city=excluded.city,
-                    bedrooms=excluded.bedrooms,
-                    bathrooms=excluded.bathrooms,
-                    surface_area_sqm=excluded.surface_area_sqm,
-                    floor=excluded.floor,
-                    lat=excluded.lat,
-                    lon=excluded.lon,
-                    image_urls=excluded.image_urls,
-                    updated_at=excluded.updated_at
-            """, (
-                listing_id,
-                listing.get("source_id", "pisos"),
-                external_id,
-                url,
-                listing.get("title", ""),
-                listing.get("description", ""),
-                listing.get("price", 0),
-                city,
-                listing.get("bedrooms"),
-                listing.get("bathrooms"),
-                listing.get("surface_area_sqm"),
-                listing.get("floor"),
-                lat,
-                lon,
-                json.dumps(image_urls),
-                datetime.now().isoformat(),  # listed_at (ignored on update)
-                datetime.now().isoformat()   # updated_at (updated on conflict)
-            ))
-            inserted += 1
+            listing = sanitize_listing_dict(listing)
+            if isinstance(listing, CanonicalListing):
+                canonical = listing
+            else:
+                canonical = CanonicalListing(**listing)
+            canonical_listings.append(canonical)
         except Exception as e:
-            logger.warning("insert_failed", error=str(e), listing_id=listing.get("id", "unknown"))
-    
-    conn.commit()
-    conn.close()
-    return inserted
+            logger.warning("canonicalize_failed", error=str(e), listing_id=listing.get("id", "unknown"))
+
+    return storage.save_listings(canonical_listings)
 
 
-def collect_data(target_count: int = 1500, db_path: str = "data/listings.db"):
+def collect_data(target_count: int = 1500, db_path: str = str(DEFAULT_DB_PATH)):
     """
     Collect property listings until target_count is reached.
     
@@ -272,7 +198,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Collect training data from Pisos.com")
     parser.add_argument("--target", type=int, default=1500, help="Target number of listings")
-    parser.add_argument("--db", default="data/listings.db", help="Database path")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Database path")
     
     args = parser.parse_args()
     

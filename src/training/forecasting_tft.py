@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import sqlite3
 import structlog
+from src.core.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -222,7 +223,7 @@ class TFTForecastingService:
     Service wrapper for TFT forecaster with training and inference.
     """
     
-    def __init__(self, db_path: str = "data/listings.db", model_path: str = "models/tft_forecaster.pt"):
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), model_path: str = str(TFT_MODEL_PATH)):
         self.db_path = db_path
         self.model_path = model_path
         self.config = TFTConfig()

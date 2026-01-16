@@ -37,10 +37,18 @@ from src.services.forecasting import ForecastingService
 from src.services.market_analytics import MarketAnalyticsService
 from src.services.hedonic_index import HedonicIndexService
 from src.services.conformal_calibrator import StratifiedCalibratorRegistry
+from src.services.feature_sanitizer import sanitize_listing_features
 from src.services.fusion_model import FusionModelService, FusionOutput
 from src.services.encoders import MultimodalEncoder
 from src.services.retrieval import CompRetriever
 from src.services.eri_signals import ERISignalsService
+from src.core.config import (
+    DEFAULT_DB_PATH,
+    VECTOR_INDEX_PATH,
+    VECTOR_METADATA_PATH,
+    TFT_MODEL_PATH,
+    CALIBRATION_PATH,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -62,8 +70,8 @@ class ValuationConfig:
     min_rent_comps: int = 5
     rent_radius_km: float = 2.0
     retriever_model_name: str = "all-MiniLM-L6-v2"
-    retriever_index_path: str = "data/vector_index.faiss"
-    retriever_metadata_path: str = "data/vector_metadata.json"
+    retriever_index_path: str = str(VECTOR_INDEX_PATH)
+    retriever_metadata_path: str = str(VECTOR_METADATA_PATH)
     retriever_vlm_policy: str = "gated"
 
     # ERI checks
@@ -77,12 +85,12 @@ class ValuationConfig:
     # Forecasting
     forecast_mode: str = "analytic"  # analytic or tft
     forecast_index_source: str = "market"
-    tft_model_path: str = "models/tft_forecaster.pt"
+    tft_model_path: str = str(TFT_MODEL_PATH)
     
     # Conformal
     conformal_alpha: float = 0.1
     conformal_window: int = 50
-    calibration_path: str = "models/calibration_registry.json"
+    calibration_path: str = str(CALIBRATION_PATH)
     
     def __post_init__(self):
         if self.horizons_months is None:
@@ -118,14 +126,14 @@ class ValuationService:
         
         # Services
         self.forecasting = ForecastingService(
-            db_path="data/listings.db",
+            db_path=str(DEFAULT_DB_PATH),
             index_source=self.config.forecast_index_source,
             forecast_mode=self.config.forecast_mode,
             tft_model_path=self.config.tft_model_path
         )
-        self.analytics = MarketAnalyticsService()
-        self.hedonic = HedonicIndexService()
-        self.eri = ERISignalsService(db_path="data/listings.db", lag_days=self.config.eri_lag_days)
+        self.analytics = MarketAnalyticsService(db_path=str(DEFAULT_DB_PATH))
+        self.hedonic = HedonicIndexService(db_path=str(DEFAULT_DB_PATH))
+        self.eri = ERISignalsService(db_path=str(DEFAULT_DB_PATH), lag_days=self.config.eri_lag_days)
         self.fusion = FusionModelService()
         retriever_cfg = {}
         if getattr(self.fusion, "config", None):
@@ -206,10 +214,11 @@ class ValuationService:
                 lon=db_item.lon,
                 address_full=db_item.address_full or db_item.title,
                 city=db_item.city or "Unknown",
-                country="ES",
+                zip_code=getattr(db_item, "zip_code", None),
+                country=db_item.country or "ES",
             )
 
-        return CanonicalListing(
+        listing = CanonicalListing(
             id=db_item.id,
             source_id=db_item.source_id,
             external_id=db_item.external_id,
@@ -223,6 +232,7 @@ class ValuationService:
             bedrooms=self._to_int(db_item.bedrooms),
             bathrooms=self._to_int(db_item.bathrooms),
             surface_area_sqm=self._to_float(db_item.surface_area_sqm),
+            plot_area_sqm=self._to_float(getattr(db_item, "plot_area_sqm", None)),
             floor=self._to_int(db_item.floor),
             has_elevator=db_item.has_elevator,
             location=loc,
@@ -231,11 +241,13 @@ class ValuationService:
             text_sentiment=db_item.text_sentiment,
             image_sentiment=db_item.image_sentiment,
             analysis_meta=db_item.analysis_meta,
+            image_embeddings=getattr(db_item, "image_embeddings", None),
             listed_at=db_item.listed_at,
             updated_at=db_item.updated_at,
             status=db_item.status,
             tags=db_item.tags or [],
         )
+        return sanitize_listing_features(listing)
 
     def _retrieve_comps(
         self,
@@ -339,6 +351,7 @@ class ValuationService:
             DealAnalysis with fair value, projections, and evidence
         """
         valuation_date = valuation_date or datetime.now()
+        sanitize_listing_features(listing)
         
         if tracer:
             tracer.start_trace(listing.id)
@@ -737,6 +750,7 @@ class ValuationService:
         Helper to extract embeddings and features for a listing.
         Returns: (text_embedding, tabular_features, image_embedding)
         """
+        sanitize_listing_features(listing)
         # 1. Text Embedding
         text_parts = [listing.title]
         if listing.description:

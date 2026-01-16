@@ -17,6 +17,14 @@ from src.services.enrichment_service import EnrichmentService
 from src.services.feature_fusion import FeatureFusionService
 from src.services.storage import StorageService
 from src.utils.seen_url_store import SeenUrlStore
+from src.core.config import (
+    DEFAULT_DB_PATH,
+    HARVEST_SEEN_URLS_DB,
+    HARVEST_URLS_SALE,
+    HARVEST_URLS_RENT,
+    HARVEST_STATE_SALE,
+    HARVEST_STATE_RENT,
+)
 from src.utils.harvest_state import (
     HarvestState,
     HarvestAreaState,
@@ -36,7 +44,7 @@ DEFAULT_MAX_NO_NEW_PAGES = 500
 DEFAULT_MAX_PAGES_PER_AREA = 10000
 BATCH_SIZE = 40
 MAX_WORKERS = 2 # Be careful with Ollama load
-SEEN_URLS_DB = "data/harvest_seen_urls.sqlite3"
+SEEN_URLS_DB = str(HARVEST_SEEN_URLS_DB)
 
 LEGACY_DEFAULT_START_URLS_SALE = [
     "https://www.pisos.com/venta/pisos-espana/",
@@ -46,10 +54,10 @@ LEGACY_DEFAULT_START_URLS_RENT = [
     "https://www.pisos.com/alquiler/pisos-espana/",
     "https://www.pisos.com/alquiler/casas-espana/",
 ]
-CHECKPOINT_FILE_SALE = "data/harvest_urls_sale.json"
-CHECKPOINT_FILE_RENT = "data/harvest_urls_rent.json"
-STATE_FILE_SALE = "data/harvest_state_sale.json"
-STATE_FILE_RENT = "data/harvest_state_rent.json"
+CHECKPOINT_FILE_SALE = str(HARVEST_URLS_SALE)
+CHECKPOINT_FILE_RENT = str(HARVEST_URLS_RENT)
+STATE_FILE_SALE = str(HARVEST_STATE_SALE)
+STATE_FILE_RENT = str(HARVEST_STATE_RENT)
 
 PISOS_MAPAWEB_BASE = "https://www.pisos.com/mapaweb"
 
@@ -552,7 +560,8 @@ if __name__ == "__main__":
     
     if args.clean:
         logger.warning("CLEAN START: Deleting database and checkpoints...")
-        if os.path.exists("data/listings.db"): os.remove("data/listings.db")
+        if os.path.exists(str(DEFAULT_DB_PATH)):
+            os.remove(str(DEFAULT_DB_PATH))
         if os.path.exists(CHECKPOINT_FILE_SALE): os.remove(CHECKPOINT_FILE_SALE)
         if os.path.exists(CHECKPOINT_FILE_RENT): os.remove(CHECKPOINT_FILE_RENT)
         if os.path.exists(STATE_FILE_SALE): os.remove(STATE_FILE_SALE)
