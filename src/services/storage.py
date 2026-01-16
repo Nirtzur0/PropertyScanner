@@ -9,9 +9,8 @@ from src.core.domain.models import Base, DBListing
 from src.core.domain.schema import CanonicalListing
 from src.core.migrations import run_migrations
 from src.services.enrichment_service import EnrichmentService
-from src.services.enrichment_service import EnrichmentService
 from src.services.description_analyst import DescriptionAnalyst
-from src.services.rent_estimator import RentEstimator
+from src.services.rent import RentService
 
 logger = structlog.get_logger()
 
@@ -40,7 +39,7 @@ class StorageService:
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.enrichment_service = EnrichmentService()
         self.description_analyst = DescriptionAnalyst()
-        self.rent_estimator = RentEstimator(db_url)
+        self.rent_service = RentService(db_url)
 
     def get_session(self) -> Session:
         return self.SessionLocal()
@@ -158,10 +157,10 @@ class StorageService:
                         
                     # Rental Estimation (Only for Sales)
                     if db_item.listing_type == "sale" and db_item.price > 0:
-                        rent = self.rent_estimator.estimate_rent(item)
+                        rent = self.rent_service.estimate_simple(item)
                         if rent:
                             db_item.estimated_rent = rent
-                            db_item.gross_yield = self.rent_estimator.calculate_yield(db_item.price, rent)
+                            db_item.gross_yield = self.rent_service.calculate_yield(db_item.price, rent)
                     
                 except Exception as e:
                     logger.error("db_save_item_error", id=item.id, error=str(e))

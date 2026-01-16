@@ -34,7 +34,8 @@ from src.core.domain.schema import (
 )
 from src.core.domain.models import DBListing
 from src.services.forecasting import ForecastingService
-from src.services.market_analytics import MarketAnalyticsService
+from src.services.market import MarketService
+from src.services.rent import RentService
 from src.services.hedonic_index import HedonicIndexService
 from src.services.conformal_calibrator import StratifiedCalibratorRegistry
 from src.services.fusion_model import FusionModelService, FusionOutput
@@ -123,7 +124,7 @@ class ValuationService:
             forecast_mode=self.config.forecast_mode,
             tft_model_path=self.config.tft_model_path
         )
-        self.analytics = MarketAnalyticsService()
+        self.market = MarketService()
         self.hedonic = HedonicIndexService()
         self.eri = ERISignalsService(db_path="data/listings.db", lag_days=self.config.eri_lag_days)
         self.fusion = FusionModelService()
@@ -142,6 +143,13 @@ class ValuationService:
             model_name=self.config.retriever_model_name,
             strict_model_match=True,
             vlm_policy=self.config.retriever_vlm_policy
+        )
+
+        self.rent_service = RentService(
+            db_url="sqlite:///data/listings.db",
+            retriever=self.retriever,
+            hedonic=self.hedonic,
+            config=self.config
         )
         
         # Encoder for embeddings (Vision disabled to avoid heavy dependencies)
@@ -274,47 +282,6 @@ class ValuationService:
 
         return hydrated, similarity_by_id
 
-    def _retrieve_rent_comps(
-        self,
-        listing: CanonicalListing,
-        as_of_date: Optional[datetime] = None
-    ) -> Tuple[List[CanonicalListing], Dict[str, float]]:
-        comps = self.retriever.retrieve_comps(
-            target=listing,
-            k=self.config.K_model,
-            max_radius_km=self.config.rent_radius_km,
-            listing_type="rent",
-            max_listed_at=as_of_date,
-            exclude_duplicate_external=True
-        )
-        if len(comps) < self.config.min_rent_comps:
-            raise ValueError("insufficient_rent_comps")
-
-        similarity_by_id = {c.id: c.similarity_score for c in comps}
-        ids = [c.id for c in comps]
-
-        session = self.storage.get_session()
-        try:
-            rows = (
-                session.query(DBListing)
-                .filter(DBListing.id.in_(ids))
-                .filter(DBListing.listing_type == "rent")
-                .all()
-            )
-        finally:
-            session.close()
-
-        by_id = {r.id: r for r in rows}
-        hydrated = []
-        for comp_id in ids:
-            row = by_id.get(comp_id)
-            if row:
-                hydrated.append(self._db_to_canonical(row))
-
-        if len(hydrated) < self.config.min_rent_comps:
-            raise ValueError("insufficient_hydrated_rent_comps")
-
-        return hydrated, similarity_by_id
     
     # =========================================================================
     # MAIN ENTRY POINT
@@ -429,8 +396,8 @@ class ValuationService:
             # STAGE 1.5: RENT ESTIMATION & YIELD
             # =====================================================================
 
-            rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(
-                listing, region_id, valuation_date, tracer
+            rent_est, rent_uncertainty, rent_comps = self.rent_service.estimate_robust(
+                listing, valuation_date, tracer
             )
             if fair_value <= 0:
                 raise ValueError("invalid_fair_value")
@@ -1060,35 +1027,6 @@ class ValuationService:
             return listing.location.city.lower()
         return "unknown"
 
-    def _get_market_index_value(self, region_id: str, month_key: str, column: str) -> float:
-        allowed = {"price_index_sqm", "rent_index_sqm"}
-        if column not in allowed:
-            raise ValueError("unsupported_market_index_column")
-
-        query = text(
-            f"""
-            SELECT {column}
-            FROM market_indices
-            WHERE region_id = :region_id AND month_date LIKE :month_key
-            ORDER BY month_date DESC
-            LIMIT 1
-            """
-        )
-
-        with self.storage.engine.connect() as conn:
-            row = conn.execute(
-                query,
-                {"region_id": region_id, "month_key": f"{month_key}%"}
-            ).fetchone()
-
-        if not row or row[0] is None:
-            raise ValueError("missing_market_index")
-
-        value = float(row[0])
-        if value <= 0:
-            raise ValueError("invalid_market_index")
-
-        return value
 
     def _get_index_yoy(
         self,
@@ -1171,8 +1109,8 @@ class ValuationService:
 
     def _get_market_yield(self, region_id: str, valuation_date: datetime) -> float:
         month_key = valuation_date.strftime("%Y-%m")
-        price_index = self._get_market_index_value(region_id, month_key, "price_index_sqm")
-        rent_index = self._get_market_index_value(region_id, month_key, "rent_index_sqm")
+        price_index = self.market.get_market_index_value(region_id, month_key, "price_index_sqm")
+        rent_index = self.market.get_market_index_value(region_id, month_key, "rent_index_sqm")
         return (rent_index * 12 / price_index) * 100
 
     def _get_market_signals(
@@ -1185,7 +1123,7 @@ class ValuationService:
         if not listing.location or not listing.location.city:
             raise ValueError("missing_location")
 
-        profile = self.analytics.analyze_listing(listing)
+        profile = self.market.analyze_listing(listing)
         if not profile:
             raise ValueError("missing_market_profile")
         if getattr(profile, "zone_id", None) == "unknown":
@@ -1200,27 +1138,6 @@ class ValuationService:
             "market_yield": market_yield,
         }
 
-    def _adjust_rent_price(
-        self,
-        raw_price: float,
-        region_id: str,
-        comp_timestamp: datetime,
-        target_timestamp: datetime,
-    ) -> Tuple[float, float]:
-        comp_month = comp_timestamp.strftime("%Y-%m")
-        target_month = target_timestamp.strftime("%Y-%m")
-
-        comp_index = self._get_market_index_value(region_id, comp_month, "rent_index_sqm")
-        target_index = self._get_market_index_value(region_id, target_month, "rent_index_sqm")
-
-        factor = target_index / comp_index
-        if factor <= 0:
-            raise ValueError("invalid_rent_adjustment_factor")
-        if factor < 0.5 or factor > 2.0:
-            raise ValueError("rent_adjustment_out_of_bounds")
-
-        return raw_price * factor, factor
-    
     def _generate_thesis(
         self,
         listing: CanonicalListing,
@@ -1269,88 +1186,3 @@ class ValuationService:
 
         return thesis
 
-    def _compute_rental_value(
-        self,
-        listing: CanonicalListing,
-        region_id: str,
-        valuation_date: datetime,
-        tracer: Any = None
-    ) -> Tuple[float, float, List[CanonicalListing]]:
-        """
-        Estimate rent using robust comparable rental listings.
-
-        Returns:
-            (estimated_monthly_rent, uncertainty_pct, rental_comps_used)
-        """
-        if not listing.surface_area_sqm or listing.surface_area_sqm <= 0:
-            raise ValueError("missing_surface_area_for_rent")
-
-        rental_comps, similarity_by_id = self._retrieve_rent_comps(listing, as_of_date=valuation_date)
-
-        adjusted_rents = []
-        adjusted_weights = []
-        comps_used = []
-
-        for comp in rental_comps:
-            if not comp.surface_area_sqm or comp.surface_area_sqm <= 0:
-                continue
-            comp_timestamp = comp.listed_at or comp.updated_at
-            if not comp_timestamp:
-                continue
-
-            adj_price, adj_factor = self._adjust_rent_price(
-                raw_price=comp.price,
-                region_id=region_id,
-                comp_timestamp=comp_timestamp,
-                target_timestamp=valuation_date,
-            )
-            rent_sqm = adj_price / comp.surface_area_sqm
-            weight = similarity_by_id.get(comp.id, 0.0)
-            if weight <= 0:
-                continue
-
-            adjusted_rents.append(rent_sqm)
-            adjusted_weights.append(weight)
-            comps_used.append(comp)
-
-        if len(adjusted_rents) < self.config.min_rent_comps:
-            raise ValueError("insufficient_adjusted_rent_comps")
-
-        values = np.array(adjusted_rents, dtype=float)
-        weights = np.array(adjusted_weights, dtype=float)
-        weight_sum = float(weights.sum())
-        if weight_sum <= 0:
-            raise ValueError("invalid_rent_comp_weights")
-
-        median = float(np.median(values))
-        mad = float(np.median(np.abs(values - median)))
-        if mad <= 0:
-            mad = max(median * 0.05, 0.1)
-
-        mask = np.abs(values - median) <= (3.0 * mad)
-        values = values[mask]
-        weights = weights[mask]
-        comps_used = [c for c, keep in zip(comps_used, mask) if keep]
-
-        if len(values) < self.config.min_rent_comps:
-            raise ValueError("rent_comp_filter_excessive")
-
-        weights = weights / weights.sum()
-        est_rent_sqm = float(np.sum(weights * values))
-        variance = float(np.sum(weights * (values - est_rent_sqm) ** 2))
-        std_rent_sqm = float(np.sqrt(variance))
-
-        if est_rent_sqm <= 0:
-            raise ValueError("invalid_rent_estimate")
-
-        est_rent = est_rent_sqm * listing.surface_area_sqm
-        uncertainty = std_rent_sqm / est_rent_sqm
-
-        if tracer:
-            tracer.log("rental_valuation", {
-                "est_rent": est_rent,
-                "comps_count": len(comps_used),
-                "avg_sqm": est_rent_sqm
-            })
-
-        return est_rent, uncertainty, comps_used
