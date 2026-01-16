@@ -67,12 +67,14 @@ def _format_ts(value):
     dt = pd.to_datetime(value, errors="coerce")
     if pd.isna(dt):
         return "unknown"
-    if getattr(dt, "tzinfo", None):
-        try:
-            dt = dt.tz_convert(None)
-        except Exception:
-            dt = dt.tz_localize(None)
-    delta = pd.Timestamp.utcnow().to_pydatetime() - dt.to_pydatetime()
+    # Ensure input is timezone-aware UTC
+    if getattr(dt, "tzinfo", None) is None:
+        dt = dt.tz_localize("UTC")
+    else:
+        dt = dt.tz_convert("UTC")
+
+    now = pd.Timestamp.utcnow()
+    delta = now - dt
     days = max(delta.days, 0)
     label = dt.strftime("%Y-%m-%d")
     if days <= 0:

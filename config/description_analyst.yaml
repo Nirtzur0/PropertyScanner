@@ -1,0 +1,7 @@
+# description_analyst.yaml
+
+description_analyst:
+  model_name: "llama3:latest"
+  base_url: "http://localhost:11434"
+  timeout_seconds: 60
+  min_description_length: 50

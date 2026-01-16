@@ -35,8 +35,12 @@ def main(argv: List[str] = None) -> int:
     passthrough("schedule", "Run scheduled preflight refreshes (wraps src.workflows.scheduler)")
     passthrough("transactions", "Ingest sold/transaction data (wraps src.workflows.transactions)")
 
-    args = parser.parse_args(argv)
-    cmd_args = getattr(args, "args", []) or []
+    args, remaining = parser.parse_known_args(argv)
+    cmd_args = getattr(args, "args", None)
+    if cmd_args is None:
+        cmd_args = remaining
+    if not cmd_args:
+        cmd_args = []
 
     module_map = {
         "harvest": "src.workflows.harvest",

@@ -14,6 +14,16 @@ from src.services.snapshot_storage import SnapshotService
 
 logger = structlog.get_logger(__name__)
 
+try:
+    from playwright.sync_api import sync_playwright
+except Exception:  # pragma: no cover - optional dependency
+    sync_playwright = None
+
+try:
+    from playwright_stealth import Stealth
+except Exception:  # pragma: no cover - optional dependency
+    Stealth = None
+
 class ImmobiliareCrawlerAgent(BaseAgent):
     """
     Crawls Immobiliare.it (Italy) using curl_cffi to bypass protection.
@@ -27,10 +37,36 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 3))
         self.session = requests.Session()
 
-    def _fetch_url(self, url: str) -> Optional[str]:
+    def _fetch_with_playwright(self, url: str) -> Optional[str]:
+        if not sync_playwright:
+            return None
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context()
+                page = context.new_page()
+                if Stealth:
+                    try:
+                        Stealth().apply_stealth_sync(page)
+                    except Exception:
+                        pass
+                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                html = page.content()
+                browser.close()
+                return html
+        except Exception as e:
+            logger.warning("immobiliare_playwright_failed", url=url, error=str(e))
+            return None
+
+    def _fetch_url(self, url: str, *, use_playwright: bool = False) -> Optional[str]:
         if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
             # Pass compliance errors if strict
             pass
+
+        if use_playwright:
+            html = self._fetch_with_playwright(url)
+            if html:
+                return html
 
         try:
             resp = self.session.get(
@@ -77,13 +113,17 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             else:
                 normalized_targets.append(urljoin(self.base_url, str(url)))
         target_urls = normalized_targets
+
+        prefer_playwright = self.config.get("use_playwright")
+        if prefer_playwright is None:
+            prefer_playwright = bool(sync_playwright and listing_url)
         
         listing_urls = []
         if target_urls:
             listing_urls = target_urls
         else:
             # Search Page
-            html = self._fetch_url(start_url)
+            html = self._fetch_url(start_url, use_playwright=False)
             if html:
                 soup = BeautifulSoup(html, "html.parser")
                 # Immobiliare uses various selectors
@@ -101,7 +141,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         for url in listing_urls:
              # Check limits
              full_url = url if url.startswith("http") else urljoin(self.base_url, url)
-             html = self._fetch_url(full_url)
+             html = self._fetch_url(full_url, use_playwright=bool(prefer_playwright))
              if not html:
                  continue
              

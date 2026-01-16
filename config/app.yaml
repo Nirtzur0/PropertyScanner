@@ -1,0 +1,15 @@
+# app.yaml
+# Hydra composition for the Property Scanner config.
+
+defaults:
+  - sources
+  - agents
+  - scoring
+  - valuation
+  - pipeline
+  - quality_gate
+  - description_analyst
+  - vlm
+  - image_selector
+  - tft
+  - _self_

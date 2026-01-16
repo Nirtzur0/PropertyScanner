@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from src.core.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 from src.core.domain.models import DBListing
 from src.core.domain.schema import CanonicalListing, DealAnalysis
+from src.core.settings import PipelineConfig
 from src.repositories.base import resolve_db_url
 from src.services.listing_adapter import db_listing_to_canonical
 from src.services.retrieval import CompRetriever
@@ -19,16 +18,6 @@ from src.workflows.harvest import Harvester, DEFAULT_TARGET_COUNT
 from src.workflows.indexing import build_vector_index as build_vector_index_workflow
 from src.workflows.market_data import build_market_data as build_market_data_workflow
 from src.workflows.preflight import run_preflight as run_preflight_workflow
-
-
-@dataclass(frozen=True)
-class PipelineConfig:
-    """Configuration for the public pipeline API."""
-
-    db_path: str = str(DEFAULT_DB_PATH)
-    db_url: Optional[str] = None
-    index_path: str = str(VECTOR_INDEX_PATH)
-    metadata_path: str = str(VECTOR_METADATA_PATH)
 
 
 class PipelineAPI:

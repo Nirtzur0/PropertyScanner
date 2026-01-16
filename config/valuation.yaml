@@ -1,0 +1,35 @@
+# valuation.yaml
+# Config for the valuation pipeline (paths are inherited from core defaults).
+
+valuation:
+  K_candidates: 100
+  K_model: 10
+  max_distance_km: 10.0
+  max_age_months: 24
+  min_comps_for_fusion: 5
+  min_comps_for_baseline: 5
+  min_rent_comps: 5
+  rent_radius_km: 2.0
+  retriever_model_name: "all-MiniLM-L6-v2"
+  retriever_vlm_policy: "gated"
+
+  eri_lag_days: 45
+  eri_disagreement_threshold: 0.08
+  eri_uncertainty_multiplier: 1.25
+
+  horizons_months: [12, 36, 60]
+
+  forecast_mode: "analytic"
+  forecast_index_source: "market"
+
+  conformal_alpha: 0.1
+  conformal_window: 50
+
+  income_value_weight_max: 0.35
+  income_value_weight_min: 0.0
+  income_value_max_adjustment_pct: 0.35
+  area_sentiment_weight: 0.06
+  area_development_weight: 0.04
+  area_adjustment_cap: 0.08
+  rent_fallback_uncertainty: 0.35
+  fallback_yield_pct: 4.0

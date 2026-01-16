@@ -4,12 +4,15 @@ VLM Service for image description.
 import io
 import os
 import re
-import structlog
 from typing import Dict, List, Optional
+
+import structlog
 
 from PIL import Image
 
+from src.core.settings import ImageSelectorConfig, VLMConfig
 from src.services.image_selection import ImageSelector
+from src.utils.config import load_app_config
 
 logger = structlog.get_logger()
 
@@ -18,10 +21,28 @@ class VLMImageDescriber:
     Uses Ollama's vision model to extract structured descriptions from property images.
     Descriptions are cached in the database to avoid re-processing.
     """
-    def __init__(self, model: str = "llava"):
-        self.model = model
+    def __init__(
+        self,
+        config: Optional[VLMConfig] = None,
+        model: Optional[str] = None,
+        image_selector: Optional[ImageSelector] = None,
+        image_selector_config: Optional[ImageSelectorConfig] = None,
+    ):
+        if config is None:
+            try:
+                config = load_app_config().vlm
+            except Exception:
+                config = VLMConfig()
+
+        self.config = config
+        self.model = model or config.model
         self._available = None
-        self.selector = ImageSelector()
+        if image_selector is None:
+            image_selector = ImageSelector(config=image_selector_config)
+        self.selector = image_selector
+        self.max_images = config.max_images
+        self.debug_max_images = config.debug_max_images
+        self.timeout_seconds = config.timeout_seconds
 
     def _check_availability(self) -> bool:
         """Check if Ollama and a vision model are available."""
@@ -57,7 +78,7 @@ class VLMImageDescriber:
 
         return self._available
 
-    def describe_images(self, image_urls: List[str], max_images: int = 2) -> str:
+    def describe_images(self, image_urls: List[str], max_images: Optional[int] = None) -> str:
         """
         Generate text descriptions from property images.
 
@@ -75,7 +96,8 @@ class VLMImageDescriber:
             return ""
 
         try:
-            selection = self.selector.select(image_urls, max_images=max_images)
+            limit = self.max_images if max_images is None else max_images
+            selection = self.selector.select(image_urls, max_images=limit)
             if not selection.selected:
                 return ""
 
@@ -89,7 +111,7 @@ class VLMImageDescriber:
     def describe_images_with_debug(
         self,
         image_urls: List[str],
-        max_images: int = 4,
+        max_images: Optional[int] = None,
         output_dir: Optional[str] = None,
         listing_id: Optional[str] = None,
         run_vlm: bool = True,
@@ -97,9 +119,10 @@ class VLMImageDescriber:
         """
         Generate description + selection debug metadata and optionally save tiles.
         """
+        limit = self.debug_max_images if max_images is None else max_images
         return self._describe_images_internal(
             image_urls=image_urls,
-            max_images=max_images,
+            max_images=limit,
             output_dir=output_dir,
             listing_id=listing_id,
             run_vlm=run_vlm,
@@ -189,16 +212,28 @@ class VLMImageDescriber:
 
         prompt = (
             "This image is a composite grid of property photos. Analyze the grid as a whole. "
-            "Provide a strict JSON summary of the visible features. Do not use markdown. Format: "
+            "Only report what is visible. If unsure, omit optional lists and choose conservative grades. "
+            "Return strict JSON only, no markdown. "
+            "Definitions: "
+            "condition=renovated (fresh, like-new), good (clean, updated), fair (dated but serviceable), "
+            "needs_work (visible damage, unfinished, heavy wear). "
+            "quality=luxury (premium materials/fixtures, designer finishes), standard (typical mid-market), "
+            "basic (low-end finishes). "
+            "Classify luxury_vs_fixer: luxury only if quality=luxury and condition in {renovated,good}; "
+            "fixer_upper if condition=needs_work or major defects; otherwise standard. "
+            "If rooms are mixed, choose the lower condition/quality. "
+            "Format: "
             "{"
             "\"condition\": \"renovated/good/fair/needs_work\", "
             "\"quality\": \"luxury/standard/basic\", "
+            "\"luxury_vs_fixer\": \"luxury/standard/fixer_upper\", "
             "\"visual_sentiment\": 0.0, "
-            "\"rooms\": [\"kitchen\", \"bedroom\", \"bathroom\", \"balcony\"], "
+            "\"rooms\": [\"kitchen\", \"bedroom\", \"bathroom\", \"living_room\", \"balcony\"], "
             "\"features\": [\"hardwood_floors\", \"modern_kitchen\", \"large_windows\", \"view\", \"pool\", \"terrace\"], "
+            "\"negative_cues\": [\"peeling_paint\", \"water_damage\", \"mold\", \"broken_fixtures\", \"exposed_wiring\"], "
             "\"summary\": \"Concise 10-word description of value drivers.\""
-            "}"
-            " visual_sentiment must be a float in [-1.0, 1.0]: "
+            "} "
+            "visual_sentiment must be a float in [-1.0, 1.0]: "
             "-1.0 = severe negatives (dilapidated, unsafe), "
             "0.0 = neutral/standard condition, "
             "+1.0 = exceptional quality/renovation."
@@ -212,7 +247,7 @@ class VLMImageDescriber:
                     prompt=prompt,
                     images=[standardized_b64],
                     format="json",
-                    options={"timeout": 60},
+                    options={"timeout": self.timeout_seconds},
                 )
                 return response.get("response", "")
             except Exception as exc:

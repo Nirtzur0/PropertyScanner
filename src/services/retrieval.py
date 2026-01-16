@@ -24,18 +24,18 @@ class IndexedListing:
     """Cached listing data for fast retrieval."""
     id: str
     int_id: int
-    external_id: Optional[str]
-    source_id: Optional[str]
-    url: Optional[str]
     title: str
     price: float
     listing_type: str # "sale" or "rent"
-    property_type: Optional[str]
-    surface_area_sqm: Optional[float]
-    bedrooms: Optional[int]
-    lat: Optional[float]
-    lon: Optional[float]
     snapshot_id: str
+    external_id: Optional[str] = None
+    source_id: Optional[str] = None
+    url: Optional[str] = None
+    property_type: Optional[str] = None
+    surface_area_sqm: Optional[float] = None
+    bedrooms: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
     listed_at: Optional[str] = None
     updated_at: Optional[str] = None
     status: Optional[str] = None
@@ -58,7 +58,7 @@ class CompRetriever:
         index_path: str = str(VECTOR_INDEX_PATH),
         metadata_path: str = str(VECTOR_METADATA_PATH),
         model_name: str = 'all-MiniLM-L6-v2',
-        strict_model_match: bool = True,
+        strict_model_match: bool = False,
         vlm_policy: str = "gated"
     ):
         self.index_path = index_path
@@ -353,7 +353,11 @@ class CompRetriever:
         Returns:
             List of CompListing objects sorted by similarity
         """
-        if self.index.ntotal == 0:
+        try:
+            index_total = int(getattr(self.index, "ntotal", 0) or 0)
+        except (TypeError, ValueError):
+            index_total = 0
+        if index_total <= 0:
             return []
 
         if max_radius_km > 0:
@@ -380,8 +384,21 @@ class CompRetriever:
         
         # Search for MANY more candidates to allow for heavy filtering
         # We need a large pool because structural mismatch is common
-        search_k = min(max(k * 20, 100), self.index.ntotal)
-        distances, indices = self.index.search(query_vec, search_k)
+        search_k = min(max(k * 20, 100), index_total)
+        search_output = self.index.search(query_vec, search_k)
+        if not isinstance(search_output, (list, tuple)) or len(search_output) != 2:
+            logger.warning("retriever_search_invalid", output_type=str(type(search_output)))
+            return []
+        distances, indices = search_output
+        if distances is None or indices is None:
+            logger.warning("retriever_search_empty")
+            return []
+        try:
+            if len(distances) == 0 or len(indices) == 0:
+                return []
+        except TypeError:
+            logger.warning("retriever_search_uniterable")
+            return []
         
         candidates = []
         target_lat = target.location.lat if target.location else None
@@ -468,6 +485,54 @@ class CompRetriever:
 
             if len(results) >= k:
                 break
+
+        if strict_filters and len(results) < k:
+            relaxed_ids = {c.id for c in results}
+            for il, dist in candidates:
+                if il.id in relaxed_ids:
+                    continue
+                if listing_type and il.listing_type != listing_type:
+                    continue
+                if exclude_duplicate_external and target_external_id and il.external_id == target_external_id:
+                    continue
+                if target_url and il.url and il.url == target_url:
+                    continue
+
+                if max_listed_at:
+                    comp_dt = self._parse_dt(il.listed_at) or self._parse_dt(il.updated_at)
+                    if comp_dt is None:
+                        continue
+                    as_of = max_listed_at
+                    if comp_dt.tzinfo is not None:
+                        comp_dt = comp_dt.replace(tzinfo=None)
+                    if as_of.tzinfo is not None:
+                        as_of = as_of.replace(tzinfo=None)
+                    if comp_dt > as_of:
+                        continue
+
+                if max_radius_km > 0:
+                    if il.lat is None or il.lon is None:
+                        continue
+                    geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
+                    if geo_dist > max_radius_km:
+                        continue
+
+                similarity = 1.0 / (1.0 + dist)
+                results.append(CompListing(
+                    id=il.id,
+                    price=il.price,
+                    features={
+                        "sqm": il.surface_area_sqm or 0,
+                        "bedrooms": il.bedrooms or 0,
+                        "lat": il.lat or 0,
+                        "lon": il.lon or 0
+                    },
+                    similarity_score=similarity,
+                    snapshot_id=il.snapshot_id
+                ))
+
+                if len(results) >= k:
+                    break
 
         return results[:k]
 

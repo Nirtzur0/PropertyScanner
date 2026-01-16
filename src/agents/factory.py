@@ -48,8 +48,17 @@ class AgentFactory:
         # let's check code or standardize.
         # IdealistaCrawler: (config, compliance)
         # PisosCrawler: (compliance) -> I should update PisosCrawler to accept config to be uniform.
-        
-        return crawler_cls(config, compliance_manager)
+        config_payload = config or {}
+        if hasattr(config_payload, "model_dump"):
+            config_payload = config_payload.model_dump()
+        elif isinstance(config_payload, dict):
+            config_payload = dict(config_payload)
+
+        rate_limit = config_payload.get("rate_limit")
+        if isinstance(rate_limit, dict) and "period_seconds" not in config_payload:
+            config_payload["period_seconds"] = rate_limit.get("period_seconds")
+
+        return crawler_cls(config_payload, compliance_manager)
 
     @classmethod
     def create_normalizer(cls, source_id: str) -> BaseAgent:

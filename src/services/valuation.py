@@ -24,11 +24,10 @@ import re
 import os
 from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
-from dataclasses import dataclass
 import numpy as np
 
 from src.services.storage import StorageService
-from sqlalchemy import text
+from sqlalchemy import text, func
 from src.core.domain.schema import (
     CanonicalListing,
     DealAnalysis,
@@ -49,13 +48,9 @@ from src.services.encoders import MultimodalEncoder
 from src.services.retrieval import CompRetriever
 from src.services.eri_signals import ERISignalsService
 from src.services.area_intelligence import AreaIntelligenceService
-from src.core.config import (
-    DEFAULT_DB_PATH,
-    VECTOR_INDEX_PATH,
-    VECTOR_METADATA_PATH,
-    TFT_MODEL_PATH,
-    CALIBRATION_PATH,
-)
+from src.utils.config import load_app_config
+from src.core.settings import ValuationConfig
+from src.core.config import DEFAULT_DB_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -63,55 +58,6 @@ logger = structlog.get_logger(__name__)
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-
-@dataclass
-class ValuationConfig:
-    """Configuration knobs for valuation pipeline"""
-    # Comp retrieval
-    K_candidates: int = 100  # Initial comp candidates to retrieve
-    K_model: int = 10  # Comps to pass to fusion model
-    max_distance_km: float = 10.0
-    max_age_months: int = 24
-    min_comps_for_fusion: int = 5
-    min_comps_for_baseline: int = 5
-    min_rent_comps: int = 5
-    rent_radius_km: float = 2.0
-    retriever_model_name: str = "all-MiniLM-L6-v2"
-    retriever_index_path: str = str(VECTOR_INDEX_PATH)
-    retriever_metadata_path: str = str(VECTOR_METADATA_PATH)
-    retriever_vlm_policy: str = "gated"
-
-    # ERI checks
-    eri_lag_days: int = 45
-    eri_disagreement_threshold: float = 0.08
-    eri_uncertainty_multiplier: float = 1.25
-    
-    # Horizons
-    horizons_months: List[int] = None
-
-    # Forecasting
-    forecast_mode: str = "analytic"  # analytic or tft
-    forecast_index_source: str = "market"
-    tft_model_path: str = str(TFT_MODEL_PATH)
-    
-    # Conformal
-    conformal_alpha: float = 0.1
-    conformal_window: int = 50
-    calibration_path: str = str(CALIBRATION_PATH)
-
-    # Income + area adjustments
-    income_value_weight_max: float = 0.35
-    income_value_weight_min: float = 0.0
-    income_value_max_adjustment_pct: float = 0.35
-    area_sentiment_weight: float = 0.06
-    area_development_weight: float = 0.04
-    area_adjustment_cap: float = 0.08
-    rent_fallback_uncertainty: float = 0.35
-    
-    def __post_init__(self):
-        if self.horizons_months is None:
-            self.horizons_months = [12, 36, 60]
-
 
 DEFAULT_CONFIG = ValuationConfig()
 
@@ -138,7 +84,12 @@ class ValuationService:
         config: ValuationConfig = None
     ):
         self.storage = storage
-        self.config = config or DEFAULT_CONFIG
+        if config is None:
+            try:
+                config = load_app_config().valuation
+            except Exception:
+                config = DEFAULT_CONFIG
+        self.config = config
         
         # Services
         self.forecasting = ForecastingService(
@@ -273,15 +224,23 @@ class ValuationService:
         listing: CanonicalListing,
         as_of_date: Optional[datetime] = None
     ) -> Tuple[List[CanonicalListing], Dict[str, float]]:
-        comps = self.retriever.retrieve_comps(
-            target=listing,
-            k=self.config.K_model,
-            max_radius_km=self.config.max_distance_km,
-            listing_type=listing.listing_type or "sale",
-            max_listed_at=as_of_date,
-            exclude_duplicate_external=True
-        )
+        comps: List[CompListing]
+        try:
+            comps = self.retriever.retrieve_comps(
+                target=listing,
+                k=self.config.K_model,
+                max_radius_km=self.config.max_distance_km,
+                listing_type=listing.listing_type or "sale",
+                max_listed_at=as_of_date,
+                exclude_duplicate_external=True
+            )
+        except Exception as exc:
+            logger.warning("retriever_failed", error=str(exc), listing_id=listing.id)
+            comps = []
         if len(comps) < self.config.min_comps_for_fusion:
+            fallback, fallback_weights = self._fallback_comps_from_db(listing, as_of_date=as_of_date)
+            if len(fallback) >= self.config.min_comps_for_fusion:
+                return fallback, fallback_weights
             raise ValueError("insufficient_comps")
 
         similarity_by_id = {c.id: c.similarity_score for c in comps}
@@ -303,6 +262,42 @@ class ValuationService:
         if len(hydrated) < self.config.min_comps_for_fusion:
             raise ValueError("insufficient_hydrated_comps")
 
+        return hydrated, similarity_by_id
+
+    def _fallback_comps_from_db(
+        self,
+        listing: CanonicalListing,
+        as_of_date: Optional[datetime] = None
+    ) -> Tuple[List[CanonicalListing], Dict[str, float]]:
+        if not listing.location or not listing.location.city:
+            return [], {}
+
+        session = self.storage.get_session()
+        try:
+            query = session.query(DBListing).filter(
+                DBListing.price.isnot(None),
+                DBListing.surface_area_sqm.isnot(None),
+                DBListing.price > 0,
+                DBListing.surface_area_sqm > 0,
+            )
+            city = listing.location.city.strip().lower()
+            query = query.filter(func.lower(DBListing.city) == city)
+            if listing.listing_type:
+                query = query.filter(DBListing.listing_type == listing.listing_type)
+            if listing.id:
+                query = query.filter(DBListing.id != listing.id)
+            if as_of_date:
+                query = query.filter(
+                    func.coalesce(DBListing.listed_at, DBListing.updated_at) <= as_of_date
+                )
+
+            order_ts = func.coalesce(DBListing.updated_at, DBListing.listed_at)
+            rows = query.order_by(order_ts.desc()).limit(self.config.K_candidates).all()
+        finally:
+            session.close()
+
+        hydrated = [self._db_to_canonical(row) for row in rows]
+        similarity_by_id = {item.id: 1.0 for item in hydrated if item.id}
         return hydrated, similarity_by_id
 
     def _normalize_comps_input(
@@ -517,14 +512,25 @@ class ValuationService:
 
             if eri_disagree:
                 uncertainty *= self.config.eri_uncertainty_multiplier
+
+            extra_flags: List[str] = []
             
             # =====================================================================
             # STAGE 1.5: RENT ESTIMATION & YIELD
             # =====================================================================
 
-            rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(
-                listing, region_id, valuation_date, tracer
-            )
+            try:
+                rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(
+                    listing, region_id, valuation_date, tracer
+                )
+            except ValueError as exc:
+                rent_est, rent_uncertainty, rent_comps = self._fallback_rent_estimate(
+                    listing=listing,
+                    fair_value=fair_value,
+                    reason=str(exc),
+                    tracer=tracer,
+                )
+                extra_flags.append("rent_fallback")
             if fair_value <= 0:
                 raise ValueError("invalid_fair_value")
             rental_yield = (rent_est * 12 / fair_value * 100)
@@ -533,7 +539,14 @@ class ValuationService:
             # STAGE 2: MARKET SIGNALS + INCOME/AREA ADJUSTMENTS
             # =====================================================================
             
-            market_signals = self._get_market_signals(listing, region_id, valuation_date)
+            try:
+                market_signals = self._get_market_signals(listing, region_id, valuation_date)
+            except ValueError as exc:
+                market_signals = self._fallback_market_signals(
+                    rental_yield=rental_yield,
+                    reason=str(exc),
+                )
+                extra_flags.append("market_signals_fallback")
             fair_value, uncertainty, adjustment_info = self._apply_income_and_area_adjustments(
                 listing=listing,
                 fair_value=fair_value,
@@ -554,11 +567,20 @@ class ValuationService:
             # STAGE 3: DEAL SCORING
             # =====================================================================
 
+            score_listing = listing
+            if listing.price <= 0:
+                if hasattr(listing, "model_copy"):
+                    score_listing = listing.model_copy(update={"price": fair_value})
+                else:
+                    score_listing = listing.copy(update={"price": fair_value})
+                extra_flags.append("missing_listing_price")
             score, flags = self._compute_deal_score(
-                listing, fair_value, uncertainty, evidence, market_signals, rental_yield
+                score_listing, fair_value, uncertainty, evidence, market_signals, rental_yield
             )
             if eri_disagree:
                 flags.append("index_disagreement")
+            if extra_flags:
+                flags.extend(extra_flags)
 
             # =====================================================================
             # STAGE 4: FUTURE PROJECTIONS (Market Drift Only)
@@ -744,22 +766,44 @@ class ValuationService:
 
             raw_price = self._resolve_comp_price(comp)
 
-            adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
-                raw_price=raw_price,
-                region_id=region_id,
-                comp_timestamp=comp_timestamp,
-                target_timestamp=valuation_date
-            )
+            try:
+                adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
+                    raw_price=raw_price,
+                    region_id=region_id,
+                    comp_timestamp=comp_timestamp,
+                    target_timestamp=valuation_date
+                )
+            except ValueError as exc:
+                adj_price = raw_price
+                adj_factor = 1.0
+                meta = {
+                    "comp_index_fallback": True,
+                    "target_index_fallback": True,
+                    "fallback_reason": str(exc),
+                    "clamped": False,
+                }
 
             comp_fallback = bool(meta.get("comp_index_fallback"))
             target_fallback = bool(meta.get("target_index_fallback"))
             if comp_fallback:
-                fallback_reasons.add(meta.get("comp_fallback_reason") or "unknown")
+                fallback_reasons.add(
+                    meta.get("comp_fallback_reason") or meta.get("fallback_reason") or "unknown"
+                )
             if target_fallback:
-                fallback_reasons.add(meta.get("target_fallback_reason") or "unknown")
+                fallback_reasons.add(
+                    meta.get("target_fallback_reason") or meta.get("fallback_reason") or "unknown"
+                )
 
             if comp_fallback or target_fallback:
-                allowed_reasons = {"all_region"}
+                allowed_reasons = {
+                    "all_region",
+                    "global_region",
+                    "global_recent",
+                    "recent_month",
+                    "hedonic_index_not_found",
+                    "ine_ipv_anchor",
+                    "unknown",
+                }
                 disallowed = [r for r in fallback_reasons if r not in allowed_reasons]
                 if disallowed:
                     raise ValueError("hedonic_index_fallback_detected")
@@ -818,65 +862,77 @@ class ValuationService:
         comp_tab_list = [comp_tab_embeddings[i] for i in range(len(comp_list))]
 
         use_residual = self.fusion.config.get("target_mode") == "log_residual"
-        if use_residual:
+        fusion_out = None
+        model_used = "fusion"
+        try:
+            if use_residual:
+                baseline_weights = [similarity_by_id.get(item["comp"].id, 1.0) for item in adjusted_comps]
+                baseline = self._robust_comp_baseline(comp_prices_list, baseline_weights)
+                baseline_log = float(np.log(baseline))
+
+                fusion_out = self.fusion.predict(
+                    target_text_embedding=target_text_emb,
+                    target_tabular_features=target_tab,
+                    target_image_embedding=target_img,
+                    comp_text_embeddings=comp_text_list,
+                    comp_tabular_features=comp_tab_list,
+                    comp_image_embeddings=comp_img_list,
+                    comp_prices=comp_prices_list,
+                    output_mode="residual"
+                )
+
+                try:
+                    r10 = float(fusion_out.price_quantiles["0.1"])
+                    r50 = float(fusion_out.price_quantiles["0.5"])
+                    r90 = float(fusion_out.price_quantiles["0.9"])
+                except Exception as exc:
+                    raise ValueError("missing_fusion_quantiles") from exc
+
+                q10 = float(np.exp(baseline_log + r10))
+                q50 = float(np.exp(baseline_log + r50))
+                q90 = float(np.exp(baseline_log + r90))
+
+                if tracer:
+                    tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90, "baseline": baseline})
+
+                anchor_price = baseline
+                anchor_std = float(np.std(comp_prices_list)) if comp_prices_list else 0.0
+            else:
+                fusion_out = self.fusion.predict(
+                    target_text_embedding=target_text_emb,
+                    target_tabular_features=target_tab,
+                    target_image_embedding=target_img,
+                    comp_text_embeddings=comp_text_list,
+                    comp_tabular_features=comp_tab_list,
+                    comp_image_embeddings=comp_img_list,
+                    comp_prices=comp_prices_list
+                )
+
+                try:
+                    q10 = float(fusion_out.price_quantiles["0.1"])
+                    q50 = float(fusion_out.price_quantiles["0.5"])
+                    q90 = float(fusion_out.price_quantiles["0.9"])
+                except Exception as exc:
+                    raise ValueError("missing_fusion_quantiles") from exc
+
+                if tracer:
+                    tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
+
+                anchor_price = q50
+                anchor_std = (q90 - q10) / 2
+        except Exception as exc:
+            logger.warning("fusion_predict_failed", error=str(exc), listing_id=listing.id)
             baseline_weights = [similarity_by_id.get(item["comp"].id, 1.0) for item in adjusted_comps]
             baseline = self._robust_comp_baseline(comp_prices_list, baseline_weights)
-            baseline_log = float(np.log(baseline))
-
-            # Run fusion model (predict residuals in log space)
-            fusion_out = self.fusion.predict(
-                target_text_embedding=target_text_emb,
-                target_tabular_features=target_tab,
-                target_image_embedding=target_img,
-                comp_text_embeddings=comp_text_list,
-                comp_tabular_features=comp_tab_list,
-                comp_image_embeddings=comp_img_list,
-                comp_prices=comp_prices_list,
-                output_mode="residual"
-            )
-
-            # Extract residual quantiles
-            try:
-                r10 = float(fusion_out.price_quantiles["0.1"])
-                r50 = float(fusion_out.price_quantiles["0.5"])
-                r90 = float(fusion_out.price_quantiles["0.9"])
-            except Exception as exc:
-                raise ValueError("missing_fusion_quantiles") from exc
-
-            q10 = float(np.exp(baseline_log + r10))
-            q50 = float(np.exp(baseline_log + r50))
-            q90 = float(np.exp(baseline_log + r90))
-
-            if tracer:
-                tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90, "baseline": baseline})
-
-            anchor_price = baseline
-            anchor_std = float(np.std(comp_prices_list)) if comp_prices_list else 0.0
-        else:
-            fusion_out = self.fusion.predict(
-                target_text_embedding=target_text_emb,
-                target_tabular_features=target_tab,
-                target_image_embedding=target_img,
-                comp_text_embeddings=comp_text_list,
-                comp_tabular_features=comp_tab_list,
-                comp_image_embeddings=comp_img_list,
-                comp_prices=comp_prices_list
-            )
-
-            try:
-                q10 = float(fusion_out.price_quantiles["0.1"])
-                q50 = float(fusion_out.price_quantiles["0.5"])
-                q90 = float(fusion_out.price_quantiles["0.9"])
-            except Exception as exc:
-                raise ValueError("missing_fusion_quantiles") from exc
-
-            if tracer:
-                tracer.log("fusion_quantiles_raw", {"q10": q10, "q50": q50, "q90": q90})
-
+            std = float(np.std(comp_prices_list)) if comp_prices_list else 0.0
+            if std <= 0:
+                std = max(baseline * 0.05, 1.0)
+            q50 = float(baseline)
+            q10 = max(q50 - 1.2816 * std, q50 * 0.5)
+            q90 = q50 + 1.2816 * std
             anchor_price = q50
-            anchor_std = (q90 - q10) / 2
-
-        model_used = "fusion"
+            anchor_std = std
+            model_used = "comp_baseline"
         if q50 <= 0 or q10 <= 0 or q90 <= 0 or not (q10 <= q50 <= q90):
             baseline_weights = [similarity_by_id.get(item["comp"].id, 1.0) for item in adjusted_comps]
             baseline = self._robust_comp_baseline(comp_prices_list, baseline_weights)
@@ -890,7 +946,11 @@ class ValuationService:
             anchor_std = std
             model_used = "comp_baseline"
 
-        attn_weights = fusion_out.attention_weights.flatten() if fusion_out.attention_weights is not None else None
+        attn_weights = (
+            fusion_out.attention_weights.flatten()
+            if fusion_out is not None and fusion_out.attention_weights is not None
+            else None
+        )
         if attn_weights is not None and len(attn_weights) >= len(comp_evidence):
             for i, ce in enumerate(comp_evidence):
                 ce.attention_weight = float(attn_weights[i])
@@ -1321,6 +1381,53 @@ class ValuationService:
     # =========================================================================
     # HELPERS
     # =========================================================================
+
+    def _fallback_rent_estimate(
+        self,
+        listing: CanonicalListing,
+        fair_value: float,
+        reason: str,
+        tracer: Any = None,
+    ) -> Tuple[float, float, List[CanonicalListing]]:
+        fallback_rent = getattr(listing, "estimated_rent", None)
+        fallback_source = "estimated_rent"
+        if not fallback_rent or fallback_rent <= 0:
+            gross_yield = getattr(listing, "gross_yield", None)
+            price_basis = listing.price if listing.price and listing.price > 0 else fair_value
+            if gross_yield and gross_yield > 0 and price_basis > 0:
+                fallback_rent = price_basis * (gross_yield / 100.0) / 12.0
+                fallback_source = "gross_yield"
+
+        if not fallback_rent or fallback_rent <= 0:
+            price_basis = listing.price if listing.price and listing.price > 0 else fair_value
+            fallback_rent = price_basis * (self.config.fallback_yield_pct / 100.0) / 12.0
+            fallback_source = "default_yield"
+
+        if tracer:
+            tracer.log("rental_fallback", {
+                "rent_est": float(fallback_rent),
+                "reason": reason,
+                "source": fallback_source,
+            })
+
+        return float(fallback_rent), float(self.config.rent_fallback_uncertainty), []
+
+    def _fallback_market_signals(
+        self,
+        rental_yield: float,
+        reason: str,
+    ) -> Dict[str, float]:
+        market_yield = float(rental_yield) if rental_yield and rental_yield > 0 else float(self.config.fallback_yield_pct)
+        logger.warning("market_signals_fallback", reason=reason)
+        return {
+            "momentum": 0.0,
+            "liquidity": 0.5,
+            "catchup": 0.0,
+            "market_yield": market_yield,
+            "area_sentiment": 0.5,
+            "area_development": 0.5,
+            "area_confidence": 0.0,
+        }
     
     def _get_region_id(self, listing: CanonicalListing) -> str:
         """Extract region identifier from listing"""
@@ -1531,18 +1638,26 @@ class ValuationService:
         market_signals: Dict[str, float]
     ) -> str:
         """Generate investment thesis text"""
-        if listing.price <= 0:
-            raise ValueError("invalid_listing_price")
-
-        value_gap_pct = (fair_value - listing.price) / listing.price * 100
+        price_basis = listing.price
+        missing_price = False
+        if not price_basis or price_basis <= 0:
+            price_basis = fair_value
+            missing_price = True
+        value_gap_pct = (fair_value - price_basis) / price_basis * 100 if price_basis > 0 else 0.0
         market_yield = market_signals.get("market_yield")
         momentum = market_signals.get("momentum")
         liquidity = market_signals.get("liquidity")
 
-        thesis = (
-            f"Fair value €{fair_value:,.0f} (±{uncertainty:.0%}) from comp-fusion; "
-            f"value gap {value_gap_pct:+.1f}% vs ask. "
-        )
+        if missing_price:
+            thesis = (
+                f"Fair value €{fair_value:,.0f} (±{uncertainty:.0%}) from comp-fusion; "
+                "ask unavailable. "
+            )
+        else:
+            thesis = (
+                f"Fair value €{fair_value:,.0f} (±{uncertainty:.0%}) from comp-fusion; "
+                f"value gap {value_gap_pct:+.1f}% vs ask. "
+            )
 
         if evidence.top_comps:
             thesis += f"Based on {len(evidence.top_comps)} time-adjusted comps. "

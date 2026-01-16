@@ -229,10 +229,18 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
     logger.info("crawl_node_started", areas=state["target_areas"])
     
     raw_listings = []
+    seen_keys = set()
     sources_crawled = list(state["sources_crawled"])
     router = SourceRouter()
     unresolved_areas = []
     crawl_errors = []
+
+    def _listing_key(raw: Dict[str, Any]) -> Optional[str]:
+        for key in ("id", "external_id", "url"):
+            value = raw.get(key)
+            if value:
+                return str(value)
+        return None
     
     # Determine search path
     areas = state["target_areas"]
@@ -253,7 +261,13 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
                 })
 
                 if result["status"] == "success":
-                    raw_listings.extend(result["data"])
+                    for item in result["data"]:
+                        key = _listing_key(item)
+                        if key and key in seen_keys:
+                            continue
+                        if key:
+                            seen_keys.add(key)
+                        raw_listings.append(item)
                     if target.source_id not in sources_crawled:
                         sources_crawled.append(target.source_id)
                 else:

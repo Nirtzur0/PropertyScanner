@@ -40,6 +40,8 @@ class ForecastingService:
         index_source: str = "market",
         forecast_mode: str = "analytic",
         tft_model_path: str = str(TFT_MODEL_PATH),
+        allow_short_history: bool = True,
+        min_fallback_months: int = 3,
     ):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.area_intelligence = AreaIntelligenceService(db_url=self.db_url)
@@ -49,6 +51,8 @@ class ForecastingService:
         self.index_source = index_source.strip().lower()
         self.forecast_mode = forecast_mode.strip().lower()
         self.tft = None
+        self.allow_short_history = bool(allow_short_history)
+        self.min_fallback_months = max(2, int(min_fallback_months))
 
         if self.forecast_mode == "tft":
             try:
@@ -112,14 +116,22 @@ class ForecastingService:
         return df
 
     def _compute_regime(self, df: pd.DataFrame) -> Tuple[float, float]:
-        if len(df) < self.min_history_months:
-            raise ValueError("insufficient_history")
+        raw_len = len(df)
+        if raw_len < self.min_history_months:
+            if not self.allow_short_history or len(df) < self.min_fallback_months:
+                raise ValueError("insufficient_history")
+            logger.warning(
+                "forecast_short_history_fallback",
+                available=len(df),
+                required=self.min_history_months,
+            )
 
         df = df.copy()
         df["log_return"] = np.log(df["index_value"]).diff()
         df = df.dropna(subset=["log_return"])
         if len(df) < self.min_history_months:
-            raise ValueError("insufficient_returns")
+            if not self.allow_short_history or raw_len < self.min_fallback_months:
+                raise ValueError("insufficient_returns")
 
         window = df.tail(self.return_window_months)
         weights = np.exp(np.linspace(-1.5, 0.0, len(window)))
@@ -220,14 +232,23 @@ class ForecastingService:
         df = self._load_rent_time_series(region_id)
         if df.empty:
             raise ValueError("missing_rent_index")
-        drift, vol = self._compute_regime(df)
+        try:
+            drift, vol = self._compute_regime(df)
+            scenario = "rent_drift"
+        except ValueError as exc:
+            if not self.allow_short_history:
+                raise
+            logger.warning("rent_forecast_fallback", error=str(exc), available=len(df))
+            drift = 0.0
+            vol = 0.01
+            scenario = "rent_drift_fallback"
         return self._project(
             current_value=current_monthly_rent,
             drift=drift,
             vol=vol,
             horizons_months=horizons_months,
             metric="rent_monthly",
-            scenario_name="rent_drift",
+            scenario_name=scenario,
         )
 
     def _tft_to_projections(

@@ -1,0 +1,10 @@
+# image_selector.yaml
+
+image_selector:
+  max_candidates: 12
+  max_bytes: 7000000
+  min_side: 220
+  min_pixels: 40000
+  duplicate_threshold: 6
+  use_clip: true
+  clip_weight: 0.35

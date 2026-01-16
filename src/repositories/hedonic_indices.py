@@ -23,6 +23,22 @@ class HedonicIndicesRepository(RepositoryBase):
             return None
         return float(row[0]), float(row[1] or 0.0), int(row[2] or 0)
 
+    def fetch_latest_index(self, region_id: str) -> Optional[Tuple[float, float, int, str]]:
+        query = text(
+            """
+            SELECT hedonic_index_sqm, r_squared, n_observations, month_date
+            FROM hedonic_indices
+            WHERE region_id = :region_id
+            ORDER BY month_date DESC
+            LIMIT 1
+            """
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(query, {"region_id": region_id}).fetchone()
+        if not row:
+            return None
+        return float(row[0]), float(row[1] or 0.0), int(row[2] or 0), str(row[3])
+
     def fetch_ine_benchmark(self, region_id: str, period: str) -> Optional[float]:
         query = text(
             """

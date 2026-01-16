@@ -22,30 +22,11 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import structlog
 from src.core.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
+from src.core.settings import TFTConfig
+from src.utils.config import load_app_config
 from src.repositories.market_data import MarketDataRepository
 
 logger = structlog.get_logger(__name__)
-
-
-class TFTConfig:
-    """Configuration for TFT model"""
-    def __init__(
-        self,
-        hidden_size: int = 64,
-        attention_heads: int = 4,
-        dropout: float = 0.1,
-        num_encoder_layers: int = 2,
-        quantiles: List[float] = [0.1, 0.5, 0.9],
-        context_length: int = 12,  # 12 months lookback
-        prediction_horizons: List[int] = [3, 6, 12, 36, 60],
-    ):
-        self.hidden_size = hidden_size
-        self.attention_heads = attention_heads
-        self.dropout = dropout
-        self.num_encoder_layers = num_encoder_layers
-        self.quantiles = quantiles
-        self.context_length = context_length
-        self.prediction_horizons = prediction_horizons
 
 
 class GatedResidualNetwork(nn.Module):
@@ -223,10 +204,20 @@ class TFTForecastingService:
     Service wrapper for TFT forecaster with training and inference.
     """
     
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), model_path: str = str(TFT_MODEL_PATH)):
+    def __init__(
+        self,
+        db_path: str = str(DEFAULT_DB_PATH),
+        model_path: str = str(TFT_MODEL_PATH),
+        config: Optional[TFTConfig] = None,
+    ):
         self.db_path = db_path
         self.model_path = model_path
-        self.config = TFTConfig()
+        if config is None:
+            try:
+                config = load_app_config().tft
+            except Exception:
+                config = TFTConfig()
+        self.config = config
         self.model = None
         self.region_map = {}
         
@@ -311,7 +302,12 @@ class TFTForecastingService:
         
         # Save model
         # IMPORTANT: avoid pickling custom classes in checkpoints (PyTorch 2.6+ safe loading).
-        config_payload = self.config.__dict__.copy() if hasattr(self.config, "__dict__") else {}
+        if hasattr(self.config, "model_dump"):
+            config_payload = self.config.model_dump()
+        elif hasattr(self.config, "__dict__"):
+            config_payload = self.config.__dict__.copy()
+        else:
+            config_payload = {}
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'region_map': self.region_map,
@@ -398,11 +394,13 @@ class TFTForecastingService:
 
             raw_config = checkpoint.get('config')
             if isinstance(raw_config, dict):
-                self.config = TFTConfig(**raw_config)
+                self.config = TFTConfig.model_validate(raw_config)
             elif isinstance(raw_config, TFTConfig):
                 self.config = raw_config
+            elif raw_config is not None and hasattr(raw_config, "model_dump"):
+                self.config = TFTConfig.model_validate(raw_config.model_dump())
             elif raw_config is not None and hasattr(raw_config, "__dict__"):
-                self.config = TFTConfig(**raw_config.__dict__)
+                self.config = TFTConfig.model_validate(raw_config.__dict__)
             else:
                 self.config = TFTConfig()
 
@@ -414,10 +412,14 @@ class TFTForecastingService:
             # Self-heal: if checkpoint wasn't in the safe dict format, rewrite it.
             if not isinstance(raw_config, dict):
                 try:
+                    if hasattr(self.config, "model_dump"):
+                        config_payload = self.config.model_dump()
+                    else:
+                        config_payload = self.config.__dict__.copy()
                     safe_checkpoint = {
                         "model_state_dict": checkpoint.get("model_state_dict"),
                         "region_map": self.region_map,
-                        "config": self.config.__dict__.copy(),
+                        "config": config_payload,
                     }
                     torch.save(safe_checkpoint, self.model_path)
                     logger.info("tft_checkpoint_upgraded", path=self.model_path)

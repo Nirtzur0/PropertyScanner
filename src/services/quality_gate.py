@@ -1,21 +1,21 @@
-from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from src.core.domain.schema import CanonicalListing
+from src.core.settings import QualityGateConfig
+from src.utils.config import load_app_config
 
 
 class DataQualityError(RuntimeError):
     pass
 
 
-@dataclass
-class QualityGateConfig:
-    max_invalid_ratio: float = 0.1
-    min_samples: int = 20
-
-
 class ListingQualityGate:
-    def __init__(self, config: QualityGateConfig) -> None:
+    def __init__(self, config: Optional[QualityGateConfig] = None) -> None:
+        if config is None:
+            try:
+                config = load_app_config().quality_gate
+            except Exception:
+                config = QualityGateConfig()
         self.config = config
 
     def validate_listing(self, listing: CanonicalListing) -> List[str]:

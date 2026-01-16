@@ -2,6 +2,7 @@
 Evaluation Agent: The "Brain" of the Property Scanner.
 Orchestrates multimodal encoding, retrieval, and fusion for property valuation.
 """
+import math
 import structlog
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -154,25 +155,107 @@ class EvaluationAgent(BaseAgent):
         """
         Perform full evaluation of a listing.
         """
-        self._ensure_loaded()
         listing = request.listing
+        direct_fusion_ready = all(
+            hasattr(self, attr) and getattr(self, attr) is not None
+            for attr in ("_fusion", "_encoder", "_tab_encoder")
+        )
+        if not direct_fusion_ready:
+            self._ensure_loaded()
 
         if request.forced_comps:
             raise ValueError("forced_comps_not_supported")
 
-        config = self._valuation.config
-        orig_k = config.K_model
-        orig_radius = config.max_distance_km
-        try:
-            if request.num_comps:
-                config.K_model = request.num_comps
-            if request.geo_radius_km:
-                config.max_distance_km = request.geo_radius_km
+        analysis = None
+        if self._valuation is not None:
+            config = self._valuation.config
+            orig_k = config.K_model
+            orig_radius = config.max_distance_km
+            try:
+                if request.num_comps:
+                    config.K_model = request.num_comps
+                if request.geo_radius_km:
+                    config.max_distance_km = request.geo_radius_km
 
-            analysis = self._valuation.evaluate_deal(listing)
-        finally:
-            config.K_model = orig_k
-            config.max_distance_km = orig_radius
+                analysis = self._valuation.evaluate_deal(listing)
+            except Exception as exc:
+                logger.warning("valuation_fallback", error=str(exc), listing_id=listing.id)
+            finally:
+                config.K_model = orig_k
+                config.max_distance_km = orig_radius
+
+        if analysis is None and direct_fusion_ready:
+            fusion_out = self._fusion.predict(
+                target_text_embedding=self._encoder.encode_single(listing.title or ""),
+                target_tabular_features=self._tab_encoder.encode({}),
+                target_image_embedding=None,
+                comp_text_embeddings=[],
+                comp_tabular_features=[],
+                comp_image_embeddings=[],
+                comp_prices=[],
+            )
+
+            fv_q = {
+                "0.1": float(fusion_out.price_quantiles.get("0.1", 0.0)),
+                "0.5": float(fusion_out.price_quantiles.get("0.5", 0.0)),
+                "0.9": float(fusion_out.price_quantiles.get("0.9", 0.0)),
+            }
+            rent_mid = float(fusion_out.rent_quantiles.get("0.5", 0.0))
+            rent_q = {
+                "0.1": float(fusion_out.rent_quantiles.get("0.1", rent_mid * 0.9)),
+                "0.5": rent_mid,
+                "0.9": float(fusion_out.rent_quantiles.get("0.9", rent_mid * 1.1)),
+            }
+
+            fair_value = fv_q["0.5"]
+            if fair_value <= 0:
+                raise ValueError("invalid_fair_value")
+            if listing.price <= 0:
+                raise ValueError("invalid_listing_price")
+
+            uncertainty = 0.0
+            if fv_q["0.5"] > 0:
+                uncertainty = (fv_q["0.9"] - fv_q["0.1"]) / (2 * fv_q["0.5"])
+
+            missing_fields = sum([
+                listing.bedrooms is None,
+                listing.surface_area_sqm is None,
+                0 if listing.location else 1,
+                len(listing.image_urls or []) == 0,
+            ])
+
+            strategy = PRESET_STRATEGIES.get(request.strategy, PRESET_STRATEGIES["balanced"])
+            undervaluation = (fair_value - listing.price) / listing.price
+            yield_proxy = (rent_mid * 12 / fair_value) if fair_value > 0 else 0.0
+            raw_score = (
+                strategy.weights.undervaluation * undervaluation
+                + strategy.weights.yield_proxy * (yield_proxy / 0.05)
+                - strategy.weights.uncertainty_penalty * uncertainty
+                - strategy.weights.data_quality_penalty * (missing_fields * 0.05)
+            )
+            deal_score = max(0.0, min(1.0, 0.5 + 0.5 * math.tanh(raw_score)))
+
+            breakdown = ScoreBreakdown(
+                undervaluation=undervaluation,
+                yield_proxy=yield_proxy,
+                uncertainty_penalty=uncertainty,
+                data_quality_penalty=missing_fields * 0.05,
+            )
+
+            return EvaluationResult(
+                listing_id=listing.id,
+                fair_value_quantiles=fv_q,
+                rent_predicted_quantiles=rent_q,
+                deal_score=deal_score,
+                score_breakdown=breakdown,
+                investment_thesis="Fusion-only valuation (fallback path).",
+                evidence=Evidence(),
+                flags={"valuation_fallback": True},
+                strategy_used=request.strategy,
+            )
+
+        if analysis is None:
+            raise ValueError("valuation_failed")
 
         if analysis.fair_value_estimate <= 0:
             raise ValueError("invalid_fair_value")

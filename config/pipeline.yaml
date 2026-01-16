@@ -1,0 +1,4 @@
+# pipeline.yaml
+# Pipeline defaults (paths inherit from core defaults).
+
+pipeline: {}

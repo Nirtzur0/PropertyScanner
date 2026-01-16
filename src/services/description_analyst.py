@@ -1,8 +1,11 @@
-import requests
 import json
-import logging
+from typing import Any, Dict, Optional
+
+import requests
 import structlog
-from typing import Dict, Any, Optional
+
+from src.core.settings import DescriptionAnalystConfig
+from src.utils.config import load_app_config
 
 logger = structlog.get_logger()
 
@@ -13,35 +16,44 @@ class DescriptionAnalyst:
     2. Assess sentiment/value (critical analysis).
     """
     
-    def __init__(self, model_name: str = "llama3:latest", base_url: str = "http://localhost:11434"):
-        self.model_name = model_name
-        self.base_url = base_url
-        self.generate_endpoint = f"{base_url}/api/generate"
+    def __init__(
+        self,
+        config: Optional[DescriptionAnalystConfig] = None,
+        model_name: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
+        if config is None:
+            try:
+                config = load_app_config().description_analyst
+            except Exception:
+                config = DescriptionAnalystConfig()
+        self.config = config
+        self.model_name = model_name or config.model_name
+        self.base_url = base_url or config.base_url
+        self.generate_endpoint = f\"{self.base_url}/api/generate\"
+        self.timeout_seconds = config.timeout_seconds
+        self.min_description_length = config.min_description_length
         
     def analyze(self, description: str) -> Dict[str, Any]:
         """
         Analyze the description and return structred data.
         """
-        if not description or len(description) < 50:
+        if not description or len(description) < self.min_description_length:
             return {}
 
-        prompt = f"""You are a cynical Real Estate Investment Analyst. Your job is to ignore marketing fluff and assess financial value/risk.
-Description: "{description}"
+        prompt = f"""You are a skeptical Real Estate Investment Analyst. Ignore marketing fluff and extract investable signals,
+with a focus on separating luxury from fixer-upper listings.
 
-Analyze the text and extract the following in strict JSON format:
+The description can be in English/Spanish/Italian/French/Portuguese; normalize outputs to English keys.
+Use only explicit evidence. If a detail is not stated or strongly implied, set it to null/false and lower confidence.
 
-1. **Facts**: Extract boolean/int flags.
-2. **Drivers**:
-   - `positive_drivers`: List of features that DIRECTLY increase rent/sale price (e.g. "terrace", "elevator", "recently_renovated", "exterior").
-   - `negative_drivers`: List of red flags or costs (e.g. "no_elevator", "interior_apartment", "needs_reform", "squatters").
-3. **Sentiment**: `investor_sentiment` (float in [-1.0, 1.0]).
-   - Rating based on ROI potential, NOT how "nice" the description sounds.
-   - -1.0 = severe red flags / toxic asset (legal issues, ruins).
-   -  0.0 = neutral, standard market listing.
-   - +1.0 = exceptional opportunity / clearly undervalued.
-   - Use values inside the range; prefer 1 decimal precision.
+Luxury signals (examples): premium materials (marble, hardwood, natural stone), designer finishes, high-end appliances/brands,
+concierge/doorman, penthouse, private lift, panoramic views, large terraces, smart home, bespoke cabinetry.
+Fixer-upper signals (examples): "to renovate/reform", "original condition", "needs updating", structural damage,
+damp/mold, outdated installations, missing utilities, occupied/okupas, legal issues.
+Standard: move-in ready without premium cues.
 
-Output JSON ONLY:
+Extract in strict JSON ONLY (no markdown), matching this schema:
 {{
   "facts": {{
     "has_elevator": bool,
@@ -58,8 +70,27 @@ Output JSON ONLY:
   }},
   "extraction": {{
     "city_or_district": "string or null"
+  }},
+  "condition_assessment": {{
+    "overall_condition": "renovated/good/fair/needs_work/unknown",
+    "finish_quality": "luxury/standard/basic/unknown",
+    "renovation_scope": "none/cosmetic/partial/full/unknown",
+    "luxury_vs_fixer": "luxury/standard/fixer_upper/unknown",
+    "confidence": float
   }}
 }}
+
+Rules:
+- overall_condition: renovated=recent updates; good=well kept; fair=dated but livable; needs_work=explicit repairs.
+- finish_quality: luxury=high-end materials/brands/amenities; basic=low-end finishes; standard otherwise.
+- renovation_scope: none=move-in ready; cosmetic=paint/fixtures; partial=kitchen/bath; full=gut/structural.
+- luxury_vs_fixer: luxury only if finish_quality=luxury and overall_condition in {{renovated,good}}; fixer_upper if
+  overall_condition=needs_work or renovation_scope=full; otherwise standard.
+- confidence is 0.0 to 1.0 and lower it when signals are weak.
+- Set renovation_needed true only if evidence of needed renovation/repairs is explicit or strongly implied; otherwise false.
+- investor_sentiment must be in [-1.0, 1.0] based on ROI potential (not marketing tone).
+- Use 1 decimal for investor_sentiment and 2 decimals for confidence when possible.
+Description: "{description}"
 """
         
         try:
@@ -70,7 +101,11 @@ Output JSON ONLY:
                 "format": "json" # Ollama JSON mode
             }
             
-            response = requests.post(self.generate_endpoint, json=payload, timeout=60)
+            response = requests.post(
+                self.generate_endpoint,
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
             if response.status_code == 200:
                 data = response.json()
                 content = data.get("response", "")

@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse
 
 import structlog
 
-from src.services.geocoding_service import GeocodingService
+from ..services.geocoding_service import GeocodingService
 from src.utils.config import ConfigLoader
 
 logger = structlog.get_logger(__name__)

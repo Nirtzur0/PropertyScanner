@@ -1,0 +1,5 @@
+# quality_gate.yaml
+
+quality_gate:
+  max_invalid_ratio: 0.1
+  min_samples: 20

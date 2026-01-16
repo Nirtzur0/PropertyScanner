@@ -257,7 +257,30 @@ class HedonicIndexService:
                     r_squared=float(r_squared) if r_squared else 0.0,
                     n_observations=int(n_observations) if n_observations else 0,
                     is_fallback=True,
-                    fallback_reason="all_region",
+                    fallback_reason="global_region",
+                )
+
+        latest = self.repo.fetch_latest_index(region_id)
+        if latest:
+            value, r_squared, n_observations, latest_month = latest
+            return IndexResult(
+                value=float(value),
+                r_squared=float(r_squared) if r_squared else 0.0,
+                n_observations=int(n_observations) if n_observations else 0,
+                is_fallback=True,
+                fallback_reason=f"recent_month:{latest_month}",
+            )
+
+        if region_id != "all":
+            latest_global = self.repo.fetch_latest_index("all")
+            if latest_global:
+                value, r_squared, n_observations, latest_month = latest_global
+                return IndexResult(
+                    value=float(value),
+                    r_squared=float(r_squared) if r_squared else 0.0,
+                    n_observations=int(n_observations) if n_observations else 0,
+                    is_fallback=True,
+                    fallback_reason=f"global_recent:{latest_month}",
                 )
 
         # Fallback: Try INE IPV (Official Benchmark)
@@ -357,8 +380,13 @@ class HedonicIndexService:
         adj_factor = target_index.value / comp_index.value
         if adj_factor <= 0:
             raise ValueError("invalid_hedonic_adjustment")
-        if adj_factor < 0.5 or adj_factor > 2.0:
-            raise ValueError("hedonic_adjustment_out_of_bounds")
+        clamped = False
+        if adj_factor < 0.5:
+            adj_factor = 0.5
+            clamped = True
+        elif adj_factor > 2.0:
+            adj_factor = 2.0
+            clamped = True
         
         metadata = {
             "comp_month": comp_month,
@@ -369,8 +397,8 @@ class HedonicIndexService:
             "target_index_fallback": target_index.is_fallback,
             "comp_fallback_reason": comp_index.fallback_reason,
             "target_fallback_reason": target_index.fallback_reason,
-            "raw_factor": adj_factor,
-            "clamped": False,
+            "raw_factor": target_index.value / comp_index.value,
+            "clamped": clamped,
         }
         
         return adj_factor, metadata

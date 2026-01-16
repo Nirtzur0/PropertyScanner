@@ -8,6 +8,9 @@ import requests
 import structlog
 from PIL import Image, ImageFilter, ImageOps
 
+from src.core.settings import ImageSelectorConfig
+from src.utils.config import load_app_config
+
 logger = structlog.get_logger(__name__)
 
 
@@ -131,21 +134,30 @@ class ImageSelector:
 
     def __init__(
         self,
-        max_candidates: int = 12,
-        max_bytes: int = 7_000_000,
-        min_side: int = 220,
-        min_pixels: int = 200 * 200,
-        duplicate_threshold: int = 6,
-        use_clip: bool = True,
-        clip_weight: float = 0.35,
+        max_candidates: Optional[int] = None,
+        max_bytes: Optional[int] = None,
+        min_side: Optional[int] = None,
+        min_pixels: Optional[int] = None,
+        duplicate_threshold: Optional[int] = None,
+        use_clip: Optional[bool] = None,
+        clip_weight: Optional[float] = None,
+        config: Optional[ImageSelectorConfig] = None,
     ) -> None:
-        self.max_candidates = max_candidates
-        self.max_bytes = max_bytes
-        self.min_side = min_side
-        self.min_pixels = min_pixels
-        self.duplicate_threshold = duplicate_threshold
-        self.use_clip = use_clip
-        self.clip_weight = clip_weight
+        if config is None:
+            try:
+                config = load_app_config().image_selector
+            except Exception:
+                config = ImageSelectorConfig()
+
+        self.max_candidates = config.max_candidates if max_candidates is None else max_candidates
+        self.max_bytes = config.max_bytes if max_bytes is None else max_bytes
+        self.min_side = config.min_side if min_side is None else min_side
+        self.min_pixels = config.min_pixels if min_pixels is None else min_pixels
+        self.duplicate_threshold = (
+            config.duplicate_threshold if duplicate_threshold is None else duplicate_threshold
+        )
+        self.use_clip = config.use_clip if use_clip is None else use_clip
+        self.clip_weight = config.clip_weight if clip_weight is None else clip_weight
         self._clip = ClipRelevanceScorer()
 
     def select(self, image_urls: List[str], max_images: int = 4) -> ImageSelectionResult:

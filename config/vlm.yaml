@@ -1,0 +1,7 @@
+# vlm.yaml
+
+vlm:
+  model: "llava"
+  max_images: 2
+  debug_max_images: 4
+  timeout_seconds: 60
