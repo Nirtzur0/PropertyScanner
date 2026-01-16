@@ -15,7 +15,7 @@ logger = structlog.get_logger()
 class CrawlInput(BaseModel):
     """Input for crawling tools."""
     search_path: str = Field(description="Search path or URL for crawling listings")
-    source_id: str = Field(default="idealista_es", description="Source identifier")
+    source_id: str = Field(default="idealista", description="Source identifier")
 
 
 class NormalizeInput(BaseModel):
@@ -47,15 +47,57 @@ class FilterInput(BaseModel):
     listings: List[Dict[str, Any]] = Field(description="List of canonical listings to filter")
 
 
+class PipelineStatusInput(BaseModel):
+    """Input for pipeline status tool."""
+    pass
+
+
+class PreflightInput(BaseModel):
+    """Input for preflight tool."""
+    skip_harvest: bool = Field(default=False, description="Skip harvesting listings")
+    skip_market_data: bool = Field(default=False, description="Skip market data rebuild")
+    skip_index: bool = Field(default=False, description="Skip vector index rebuild")
+    skip_training: bool = Field(default=False, description="Skip model training")
+
+
+class HarvestWorkflowInput(BaseModel):
+    """Input for harvest workflow tool."""
+    mode: str = Field(default="sale", description="Harvest mode: sale or rent")
+    target_count: int = Field(default=0, description="Target listings to harvest (0 uses default)")
+    no_vlm: bool = Field(default=False, description="Disable VLM during harvest")
+
+
+class MarketDataWorkflowInput(BaseModel):
+    """Input for market data workflow tool."""
+    skip_macro: bool = Field(default=False, description="Skip macro indicator refresh")
+    skip_market_indices: bool = Field(default=False, description="Skip market indices recompute")
+    skip_hedonic: bool = Field(default=False, description="Skip hedonic indices recompute")
+    city: Optional[str] = Field(default=None, description="Optional city filter for hedonic recompute")
+
+
+class IndexWorkflowInput(BaseModel):
+    """Input for index rebuild tool."""
+    listing_type: str = Field(default="sale", description="Listing type filter: sale, rent, or all")
+    limit: int = Field(default=0, description="Max listings to index (0 = all)")
+    clear: bool = Field(default=False, description="Clear existing index before rebuild")
+
+
+class TrainWorkflowInput(BaseModel):
+    """Input for training workflow tool."""
+    epochs: int = Field(default=50, description="Training epochs")
+    listing_type: str = Field(default="sale", description="Listing type filter for training")
+    no_vlm: bool = Field(default=False, description="Disable VLM during training")
+
+
 # ============ Tools ============
 
 @tool(args_schema=CrawlInput)
-def crawl_listings(search_path: str, source_id: str = "idealista_es") -> Dict[str, Any]:
+def crawl_listings(search_path: str, source_id: str = "idealista") -> Dict[str, Any]:
     """
     Crawl property listings from a specified source.
     
     Use this tool when you need to fetch new property listings from real estate websites.
-    Supports idealista_es and pisos_es sources.
+    Supports idealista and pisos sources.
     
     Returns a dict with 'status', 'data' (list of raw listings), and 'errors'.
     """
@@ -356,6 +398,128 @@ def filter_listings(listings: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
 
 
+@tool(args_schema=PipelineStatusInput)
+def pipeline_status() -> Dict[str, Any]:
+    """
+    Inspect pipeline freshness (listings, indices, index, model).
+    Returns a dict with 'status' and 'data' containing the pipeline snapshot.
+    """
+    from src.services.pipeline_state import PipelineStateService
+
+    try:
+        state = PipelineStateService().snapshot()
+        return {"status": "success", "data": state.to_dict()}
+    except Exception as e:
+        logger.error("pipeline_status_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
+@tool(args_schema=PreflightInput)
+def preflight_pipeline(
+    skip_harvest: bool = False,
+    skip_market_data: bool = False,
+    skip_index: bool = False,
+    skip_training: bool = False,
+) -> Dict[str, Any]:
+    """
+    Run the preflight pipeline to refresh stale data and artifacts.
+    """
+    from src.workflows.preflight import run_preflight
+
+    try:
+        result = run_preflight(
+            skip_harvest=skip_harvest,
+            skip_market_data=skip_market_data,
+            skip_index=skip_index,
+            skip_training=skip_training,
+        )
+        return {"status": "success", "data": result}
+    except Exception as e:
+        logger.error("preflight_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
+@tool(args_schema=HarvestWorkflowInput)
+def harvest_pipeline(mode: str = "sale", target_count: int = 0, no_vlm: bool = False) -> Dict[str, Any]:
+    """
+    Run the listing harvester workflow.
+    """
+    from src.workflows.harvest import Harvester
+
+    try:
+        if target_count and target_count > 0:
+            Harvester(mode=mode, target_count=target_count, run_vlm=not no_vlm).run()
+        else:
+            Harvester(mode=mode, run_vlm=not no_vlm).run()
+        return {"status": "success", "mode": mode, "target_count": target_count}
+    except Exception as e:
+        logger.error("harvest_workflow_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
+@tool(args_schema=MarketDataWorkflowInput)
+def build_market_data_workflow(
+    skip_macro: bool = False,
+    skip_market_indices: bool = False,
+    skip_hedonic: bool = False,
+    city: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build macro data and market/hedonic indices.
+    """
+    from src.workflows.market_data import build_market_data
+
+    try:
+        build_market_data(
+            skip_macro=skip_macro,
+            skip_market_indices=skip_market_indices,
+            skip_hedonic=skip_hedonic,
+            city=city,
+        )
+        return {"status": "success", "city": city}
+    except Exception as e:
+        logger.error("market_data_workflow_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
+@tool(args_schema=IndexWorkflowInput)
+def build_vector_index_workflow(
+    listing_type: str = "sale",
+    limit: int = 0,
+    clear: bool = False,
+) -> Dict[str, Any]:
+    """
+    Build the vector index for retrieval.
+    """
+    from src.workflows.indexing import build_vector_index
+
+    try:
+        count = build_vector_index(listing_type=listing_type, limit=limit, clear=clear)
+        return {"status": "success", "indexed": count}
+    except Exception as e:
+        logger.error("index_workflow_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
+@tool(args_schema=TrainWorkflowInput)
+def train_model_workflow(
+    epochs: int = 50,
+    listing_type: str = "sale",
+    no_vlm: bool = False,
+) -> Dict[str, Any]:
+    """
+    Train the fusion model.
+    """
+    from src.training.train import train_model
+
+    try:
+        history = train_model(epochs=epochs, listing_type=listing_type, use_vlm=not no_vlm)
+        return {"status": "success", "folds": len(history)}
+    except Exception as e:
+        logger.error("train_workflow_failed", error=str(e))
+        return {"status": "failure", "error": str(e)}
+
+
 # Tool registry
 TOOLS = [
     crawl_listings,
@@ -363,5 +527,11 @@ TOOLS = [
     enrich_listings,
     filter_listings,
     evaluate_listing,
-    retrieve_comparables
+    retrieve_comparables,
+    pipeline_status,
+    preflight_pipeline,
+    harvest_pipeline,
+    build_market_data_workflow,
+    build_vector_index_workflow,
+    train_model_workflow,
 ]

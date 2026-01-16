@@ -31,6 +31,11 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_market_indices_region_date ON market_indices (region_id, month_date)")
+    try:
+        conn.execute("ALTER TABLE market_indices ADD COLUMN updated_at DATETIME")
+        logger.info("migration_market_indices_updated_at_added")
+    except Exception:
+        pass
     
     # 2. Macro Indicators
     conn.execute("""
@@ -128,11 +133,17 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
             raw_median_sqm FLOAT,
             r_squared FLOAT,
             n_observations INT,
+            n_neighborhoods INT,
             coefficients TEXT,
             updated_at DATETIME
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_hedonic_region_date ON hedonic_indices (region_id, month_date)")
+    try:
+        conn.execute("ALTER TABLE hedonic_indices ADD COLUMN n_neighborhoods INT")
+        logger.info("migration_hedonic_n_neighborhoods_added")
+    except Exception:
+        pass
 
     # 5b. Area Intelligence (used by forecasting)
     conn.execute("""
@@ -162,6 +173,35 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_eri_region_date ON eri_metrics (region_id, period_date)")
+
+    # 6b. INE IPV (Housing Price Index)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ine_ipv (
+            period TEXT,
+            region_id TEXT,
+            housing_type TEXT, -- 'general', 'new', 'used'
+            metric TEXT,      -- 'index', 'yoy', 'qoq'
+            value FLOAT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (period, region_id, housing_type, metric)
+        )
+    """)
+
+    # 8. Pipeline Runs (operational audit/logs)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+            run_id TEXT PRIMARY KEY,
+            run_type TEXT,
+            step_name TEXT,
+            status TEXT,
+            started_at DATETIME,
+            completed_at DATETIME,
+            metadata TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_pipeline_runs_step_status ON pipeline_runs (step_name, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_pipeline_runs_completed_at ON pipeline_runs (completed_at)")
+    
     
     # 7. Update macro_scenarios schema for SOTA V3 (cite-or-drop)
     try:

@@ -15,8 +15,8 @@ sources:
       allowed_paths: []
       disallowed_paths: []
 
-  - id: "idealista_es"
-    name: "Idealista (Spain)"
+  - id: "idealista"
+    name: "Idealista"
     base_url: "https://www.idealista.com"
     type: "html_browser"  # Will likely need browser automation
     enabled: true
@@ -28,8 +28,8 @@ sources:
       allowed_paths: ["/venta-viviendas/"]
       disallowed_paths: ["/login", "/pro"]
 
-  - id: "pisos_es"
-    name: "Pisos.com (Spain)"
+  - id: "pisos"
+    name: "Pisos.com"
     base_url: "https://www.pisos.com"
     type: "html_browser"
     enabled: true

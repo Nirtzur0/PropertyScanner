@@ -46,13 +46,13 @@ class TestTools:
         mock_crawler = MagicMock()
         mock_crawler.run.return_value = AgentResponse(
             status="success",
-            data=[{"external_id": "123", "source_id": "idealista_es"}],
+            data=[{"external_id": "123", "source_id": "idealista"}],
             errors=[]
         )
         mock_create_crawler.return_value = mock_crawler
         
         # Invoke tool
-        result = crawl_listings.invoke({"search_path": "/test", "source_id": "idealista_es"})
+        result = crawl_listings.invoke({"search_path": "/test", "source_id": "idealista"})
         
         assert result["status"] == "success"
         assert result["count"] == 1
@@ -77,12 +77,12 @@ class TestTools:
         result = normalize_listings.invoke({
             "raw_listings": [{
                 "external_id": "123",
-                "source_id": "idealista_es",
+                "source_id": "idealista",
                 "url": "https://test.com",
                 "raw_data": {"test": "data"},
                 "fetched_at": "2024-01-01"
             }],
-            "source_id": "idealista_es"
+            "source_id": "idealista"
         })
         
         assert result["status"] == "success"
@@ -121,6 +121,8 @@ class TestGraphNodes:
         mock_get_llm.return_value = mock_llm
         
         state = create_initial_state("Find deals")
+        state["pipeline_status"] = {"needs_refresh": False}
+        state["pipeline_checked"] = True
         result = supervisor_node(state)
         
         assert result["next_action"] == "crawl"
@@ -141,7 +143,7 @@ class TestGraphNodes:
         result = crawl_node(state)
         
         assert len(result["raw_listings"]) == 1
-        assert "idealista_es" in result["sources_crawled"]
+        assert "pisos" in result["sources_crawled"]
         assert result["current_stage"] == "crawled"
 
 
@@ -166,7 +168,7 @@ class TestOrchestrator:
         mock_create_graph.return_value = mock_graph
         
         orchestrator = CognitiveOrchestrator()
-        result = orchestrator.run("test query")
+        result = orchestrator.run("test query", areas=["/madrid/"])
         
         assert result["final_report"] == "All good"
         assert result["listings_count"] == 5
@@ -177,12 +179,14 @@ class TestOrchestrator:
 class TestIntegration:
     """Semi-integration tests with full graph compilation and mocked LLM."""
 
+    @patch("src.services.pipeline_state.PipelineStateService.snapshot")
     @patch("src.cognitive.graph.get_llm")
     @patch("src.cognitive.graph.crawl_listings")
     @patch("src.cognitive.graph.normalize_listings")
     @patch("src.cognitive.graph.evaluate_listing")
-    def test_full_workflow_path(self, mock_eval, mock_norm, mock_crawl, mock_get_llm):
+    def test_full_workflow_path(self, mock_eval, mock_norm, mock_crawl, mock_get_llm, mock_snapshot):
         """Test a full successful path through the graph."""
+        mock_snapshot.return_value = MagicMock(to_dict=lambda: {"needs_refresh": False})
         # 1. Mock LLM decisions
         mock_llm = MagicMock()
         # Supervisor decisions: crawl -> normalize -> evaluate -> report -> end
@@ -204,8 +208,7 @@ class TestIntegration:
         # 3. Compile and Run
         orchestrator = CognitiveOrchestrator()
         # Set low recursion limit for safety in test
-        result = orchestrator.run("Find me deals in Madrid")
+        result = orchestrator.run("Find me deals in Madrid", areas=["/madrid/"])
         
         assert "final_report" in result
         assert result.get("listings_count", 0) >= 0
-

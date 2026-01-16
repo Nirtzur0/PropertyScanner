@@ -10,7 +10,15 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from src.cognitive.state import AgentState
-from src.cognitive.tools import TOOLS, crawl_listings, normalize_listings, evaluate_listing, enrich_listings, filter_listings
+from src.cognitive.tools import (
+    TOOLS,
+    crawl_listings,
+    normalize_listings,
+    evaluate_listing,
+    enrich_listings,
+    filter_listings,
+    preflight_pipeline,
+)
 
 logger = structlog.get_logger()
 
@@ -63,6 +71,8 @@ You have access to the following tools:
 - filter_listings: Remove low-quality listings (QC)
 - evaluate_listing: Analyze a listing for investment potential
 - retrieve_comparables: Find similar properties for comparison
+- pipeline_status: Inspect pipeline freshness (listings, indices, index, model)
+- preflight_pipeline: Refresh stale data and artifacts
 
 Based on the current state, decide what action to take next.
 
@@ -76,21 +86,30 @@ Current state:
 - Enrichment status: {enrichment_status}
 - Filtered listings count: {filtered_count}
 - Evaluations completed: {evaluations_count}
+- Pipeline status: {pipeline_status}
+- Pipeline checked: {pipeline_checked}
 
 Typical flow: Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report
 
+If pipeline status indicates data is stale and pipeline_checked is False, choose "preflight" first.
 If you have unprocessed raw listings, choose "normalize".
 If you have normalized listings but status is pending, choose "enrich".
 If you have enriched listings, choose "filter".
 If you have filtered listings, choose "evaluate".
 If you have evaluations, generate a final report.
 
-Respond with one of: "crawl", "normalize", "enrich", "filter", "evaluate", "report", or "end"
+Respond with one of: "preflight", "crawl", "normalize", "enrich", "filter", "evaluate", "report", or "end"
 """
 
 
 def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
     """Create initial state for a new agent run."""
+    try:
+        from src.services.pipeline_state import PipelineStateService
+        pipeline_status = PipelineStateService().snapshot().to_dict()
+    except Exception as e:
+        pipeline_status = {"error": str(e), "needs_refresh": False, "reasons": ["pipeline_status_failed"]}
+
     return AgentState(
         query=query,
         target_areas=areas or [],
@@ -107,7 +126,9 @@ def create_initial_state(query: str, areas: List[str] = None) -> AgentState:
         enrichment_status="pending",
         filtered_count=0,
         final_report=None,
-        strategy="balanced"
+        strategy="balanced",
+        pipeline_status=pipeline_status,
+        pipeline_checked=False,
     )
 
 
@@ -117,6 +138,15 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     Uses GPT-4 to reason about what to do next.
     """
     try:
+        pipeline_status = state.get("pipeline_status", {})
+        if pipeline_status.get("needs_refresh") and not state.get("pipeline_checked"):
+            logger.info("pipeline_preflight_required", reasons=pipeline_status.get("reasons"))
+            return {
+                "next_action": "preflight",
+                "current_stage": "supervisor",
+                "messages": [{"role": "supervisor", "content": "pipeline preflight required"}],
+            }
+
         llm = get_llm(temperature=0)
         
         prompt = SUPERVISOR_PROMPT.format(
@@ -128,7 +158,9 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             enriched_count=state.get("enriched_count", 0),
             enrichment_status=state.get("enrichment_status", "pending"),
             filtered_count=state.get("filtered_count", 0),
-            evaluations_count=len(state["evaluations"])
+            evaluations_count=len(state["evaluations"]),
+            pipeline_status=state.get("pipeline_status"),
+            pipeline_checked=state.get("pipeline_checked"),
         )
         
         messages = [
@@ -145,7 +177,9 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
             decision = str(response).strip().lower()
         
         # Parse decision
-        if "crawl" in decision:
+        if "preflight" in decision or "refresh" in decision:
+            next_action = "preflight"
+        elif "crawl" in decision:
             next_action = "crawl"
             # Prevent infinite loop if we already have raw listings
             if len(state["raw_listings"]) > 0 and state["listings_count"] == 0:
@@ -202,9 +236,9 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
         try:
             # Determine source
             if "idealista" in area:
-                source_id = "idealista_es"
+                source_id = "idealista"
             else:
-                source_id = "pisos_es"
+                source_id = "pisos"
                 
             result = crawl_listings.invoke({
                 "search_path": area,
@@ -235,7 +269,7 @@ def normalize_node(state: AgentState) -> Dict[str, Any]:
     # Group by source
     by_source: Dict[str, List] = {}
     for raw in state["raw_listings"]:
-        source_id = raw.get("source_id", "idealista_es")
+        source_id = raw.get("source_id", "idealista")
         if source_id not in by_source:
             by_source[source_id] = []
         by_source[source_id].append(raw)
@@ -318,6 +352,43 @@ def filter_node(state: AgentState) -> Dict[str, Any]:
         logger.error("filter_node_failed", error=str(e))
         return {
             "messages": [{"role": "filter", "content": f"Filter failed: {str(e)}"}]
+        }
+
+
+def preflight_node(state: AgentState) -> Dict[str, Any]:
+    """Refresh stale data/index/model artifacts before analysis."""
+    logger.info("preflight_node_started")
+
+    try:
+        result = preflight_pipeline.invoke(
+            {
+                "skip_harvest": False,
+                "skip_market_data": False,
+                "skip_index": False,
+                "skip_training": False,
+            }
+        )
+        if result.get("status") == "success":
+            from src.services.pipeline_state import PipelineStateService
+
+            pipeline_status = PipelineStateService().snapshot().to_dict()
+            return {
+                "pipeline_status": pipeline_status,
+                "pipeline_checked": True,
+                "current_stage": "preflight",
+                "messages": [{"role": "preflight", "content": "Pipeline refreshed"}],
+            }
+
+        return {
+            "pipeline_checked": True,
+            "messages": [{"role": "preflight", "content": f"Preflight failed: {result.get('error')}"}],
+        }
+
+    except Exception as e:
+        logger.error("preflight_node_failed", error=str(e))
+        return {
+            "pipeline_checked": True,
+            "messages": [{"role": "preflight", "content": f"Preflight failed: {str(e)}"}],
         }
 
 
@@ -408,7 +479,7 @@ Write a professional investment brief (2-3 paragraphs) summarizing:
         raise
 
 
-def route_supervisor(state: AgentState) -> Literal["crawl", "normalize", "enrich", "filter", "evaluate", "report", "end"]:
+def route_supervisor(state: AgentState) -> Literal["preflight", "crawl", "normalize", "enrich", "filter", "evaluate", "report", "end"]:
     """Route based on supervisor decision."""
     return state.get("next_action", "end")
 
@@ -419,6 +490,7 @@ def create_cognitive_graph():
     
     # Add nodes
     graph.add_node("supervisor", supervisor_node)
+    graph.add_node("preflight", preflight_node)
     graph.add_node("crawl", crawl_node)
     graph.add_node("normalize", normalize_node)
     graph.add_node("enrich", enrich_node)
@@ -431,6 +503,7 @@ def create_cognitive_graph():
         "supervisor",
         route_supervisor,
         {
+            "preflight": "preflight",
             "crawl": "crawl",
             "normalize": "normalize",
             "enrich": "enrich",
@@ -446,6 +519,7 @@ def create_cognitive_graph():
     graph.add_edge("normalize", "supervisor")
     graph.add_edge("enrich", "supervisor")
     graph.add_edge("filter", "supervisor")
+    graph.add_edge("preflight", "supervisor")
     graph.add_edge("evaluate", "supervisor")
     graph.add_edge("report", END)
     

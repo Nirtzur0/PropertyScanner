@@ -9,6 +9,7 @@ flowchart LR
     subgraph Acquisition
         HB["harvest_batch.py"]
         AG["LangGraph agent workflow"]
+        Gov["OfficialSourcesAgent (INE/ERI)"]
     end
 
     subgraph Processing
@@ -25,7 +26,7 @@ flowchart LR
         State["JSON: harvest_state_*.json"]
         VectorIndex[("FAISS: vector_index.faiss + metadata")]
         Indices[("market/hedonic/macro/area tables")]
-        ERI[("eri_metrics (optional)")]
+        GovData[("ine_ipv + eri_metrics")]
         Calib[("models/calibration_registry.json")]
     end
 
@@ -36,22 +37,25 @@ flowchart LR
         Forecast["ForecastingService (analytic/TFT)"]
         Calibrator["Stratified Calibrators"]
         Val["ValuationService (fusion + rent + yield)"]
+        Hedonic["HedonicIndexService (INE Anchored)"]
     end
 
     subgraph Interface
         CLI["Scripts / CLI"]
-        Dash["Streamlit dashboard"]
+        Dash["The Scout V2 (Streamlit)"]
     end
 
     HB --> Seen
     HB --> State
     HB --> Norm
     AG --> Norm
+    Gov --> GovData
     Norm --> Fusion --> Store --> Listings
     Listings --> BuildIndex --> VectorIndex --> Retriever
-    Listings --> BuildMarket --> Indices --> Forecast --> Val
-    Listings --> Market
-    ERI --> Market --> Val
+    Listings --> BuildMarket --> Indices
+    GovData --> BuildMarket --> Indices
+    GovData --> Market --> Val
+    GovData --> Hedonic --> Val
     Calib --> Calibrator --> Val
     Retriever --> Val
     Model --> Val
@@ -60,11 +64,11 @@ flowchart LR
 ```
 
 ## Components in One Line Each
-- Acquisition: bulk harvesting via `src/scripts/harvest_batch.py`, optional agent-driven flows via `src/cognitive/graph.py`.
+- Acquisition: bulk harvesting via `src/scripts/harvest_batch.py`, and `OfficialSourcesAgent` for government stats (INE/ERI).
 - Processing: normalize, fuse VLM-derived signals, clamp sentiment, then persist via StorageService.
-- Data: SQLite is the system of record; vector index/metadata, market indices, and (optional) ERI metrics are rebuildable artifacts.
-- Intelligence: time-safe comp retrieval with frozen retriever metadata, fusion valuation on log-residuals over a robust comp baseline, calibrated uncertainty, and analytic/TFT projections.
-- Interface: Streamlit dashboard and CLI scripts (build indices, vector index, backfill valuations, training).
+- Data: SQLite is the system of record. `ine_ipv` and `eri_metrics` form the official ground truth layer.
+- Intelligence: time-safe comp retrieval, fusion valuation on log-residuals (anchored by INE indices), and calibrated uncertainty.
+- Interface: "The Scout V2" Dashboard and CLI scripts.
 
 ## Module Boundaries (Contract)
 - Agents (`src/agents/**`): crawling, normalization, and enrichment of raw source data into `CanonicalListing`.

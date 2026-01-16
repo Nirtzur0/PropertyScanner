@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
 from typing import Dict, Optional
-import sqlite3
 import structlog
 import pandas as pd
 import numpy as np
 from src.core.config import DEFAULT_DB_PATH
+from src.repositories.base import resolve_db_url
+from src.repositories.eri_metrics import ERIMetricsRepository
+from src.repositories.market_indices import MarketIndicesRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -16,35 +18,53 @@ class ERISignalsService:
     ERI data is lagged (~45 days); we treat it as a quarterly regime signal.
     """
 
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), lag_days: int = 45, trailing_years: int = 3):
-        self.db_path = db_path
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None, lag_days: int = 45, trailing_years: int = 3):
+        self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.lag_days = int(lag_days)
         self.trailing_years = int(trailing_years)
+        self.eri_repo = ERIMetricsRepository(db_url=self.db_url)
+        self.market_repo = MarketIndicesRepository(db_url=self.db_url)
 
     def _load_series(self, region_id: str) -> pd.DataFrame:
-        conn = sqlite3.connect(self.db_path)
-        query = """
-            SELECT period_date, txn_count, mortgage_count, price_sqm, price_sqm_yoy, price_sqm_qoq
-            FROM eri_metrics
-            WHERE region_id = ?
-            ORDER BY period_date ASC
-        """
+        # Priority 1: Official ERI Data
         try:
-            df = pd.read_sql(query, conn, params=(region_id,))
+            df = self.eri_repo.load_series(region_id)
         except Exception as e:
             logger.warning("eri_load_failed", error=str(e))
-            return pd.DataFrame()
-        finally:
-            conn.close()
+            df = pd.DataFrame()
+
+        if df.empty:
+            # Fallback to internal proxy
+            try:
+                proxy = self.market_repo.fetch_series(region_id)
+                if not proxy.empty:
+                    df = proxy.rename(
+                        columns={
+                            "month_date": "period_date",
+                            "new_listings_count": "txn_count",
+                            "price_index_sqm": "price_sqm",
+                        }
+                    )
+                    df["mortgage_count"] = 0
+            except Exception as e:
+                logger.warning("eri_proxy_failed", error=str(e))
+                return pd.DataFrame()
 
         if df.empty:
             return df
 
         df["period_date"] = pd.to_datetime(df["period_date"], format="mixed", errors="coerce")
         df = df.dropna(subset=["period_date"])
-        for col in ("txn_count", "mortgage_count", "price_sqm", "price_sqm_yoy", "price_sqm_qoq"):
+        for col in ("txn_count", "mortgage_count", "price_sqm"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        # Calculate derived changes dynamically if missing
+        if "price_sqm_yoy" not in df.columns or df["price_sqm_yoy"].isna().all():
+            df["price_sqm_yoy"] = df["price_sqm"].pct_change(periods=4).fillna(0) # Quarterly assumption for ERI
+        if "price_sqm_qoq" not in df.columns or df["price_sqm_qoq"].isna().all():
+            df["price_sqm_qoq"] = df["price_sqm"].pct_change(periods=1).fillna(0)
+        
         return df
 
     def _effective_date(self, as_of_date: Optional[datetime]) -> datetime:

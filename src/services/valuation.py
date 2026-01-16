@@ -42,6 +42,7 @@ from src.services.fusion_model import FusionModelService, FusionOutput
 from src.services.encoders import MultimodalEncoder
 from src.services.retrieval import CompRetriever
 from src.services.eri_signals import ERISignalsService
+from src.services.area_intelligence import AreaIntelligenceService
 from src.core.config import (
     DEFAULT_DB_PATH,
     VECTOR_INDEX_PATH,
@@ -91,6 +92,14 @@ class ValuationConfig:
     conformal_alpha: float = 0.1
     conformal_window: int = 50
     calibration_path: str = str(CALIBRATION_PATH)
+
+    # Income + area adjustments
+    income_value_weight_max: float = 0.35
+    income_value_weight_min: float = 0.0
+    income_value_max_adjustment_pct: float = 0.35
+    area_sentiment_weight: float = 0.06
+    area_development_weight: float = 0.04
+    area_adjustment_cap: float = 0.08
     
     def __post_init__(self):
         if self.horizons_months is None:
@@ -134,6 +143,7 @@ class ValuationService:
         self.analytics = MarketAnalyticsService(db_path=str(DEFAULT_DB_PATH))
         self.hedonic = HedonicIndexService(db_path=str(DEFAULT_DB_PATH))
         self.eri = ERISignalsService(db_path=str(DEFAULT_DB_PATH), lag_days=self.config.eri_lag_days)
+        self.area_intel = AreaIntelligenceService(db_path=str(DEFAULT_DB_PATH))
         self.fusion = FusionModelService()
         retriever_cfg = {}
         if getattr(self.fusion, "config", None):
@@ -450,10 +460,30 @@ class ValuationService:
             rental_yield = (rent_est * 12 / fair_value * 100)
 
             # =====================================================================
-            # STAGE 2: DEAL SCORING
+            # STAGE 2: MARKET SIGNALS + INCOME/AREA ADJUSTMENTS
             # =====================================================================
             
             market_signals = self._get_market_signals(listing, region_id, valuation_date)
+            fair_value, uncertainty, adjustment_info = self._apply_income_and_area_adjustments(
+                listing=listing,
+                fair_value=fair_value,
+                uncertainty=uncertainty,
+                rent_est=rent_est,
+                rent_uncertainty=rent_uncertainty,
+                rent_comps=rent_comps,
+                market_signals=market_signals,
+            )
+            if adjustment_info:
+                evidence.external_signals = {
+                    **(evidence.external_signals or {}),
+                    **adjustment_info
+                }
+                rental_yield = (rent_est * 12 / fair_value * 100)
+
+            # =====================================================================
+            # STAGE 3: DEAL SCORING
+            # =====================================================================
+
             score, flags = self._compute_deal_score(
                 listing, fair_value, uncertainty, evidence, market_signals, rental_yield
             )
@@ -461,13 +491,13 @@ class ValuationService:
                 flags.append("index_disagreement")
 
             # =====================================================================
-            # STAGE 3: FUTURE PROJECTIONS (Market Drift Only)
+            # STAGE 4: FUTURE PROJECTIONS (Market Drift Only)
             # =====================================================================
             
             projections = self._compute_projections(fair_value, region_id, valuation_date, bucket_key)
 
             # =====================================================================
-            # STAGE 3b: RENT & YIELD PROJECTIONS
+            # STAGE 4b: RENT & YIELD PROJECTIONS
             # =====================================================================
 
             rent_projections = self.forecasting.forecast_rent(
@@ -482,7 +512,7 @@ class ValuationService:
             )
             
             # =====================================================================
-            # STAGE 4: MARKET SIGNALS
+            # STAGE 5: MARKET SIGNALS
             # =====================================================================
             
             # =====================================================================
@@ -982,6 +1012,75 @@ class ValuationService:
             self.calibrators.save(self.config.calibration_path)
         except Exception as e:
             logger.warning("calibration_save_failed", error=str(e))
+
+    def _apply_income_and_area_adjustments(
+        self,
+        *,
+        listing: CanonicalListing,
+        fair_value: float,
+        uncertainty: float,
+        rent_est: float,
+        rent_uncertainty: float,
+        rent_comps: List[CanonicalListing],
+        market_signals: Dict[str, float],
+    ) -> Tuple[float, float, Dict[str, float]]:
+        """
+        Blend comp-based value with income-based value and apply area adjustments.
+        """
+        adjusted_value = fair_value
+        adjusted_uncertainty = uncertainty
+        adjustments: Dict[str, float] = {}
+
+        if listing.listing_type == "sale" and rent_est > 0:
+            market_yield = market_signals.get("market_yield")
+            if market_yield and market_yield > 0:
+                income_value = (rent_est * 12) / (market_yield / 100.0)
+                max_delta = max(0.0, self.config.income_value_max_adjustment_pct)
+                min_val = fair_value * (1 - max_delta)
+                max_val = fair_value * (1 + max_delta)
+                income_value = float(min(max(income_value, min_val), max_val))
+
+                comp_factor = min(
+                    1.0,
+                    len(rent_comps) / max(1, self.config.min_rent_comps * 2),
+                )
+                unc_factor = max(0.0, 1.0 - min(float(rent_uncertainty), 0.9))
+                income_weight = self.config.income_value_weight_max * comp_factor * unc_factor
+                if income_weight < self.config.income_value_weight_min:
+                    income_weight = 0.0
+
+                if income_weight > 0:
+                    adjusted_value = adjusted_value * (1 - income_weight) + income_value * income_weight
+                    adjusted_uncertainty = adjusted_uncertainty * (
+                        1 + income_weight * min(float(rent_uncertainty), 0.5)
+                    )
+
+                adjustments.update({
+                    "income_value": float(income_value),
+                    "income_weight": float(income_weight),
+                    "rent_uncertainty": float(rent_uncertainty),
+                    "rent_comps_count": float(len(rent_comps)),
+                })
+
+        area_sentiment = float(market_signals.get("area_sentiment", 0.5))
+        area_development = float(market_signals.get("area_development", 0.5))
+        area_adjustment = (
+            (area_sentiment - 0.5) * self.config.area_sentiment_weight
+            + (area_development - 0.5) * self.config.area_development_weight
+        )
+        cap = self.config.area_adjustment_cap
+        area_adjustment = float(max(-cap, min(cap, area_adjustment)))
+        if area_adjustment != 0:
+            adjusted_value = adjusted_value * (1 + area_adjustment)
+            adjusted_uncertainty = adjusted_uncertainty * (1 + abs(area_adjustment))
+
+        adjustments.update({
+            "area_sentiment": area_sentiment,
+            "area_development": area_development,
+            "area_adjustment": area_adjustment,
+        })
+
+        return adjusted_value, adjusted_uncertainty, adjustments
     
     # =========================================================================
     # DEAL SCORING
@@ -1010,6 +1109,8 @@ class ValuationService:
         momentum = market_signals.get("momentum")
         liquidity = market_signals.get("liquidity")
         catchup = market_signals.get("catchup")
+        area_sentiment = market_signals.get("area_sentiment")
+        area_development = market_signals.get("area_development")
         if market_yield is None or market_yield <= 0:
             raise ValueError("missing_market_yield")
         if momentum is None or liquidity is None or catchup is None:
@@ -1023,13 +1124,20 @@ class ValuationService:
         momentum_component = float(np.tanh(momentum / 0.05))
         liquidity_component = float((liquidity - 0.5) / 0.5)
         catchup_component = float((catchup - 0.5) / 0.5)
+        if area_sentiment is not None and area_development is not None:
+            sent_component = (float(area_sentiment) - 0.5) / 0.5
+            dev_component = (float(area_development) - 0.5) / 0.5
+            area_component = float(0.5 * (sent_component + dev_component))
+        else:
+            area_component = 0.0
 
         raw_score = (
-            0.35 * value_component +
-            0.25 * yield_component +
-            0.20 * momentum_component +
-            0.10 * liquidity_component +
-            0.10 * catchup_component
+            0.32 * value_component +
+            0.23 * yield_component +
+            0.18 * momentum_component +
+            0.09 * liquidity_component +
+            0.08 * catchup_component +
+            0.10 * area_component
         )
 
         conviction = max(0.0, 1.0 - (uncertainty / 0.35))
@@ -1058,6 +1166,15 @@ class ValuationService:
 
         if liquidity < 0.3:
             flags.append("low_liquidity")
+
+        if area_sentiment is not None:
+            if area_sentiment > 0.65:
+                flags.append("positive_area_sentiment")
+            if area_sentiment < 0.35:
+                flags.append("negative_area_sentiment")
+
+        if area_development is not None and area_development > 0.65:
+            flags.append("strong_development")
 
         if evidence.calibration_status != "calibrated":
             flags.append("uncalibrated")
@@ -1206,12 +1323,15 @@ class ValuationService:
             raise ValueError("missing_market_profile")
 
         market_yield = self._get_market_yield(region_id, valuation_date)
+        area_data = self.area_intel.get_area_indicators(region_id)
 
         return {
             "momentum": profile.momentum_score,
             "liquidity": profile.liquidity_score,
             "catchup": profile.catchup_potential,
             "market_yield": market_yield,
+            "area_sentiment": float(area_data.get("sentiment_score", 0.5)),
+            "area_development": float(area_data.get("future_development_score", 0.5)),
         }
 
     def _adjust_rent_price(
@@ -1262,6 +1382,14 @@ class ValuationService:
         if evidence.top_comps:
             thesis += f"Based on {len(evidence.top_comps)} time-adjusted comps. "
 
+        if evidence.external_signals:
+            income_weight = evidence.external_signals.get("income_weight")
+            area_adjustment = evidence.external_signals.get("area_adjustment")
+            if income_weight:
+                thesis += f"Income blend {income_weight * 100:.0f}% from rent comps. "
+            if area_adjustment:
+                thesis += f"Area adjustment {area_adjustment * 100:+.1f}%. "
+
         if market_yield is not None:
             spread_pp = rental_yield - market_yield
             thesis += f"Yield {rental_yield:.1f}% vs market {market_yield:.1f}% ({spread_pp:+.1f}pp). "
@@ -1270,6 +1398,13 @@ class ValuationService:
 
         if momentum is not None and liquidity is not None:
             thesis += f"Momentum {momentum * 100:.1f}%/yr, liquidity {liquidity:.2f}. "
+
+        area_sentiment = market_signals.get("area_sentiment")
+        area_development = market_signals.get("area_development")
+        if area_sentiment is not None and area_development is not None:
+            thesis += (
+                f"Area sentiment {area_sentiment:.2f}, development {area_development:.2f}. "
+            )
 
         if evidence.calibration_status == "calibrated":
             thesis += "Intervals calibrated. "

@@ -10,7 +10,7 @@ def _run_module(module: str, args: List[str]) -> int:
 
 
 def _run_streamlit(args: List[str]) -> int:
-    cmd = [sys.executable, "-m", "streamlit", "run", "src/dashboard.py"] + args
+    cmd = [sys.executable, "-m", "streamlit", "run", "src/dashboard/app.py"] + args
     return subprocess.run(cmd, check=False).returncode
 
 
@@ -22,31 +22,37 @@ def main(argv: List[str] = None) -> int:
         p = subparsers.add_parser(name, help=help_text)
         p.add_argument("args", nargs=argparse.REMAINDER)
 
-    passthrough("harvest", "Run the listing harvester (wraps src.scripts.harvest_batch)")
-    passthrough("build-market", "Build macro + market/hedonic indices (wraps src.scripts.build_market_data)")
-    passthrough("build-index", "Build FAISS vector index (wraps src.scripts.build_vector_index)")
+    passthrough("harvest", "Run the listing harvester (wraps src.workflows.harvest)")
+    passthrough("build-market", "Build macro + market/hedonic indices (wraps src.workflows.market_data)")
+    passthrough("build-index", "Build FAISS vector index (wraps src.workflows.indexing)")
     passthrough("train", "Train the fusion model (wraps src.training.train)")
-    passthrough("backfill", "Backfill cached valuations (wraps src.scripts.backfill_valuations)")
+    passthrough("backfill", "Backfill cached valuations (wraps src.workflows.backfill)")
     passthrough("dashboard", "Launch Streamlit dashboard")
     passthrough("agent", "Run the cognitive agent (wraps src.main)")
-    passthrough("calibrators", "Update conformal calibrators (wraps src.scripts.update_calibrators)")
-    passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.scripts.clean_data)")
+    passthrough("calibrators", "Update conformal calibrators (wraps src.workflows.calibration)")
+    passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.workflows.maintenance)")
+    passthrough("preflight", "Refresh stale data and artifacts (wraps src.workflows.preflight)")
 
     args = parser.parse_args(argv)
     cmd_args = getattr(args, "args", []) or []
 
     module_map = {
-        "harvest": "src.scripts.harvest_batch",
-        "build-market": "src.scripts.build_market_data",
-        "build-index": "src.scripts.build_vector_index",
+        "harvest": "src.workflows.harvest",
+        "build-market": "src.workflows.market_data",
+        "build-index": "src.workflows.indexing",
         "train": "src.training.train",
-        "backfill": "src.scripts.backfill_valuations",
+        "backfill": "src.workflows.backfill",
         "agent": "src.main",
-        "calibrators": "src.scripts.update_calibrators",
-        "clean-data": "src.scripts.clean_data",
+        "calibrators": "src.workflows.calibration",
+        "clean-data": "src.workflows.maintenance",
+        "preflight": "src.workflows.preflight",
     }
 
     if args.command == "dashboard":
+        if "--skip-preflight" in cmd_args:
+            cmd_args = [arg for arg in cmd_args if arg != "--skip-preflight"]
+        else:
+            _run_module("src.workflows.preflight", [])
         return _run_streamlit(cmd_args)
 
     module = module_map.get(args.command)

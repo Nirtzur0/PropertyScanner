@@ -1,12 +1,12 @@
 import requests
-import sqlite3
-import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, Optional
 import structlog
 from bs4 import BeautifulSoup
 import re
 from src.core.config import DEFAULT_DB_PATH
+from src.repositories.base import resolve_db_url
+from src.repositories.macro_indicators import MacroIndicatorsRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -17,8 +17,9 @@ class MacroDataService:
     2. Euribor (Scraped)
     3. National Housing Indices (Idealista Scraped)
     """
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
-        self.db_path = db_path
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None):
+        self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
+        self.repo = MacroIndicatorsRepository(db_url=self.db_url)
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -131,30 +132,26 @@ class MacroDataService:
         """Merge all sources into SQLite"""
         # Collect all unique months
         all_months = set(ecb.keys()) | set(euribor.keys()) | set(idealista.keys())
-        
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        cursor = conn.cursor()
-        
+
+        records = []
         for month in sorted(all_months):
             # Get values or carry forward (simple forward fill logic needed in robust ver)
-            e_rate = ecb.get(month, 0.0) # Default 0 is bad, but MVP
+            e_rate = ecb.get(month, 0.0)  # Default 0 is bad, but MVP
             eur_rate = euribor.get(month, 0.0)
             ideal_nat = idealista.get(month, {}).get("national", 0.0)
             ideal_mad = idealista.get(month, {}).get("madrid", 0.0)
-            
+
             # Fallback/Default for 2024/25 if missing
-            if eur_rate == 0 and "2024" in month: eur_rate = 3.6
-            if eur_rate == 0 and "2025" in month: eur_rate = 2.5
-            if e_rate == 0: e_rate = 3.25 # Avg
-            
-            cursor.execute("""
-                INSERT OR REPLACE INTO macro_indicators 
-                (date, euribor_12m, ecb_deposit_rate, idealista_index_national, idealista_index_madrid)
-                VALUES (?, ?, ?, ?, ?)
-            """, (month, eur_rate, e_rate, ideal_nat, ideal_mad))
-            
-        conn.commit()
-        conn.close()
+            if eur_rate == 0 and "2024" in month:
+                eur_rate = 3.6
+            if eur_rate == 0 and "2025" in month:
+                eur_rate = 2.5
+            if e_rate == 0:
+                e_rate = 3.25  # Avg
+
+            records.append((month, eur_rate, e_rate, ideal_nat, ideal_mad))
+
+        self.repo.upsert_records(records)
         logger.info("macro_data_saved", months=len(all_months))
 
 if __name__ == "__main__":

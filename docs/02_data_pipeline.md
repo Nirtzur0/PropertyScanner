@@ -53,8 +53,9 @@ Recommended order (strict):
 | Artifact | Purpose | Produced by | Notes |
 | --- | --- | --- | --- |
 | `data/listings.db` (listings) | Primary dataset | `StorageService` | Core system of record |
-| `data/listings.db` (market/hedonic/macro/area) | Derived indices | `build_market_data.py` | Rebuildable |
-| `data/listings.db` (eri_metrics) | Registral liquidity/price signals | External import | Optional |
+| `data/listings.db` (market/hedonic) | Derived indices | `build_market_data.py` | Anchored by INE IPV |
+| `data/listings.db` (ine_ipv) | Official Stats | `OfficialSourcesAgent` | Fallback anchor |
+| `data/listings.db` (eri_metrics) | Registral Stats | `OfficialSourcesAgent` | Liquidity/Validation |
 | `data/listings.db` (valuations) | Cached deal analyses | `ValuationService` or `backfill_valuations.py` | Rebuildable |
 | `data/listings.db` (macro_scenarios) | Scenario forecasts | `macro_intel` crawler | Optional |
 | `data/vector_index.faiss` | Dense comp index | `build_vector_index.py` | Required for comps |

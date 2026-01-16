@@ -19,16 +19,18 @@ References:
 - Case-Shiller repeat-sales approach (adapted for listings)
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import structlog
 from sklearn.linear_model import Ridge
-from sklearn.preprocessing import OneHotEncoder
 from dataclasses import dataclass
 from src.core.config import DEFAULT_DB_PATH
+from src.repositories.base import resolve_db_url
+from src.repositories.hedonic_indices import HedonicIndicesRepository
+from src.repositories.listings import ListingsRepository
+from src.services.storage import StorageService
 
 logger = structlog.get_logger(__name__)
 
@@ -50,8 +52,16 @@ class HedonicIndexService:
     Provides time-adjustment API for comp price normalization.
     """
     
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
-        self.db_path = db_path
+    def __init__(
+        self,
+        db_path: str = str(DEFAULT_DB_PATH),
+        db_url: Optional[str] = None,
+        storage: Optional[StorageService] = None,
+    ):
+        self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
+        self.storage = storage or StorageService(db_url=self.db_url)
+        self.listings_repo = ListingsRepository(storage=self.storage)
+        self.repo = HedonicIndicesRepository(storage=self.storage)
         
         # Feature columns for hedonic model
         self.feature_cols = [
@@ -76,44 +86,7 @@ class HedonicIndexService:
     
     def _load_listings(self, region_name: str = None) -> pd.DataFrame:
         """Load listings with required features"""
-        conn = sqlite3.connect(self.db_path)
-
-        # Schema compatibility: some test DBs may not include listing_type.
-        try:
-            cols = [row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()]
-            has_listing_type = "listing_type" in cols
-        except Exception:
-            has_listing_type = False
-
-        query = """
-            SELECT 
-                id, 
-                price, 
-                surface_area_sqm,
-                bedrooms,
-                bathrooms,
-                has_elevator,
-                floor,
-                geohash,
-                city,
-                listed_at,
-                updated_at
-            FROM listings
-            WHERE price > 1000 
-              AND surface_area_sqm > 10
-              AND surface_area_sqm < 500
-        """
-
-        params = []
-        if has_listing_type:
-            query += " AND listing_type = 'sale'"
-
-        if region_name:
-            query += " AND LOWER(city) = ?"
-            params.append(region_name.lower().strip())
-
-        df = pd.read_sql(query, conn, params=params)
-        conn.close()
+        df = self.listings_repo.load_listings_for_hedonic(region_name)
         
         # Parse dates
         df['listed_at'] = pd.to_datetime(df['listed_at'], format='mixed', errors='coerce')
@@ -255,12 +228,7 @@ class HedonicIndexService:
         if len(month_date) > 7:
             month_date = month_date[:7]
         
-        conn = sqlite3.connect(self.db_path)
-
-        try:
-            result = self._query_index(conn, region_id, month_date)
-        finally:
-            conn.close()
+        result = self._query_index(region_id, month_date)
 
         if not result:
             logger.warning("hedonic_index_not_found", region=region_id, month=month_date)
@@ -268,28 +236,52 @@ class HedonicIndexService:
 
         return result
     
-    def _query_index(self, conn: sqlite3.Connection, region_id: str, month_date: str) -> Optional[IndexResult]:
+    def _query_index(self, region_id: str, month_date: str) -> Optional[IndexResult]:
         """Query database for index value"""
-        cursor = conn.cursor()
-        
-        # Try exact month match
-        cursor.execute("""
-            SELECT hedonic_index_sqm, r_squared, n_observations
-            FROM hedonic_indices
-            WHERE region_id = ? AND month_date LIKE ?
-            ORDER BY month_date DESC
-            LIMIT 1
-        """, (region_id, f"{month_date}%"))
-        
-        row = cursor.fetchone()
+        row = self.repo.fetch_index(region_id, month_date)
         if row:
+            value, r_squared, n_observations = row
             return IndexResult(
-                value=float(row[0]),
-                r_squared=float(row[1]) if row[1] else 0.0,
-                n_observations=int(row[2]) if row[2] else 0,
-                is_fallback=False
+                value=float(value),
+                r_squared=float(r_squared) if r_squared else 0.0,
+                n_observations=int(n_observations) if n_observations else 0,
+                is_fallback=False,
             )
-        
+
+        # Fallback: Try INE IPV (Official Benchmark)
+        ine_val = self._get_ine_benchmark(region_id, month_date)
+        if ine_val:
+            return IndexResult(
+                value=ine_val,
+                r_squared=0.0,
+                n_observations=0,
+                is_fallback=True,
+                fallback_reason="ine_ipv_anchor"
+            )
+
+        return None
+
+    def _get_ine_benchmark(self, region_id: str, month_date: str) -> Optional[float]:
+        """
+        Fetch official INE Housing Price Index (IPV) as a relative benchmark.
+        Note: IPV is an index (base 100), not a €/m² price. 
+        We use it to project from a known base price if available, or just return the index raw 
+        if the caller handles relative adjustment (which compute_adjustment_factor does).
+        """
+        try:
+            # simple month -> quarter (YYYY-02 -> 2024-Q1)
+            y, m = month_date.split('-')[:2]
+            q = (int(m) - 1) // 3 + 1
+            period = f"{y}-Q{q}"
+            
+            # 1. Try Specific Region
+            value = self.repo.fetch_ine_benchmark(region_id, period)
+            if value is not None:
+                return float(value)
+                
+        except Exception as e:
+            logger.warning("ine_fallback_failed", error=str(e))
+            
         return None
     
     def get_index_series(
@@ -309,19 +301,7 @@ class HedonicIndexService:
         Returns:
             pd.Series with month index and hedonic values
         """
-        conn = sqlite3.connect(self.db_path)
-        
-        query = """
-            SELECT month_date, hedonic_index_sqm
-            FROM hedonic_indices
-            WHERE region_id = ?
-              AND month_date >= ?
-              AND month_date <= ?
-            ORDER BY month_date ASC
-        """
-        
-        df = pd.read_sql(query, conn, params=(region_id, start_month, end_month))
-        conn.close()
+        df = self.repo.fetch_index_series(region_id, start_month, end_month)
         
         if df.empty:
             return pd.Series(dtype=float)
@@ -417,53 +397,49 @@ class HedonicIndexService:
         
         if df.empty:
             return
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Ensure table exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS hedonic_indices (
-                id TEXT PRIMARY KEY,
-                region_id TEXT,
-                month_date DATE,
-                hedonic_index_sqm FLOAT,
-                raw_median_sqm FLOAT,
-                r_squared FLOAT,
-                n_observations INT,
-                n_neighborhoods INT,
-                coefficients TEXT,
-                updated_at DATETIME
-            )
-        """)
-        
+
         region_id = region_name.lower().strip() if region_name else "all"
+        has_nh = self.repo.has_column("hedonic_indices", "n_neighborhoods")
+        updated_at = datetime.now().isoformat()
+
+        records = []
         
         for _, row in df.iterrows():
             month_str = str(row['month'])
             record_id = f"{region_id}|{month_str}"
             month_date = f"{month_str}-01"
-            
-            cursor.execute("""
-                INSERT OR REPLACE INTO hedonic_indices 
-                (id, region_id, month_date, hedonic_index_sqm, raw_median_sqm, 
-                 r_squared, n_observations, n_neighborhoods, coefficients, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                record_id,
-                region_id,
-                month_date,
-                float(row['hedonic_index']),
-                float(row['raw_median']),
-                float(row['r_squared']),
-                int(row['n_obs']),
-                int(row.get('n_neighborhoods', 1)),
-                str(row['coefficients']),
-                datetime.now().isoformat()
-            ))
-        
-        conn.commit()
-        conn.close()
+            n_neighborhoods = int(row.get('n_neighborhoods', 1))
+            if has_nh:
+                records.append(
+                    (
+                        record_id,
+                        region_id,
+                        month_date,
+                        float(row['hedonic_index']),
+                        float(row['raw_median']),
+                        float(row['r_squared']),
+                        int(row['n_obs']),
+                        n_neighborhoods,
+                        str(row['coefficients']),
+                        updated_at,
+                    )
+                )
+            else:
+                records.append(
+                    (
+                        record_id,
+                        region_id,
+                        month_date,
+                        float(row['hedonic_index']),
+                        float(row['raw_median']),
+                        float(row['r_squared']),
+                        int(row['n_obs']),
+                        str(row['coefficients']),
+                        updated_at,
+                    )
+                )
+
+        self.repo.upsert_indices(records)
         
         logger.info("hedonic_indices_saved", region=region_id, count=len(df))
 

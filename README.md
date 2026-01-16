@@ -1,10 +1,18 @@
-# 🏙️ Property Scanner: Multimodal AI Real Estate Valuation
+# 🦅 The Scout V2: Agentic Property Valuation System
 
-> **"Comparable sales tell you the price. The Property Scanner tells you the *value*."**
+> **"Comparable sales tell you the price. The Scout V2 tells you the *value*."**
 
-Traditional automated valuation models (AVMs) look at numbers: square meters, bedroom counts, and zip codes. But real estate is visual. A "renovated kitchen" creates value that a spreadsheet row can't capture.
+Traditional automated valuation models (AVMs) look at numbers: square meters, bedroom counts, and zip codes. But real estate is visual and contextual. A "renovated kitchen" creates value that a spreadsheet row can't capture.
 
-**Property Scanner** is an experimental AI Agent system that **"sees"** real estate. It creates a holistic valuation by fusing quantitative market data with qualitative insights extracted from property photos using Vision Multi-Modal Large Language Models (VLM).
+**The Scout V2** is an experimental AI Agent system that **"sees"** real estate. It creates a holistic valuation by fusing quantitative market data with qualitative insights extracted from property photos using Vision Multi-Modal Large Language Models (VLM).
+
+---
+
+## 🦅 The New "Command Center"
+The system now features a **state-of-the-art Dashboard** designed with a "Luxurious Utility" philosophy ("Midnight Gold" theme). It serves as an Investment Command Center:
+*   **Strategic Map**: Heatmaps overlaid with deal opportunities.
+*   **Investment Memo**: Auto-generated deal sheets with projected yield, fair value, and comparisons.
+*   **AI Vision Analysis**: Side-by-side comparison of agent descriptions vs. VLM visual inspections.
 
 ---
 
@@ -13,14 +21,9 @@ Traditional automated valuation models (AVMs) look at numbers: square meters, be
 At the heart of the system is the **PropertyFusionModel**, a custom PyTorch architecture designed to reason like a human appraiser.
 
 ### 1. The Senses (Inputs)
-*   **Structured Data**: Normalized features (sqm, floor, built year, location) encoded via tabular scalers.
-*   **Text & Context**: Title and descriptions encoded into dense vectors using **SentenceTransformers** (`all-MiniLM-L6-v2`).
-*   **Visual Intelligence (VLM)**:
-    *   We don't just crop images. We *read* them.
-    *   A local **Ollama** agent (running **LLaVA**) acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition, finishes, and architectural style.
-    *   VLM text is gated/whitelisted and sentiment is clamped to [-1, 1] so hallucinations cannot dominate valuation.
-*   **Semantic Extraction**:
-    *   **LLaMA 3** is used to parse messy crawler text into clean, structured facts (like `has_elevator`) and perform critical sentiment analysis to filter out "marketing fluff."
+*   **Structured Data**: Verified specs (sqm, floor, built year).
+*   **Official Ground Truth**: Anchored by **INE (Instituto Nacional de Estadística)** housing indices and **ERI (Registral Statistics)** for liquidity verification.
+*   **Visual Intelligence (VLM)**: A local **Ollama (LLaVA)** agent acts as a virtual inspector, analyzing property photos to extract structured descriptions of condition and finishes.
 
 ### 🤖 The Model Stack
 The project relies on a modular set of specialized AI models:
@@ -28,15 +31,10 @@ The project relies on a modular set of specialized AI models:
 | Task | Model | Platform | Purpose |
 | :--- | :--- | :--- | :--- |
 | **Logic/Cleaning** | `llama3` | Ollama | Parses descriptions, extracts facts, and assigns sentiment. |
+| **Orchestrator** | `gpt-oss` | Ollama | Cognitive agent supervisor (custom model). |
 | **Visuals** | `llava` | Ollama | Transcribes property photos into descriptive text. |
 | **Encoding** | `all-MiniLM-L6-v2` | PyTorch | Converts text into 384D mathematical vectors. |
-| **Similarity** | `ViT-B-32` | OpenCLIP | (Optional) Direct image vector encoding for search. |
-| **Predictions** | `PropertyFusionModel`| PyTorch | Cross-attention model that predicts log-residuals over a robust comp baseline. |
-| **Calibration** | `StratifiedCalibratorRegistry` | Custom | Updates prediction intervals from out-of-sample results. |
-
-### 2. The Logic (Architecture)
-*   **Market Awareness**: The model doesn't look at a property in isolation. It takes standard comps (comparable listings) and learns the *relationship* between the target property and its market context using a **Transformer-based Cross-Attention** mechanism.
-*   **Objective Function**: It is trained using weighted **Pinball (Quantile) Loss** on log-residuals over a robust comp baseline (time-normalized by the hedonic index), yielding p10/p50/p90.
+| **Predictions** | `PropertyFusionModel`| PyTorch | Cross-attention model that predicts log-residuals over a robust comp baseline (anchored by INE). |
 
 ---
 
@@ -44,18 +42,19 @@ The project relies on a modular set of specialized AI models:
 
 The system operates as a set of autonomous agents and processors.
 
-1.  **Discovery & Extraction**:
+1.  **Discovery & Ingestion**:
     *   `CrawlerAgents` scour target real estate portals.
-    *   Raw HTML is parsed into a canonical schema using robust extractors.
+    *   **OfficialSourcesAgent** fetches authenticated government stats (INE IPV, ERI Transactions) to serve as macro anchors.
     *   Data is immutable and stored in a local SQLite data lake (`data/listings.db`).
 
 2.  **Enrichment (The "VLM Pass")**:
     *   Agents identify listings with images but no deep descriptions.
     *   They invoke the local VLM to generate "visual inspections" (e.g., *"Modern kitchen, stone countertops, good conversational light"*).
 
-3.  **Training**:
-    *   The `Trainer` creates dynamic (Target + Comps) batches using the frozen FAISS retriever (time-safe comps only; target + duplicates removed).
-    *   Labels are time-normalized to a reference date via the hedonic index, then the model learns log-residuals over a robust comp baseline with label-quality weights.
+3.  **Valuation & Intelligence**:
+    *   **HedonicIndexService** computes time-adjustments, falling back to INE indices if local data is sparse.
+    *   **ERISignalsService** validates liquidity assumptions against real registry volume.
+    *   The model predicts a probability distribution (p10/p50/p90) for fair value.
 
 ---
 
@@ -81,6 +80,7 @@ poetry install
 # 3. Pull the required models
 ollama pull llava
 ollama pull llama3
+ollama pull gpt-oss # Or: ollama cp llama3 gpt-oss
 ```
 
 ### Usage
@@ -88,99 +88,31 @@ All commands below assume you're in the project root. Use the unified CLI to wra
 `python -m src.cli <command> -- [args]`
 
 #### 1. Collect Data (Bulk Harvest)
-Run the bulk harvester. You **must** run in Rent mode first to build the yield estimator stats.
-By default, `harvest_batch.py` builds a Spain-wide (province-level) area list from Pisos.com's `mapaweb` pages to avoid geo-redirects to a single city. To scope the crawl, pass `--start-url` (single area) or `--areas-file` (JSON list of start URLs).
-The harvester de-dupes URLs using a disk-backed store at `data/harvest_seen_urls.sqlite3` to keep memory usage stable even for very large crawls.
-
-**Option A: Harvest Rentals (Baseline)**
-*Required for Yield Estimation.*
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode rent
-```
-
-**Option B: Harvest Sales (Main)**
-*Finds active listings and estimates value/yield.*
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale
 ```
-Example: harvest only Madrid sales:
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --start-url "https://www.pisos.com/venta/pisos-madrid/"
-```
 
-**Option C: Clean Start (Reset & Restart)**
-If you want to wipe the local database (`data/listings.db`), harvest state, and URL de-dupe store to start from scratch:
-```bash
-# WARNING: This deletes all previously collected data!
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --clean
-```
-Note: You can use `--clean` with either `--mode sale` or `--mode rent`.
-
-Tip: If you run out of memory, reduce parallelism and/or batch size:
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli harvest -- --mode sale --max-workers 1 --process-batch-size 10 --no-vlm
-```
-
-#### 1b. Build Indices (for Projections)
-Price/rent projections use market + macro time series. After harvesting, build/update them:
+#### 1b. Build Market Data (Official & Derived)
+This step now ingests **INE & ERI Government Data** and builds hedonic indices.
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-market
 ```
-Optional: load ERI registral metrics into `eri_metrics` for liquidity + index-disagreement checks (lagged, not real-time).
 
 #### 1c. Build Vector Index (for Comps)
-Comparable retrieval requires the FAISS vector index:
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-index -- \
-  --model-name all-MiniLM-L6-v2 \
-  --vlm-policy gated
-```
-Note: training/inference enforce strict index metadata (encoder + VLM policy). Rebuild the index if you change either.
-
-#### 2. Run Orchestrator (Agent)
-Ask the AI Agent to find specific properties (complex reasoning).
-Requires at least one explicit area/URL.
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli agent -- "Find undervalued apartments in Madrid" "https://www.pisos.com/venta/pisos-madrid/"
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli build-index --model-name all-MiniLM-L6-v2
 ```
 
-#### 3. Train Models
-Run the training pipeline (requires data in `data/listings.db`).
+#### 2. Train Models
+Run the training pipeline (requires data + indices).
 ```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli train -- \
-  --epochs 10 \
-  --listing-type sale \
-  --label-source sold \
-  --use-retriever \
-  --retriever-model all-MiniLM-L6-v2 \
-  --retriever-vlm-policy gated \
-  --time-safe-comps \
-  --normalize-to latest
-```
-This writes `models/fusion_model.pt` and `models/fusion_config.json`.
-
-#### 3b. Update Calibration (optional but recommended)
-Use out-of-sample valuation results to refresh stratified conformal calibrators:
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli calibrators -- \
-  --input data/calibration_samples.jsonl \
-  --output models/calibration_registry.json
+export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli train --listing-type sale --normalize-to latest
 ```
 
-#### 4. Launch Dashboard
-Visualize listings, valuations, and VLM insights.
+#### 3. Launch "The Scout V2" Dashboard
+Visualize listings, valuations, and VLM insights in the new Command Center.
 ```bash
 export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli dashboard
-```
-Tip: For large databases, precompute/cache valuations (includes price/rent/yield projections) so the dashboard doesn’t re-run models on every refresh:
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli backfill -- --listing-type sale
-```
-
-#### 5. Utilities
-Fix metadata, timestamps, or geocoding issues in the existing data (does **not** delete records).
-```bash
-export PYTHONPATH=$PYTHONPATH:. && ./venv/bin/python -m src.cli clean-data
 ```
 
 ---

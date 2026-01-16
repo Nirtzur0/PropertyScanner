@@ -8,6 +8,7 @@ import structlog
 from src.core.config import DEFAULT_DB_PATH
 from src.services.feature_sanitizer import sanitize_listing_dict
 from src.services.storage import StorageService
+from src.services.listing_augmenter import ListingAugmentor
 from src.core.domain.schema import CanonicalListing
 from typing import List, Dict
 
@@ -103,6 +104,7 @@ def save_listings_to_db(listings: List[Dict], db_path: str = str(DEFAULT_DB_PATH
     db_path_str = str(db_path)
     db_url = db_path_str if db_path_str.startswith("sqlite:") else f"sqlite:///{db_path_str}"
     storage = StorageService(db_url=db_url)
+    augmenter = ListingAugmentor(db_url=db_url)
 
     canonical_listings: List[CanonicalListing] = []
     for listing in listings:
@@ -116,6 +118,7 @@ def save_listings_to_db(listings: List[Dict], db_path: str = str(DEFAULT_DB_PATH
         except Exception as e:
             logger.warning("canonicalize_failed", error=str(e), listing_id=listing.get("id", "unknown"))
 
+    canonical_listings = augmenter.augment_listings(canonical_listings)
     return storage.save_listings(canonical_listings)
 
 
@@ -127,7 +130,7 @@ def collect_data(target_count: int = 1500, db_path: str = str(DEFAULT_DB_PATH)):
         target_count: Minimum number of listings to collect
         db_path: Path to SQLite database
     """
-    config = {"source": "pisos_es", "max_pages": 3}
+    config = {"source": "pisos", "max_pages": 3}
     compliance = ComplianceManager(user_agent="PropertyScanner/1.0 Training Data Collection")
     
     crawler = PisosCrawlerAgent(config, compliance)

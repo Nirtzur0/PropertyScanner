@@ -121,64 +121,49 @@ class PisosNormalizerAgent(BaseAgent):
         bathrooms = None
         floor = None
         has_elevator = None
+        energy_rating = None
+
+        all_features_text = soup.select(
+            "div.features__value, li.features__list-item, p.ad-preview__char, ul.features-summary li"
+        )
+        full_feat_text = " ".join(
+            el.get_text(separator=" ", strip=True).lower() for el in all_features_text
+        )
         
         # 1. Parse bathrooms from chars list if present (e.g. "2 baños")
         if not bathrooms:
-             for c in chars:
-                 txt = c.get_text(strip=True).lower()
-                 if "baño" in txt:
-                     bathrooms = int(re.sub(r'[^\d]', '', txt) or 0)
+            for c in chars:
+                txt = c.get_text(strip=True).lower()
+                if "baño" in txt:
+                    bathrooms = int(re.sub(r'[^\d]', '', txt) or 0)
 
         # 2. Parse from Feature Blocks (Generic) if still missing
-        if not bathrooms or floor is None or has_elevator is None or energy_rating is None:
-             # Broaden search to include preview chars and feature values
-             all_features_text = soup.select("div.features__value, li.features__list-item, p.ad-preview__char, ul.features-summary li")
-             
-             # Convert all feature texts to a huge string for easy regex if structure fails
-             # Use a generic join
-             full_feat_text = " ".join([el.get_text(separator=" ", strip=True).lower() for el in all_features_text])
-             
-             if not bathrooms:
-                 # "2 baños"
-                 m = re.search(r'(\d+)\s*baño', full_feat_text)
-                 if m: bathrooms = int(m.group(1))
-                 
-             if floor is None:
-                 # "Planta 3ª", "Bajo", "3er piso"
-                 if "bajo" in full_feat_text:
-                     floor = 0
-                 else:
-                     m = re.search(r'planta\s*(\d+)', full_feat_text)
-                     if m: floor = int(m.group(1))
-                     
-             if has_elevator is None:
-                 if "con ascensor" in full_feat_text:
-                     has_elevator = True
-                 elif "sin ascensor" in full_feat_text:
-                     has_elevator = False
-                 # Often just "Ascensor" listed means true
-                 elif "ascensor" in full_feat_text:
-                     has_elevator = True
-            
-             # Energy Rating
-             # "Certificado energético", "Eficiencia energética: E"
-             if "certifi" in full_feat_text or "energé" in full_feat_text:
-                 if "trámite" in full_feat_text:
-                     # e.g. "en trámite"
-                     pass 
-                 else:
-                     # Look for "Letra E", "Calificación E", ": E"
-                     # Regex for single uppercase letter after colon or 'Letra'
-                     m = re.search(r'(?:energétic[oa]|calificación|letra)[:\s]+([A-G])\b', full_feat_text, re.IGNORECASE)
-                     if m:
-                         # We'll assume the string is the energy rating
-                         # But CanonicalListing expects a string.
-                         pass # handled below if I assign it
-                         # We need to define energy_rating variable first usually?
-                         # PisosNormalizer doesn't have it defined in the block above.
-                         
-        # Define explicitly if not set in loop
-        energy_rating = None
+        if not bathrooms:
+            # "2 baños"
+            m = re.search(r'(\d+)\s*baño', full_feat_text)
+            if m:
+                bathrooms = int(m.group(1))
+
+        if floor is None:
+            # "Planta 3ª", "Bajo", "3er piso"
+            if "bajo" in full_feat_text:
+                floor = 0
+            else:
+                m = re.search(r'planta\s*(\d+)', full_feat_text)
+                if m:
+                    floor = int(m.group(1))
+
+        if has_elevator is None:
+            if "con ascensor" in full_feat_text:
+                has_elevator = True
+            elif "sin ascensor" in full_feat_text:
+                has_elevator = False
+            # Often just "Ascensor" listed means true
+            elif "ascensor" in full_feat_text:
+                has_elevator = True
+
+        # Energy Rating
+        # "Certificado energético", "Eficiencia energética: E"
         m = re.search(r'(?:energétic[oa]|calificación|letra)[:\s]+([A-G])\b', full_feat_text, re.IGNORECASE)
         if m:
             energy_rating = m.group(1).upper()
@@ -353,7 +338,7 @@ class PisosNormalizerAgent(BaseAgent):
         # Construct
         canonical = CanonicalListing(
             id=unique_hash,
-            source_id="pisos",
+            source_id=raw.source_id,
             external_id=raw.external_id,
             url=full_url,
             title=title,

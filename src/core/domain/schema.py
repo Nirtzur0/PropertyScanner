@@ -60,6 +60,8 @@ class CanonicalListing(BaseModel):
     currency: Currency = Currency.EUR
     
     listing_type: str = "sale" # "sale" or "rent"
+    estimated_rent: Optional[float] = None
+    gross_yield: Optional[float] = None
     
     property_type: PropertyType
     

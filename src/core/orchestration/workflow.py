@@ -9,6 +9,7 @@ from src.services.storage import StorageService
 from src.services.valuation import ValuationService
 from src.services.retrieval import CompRetriever
 from src.services.valuation_persister import ValuationPersister
+from src.services.listing_augmenter import ListingAugmentor
 import pandas as pd
 from datetime import datetime
 
@@ -27,6 +28,7 @@ class Orchestrator:
         self.storage = StorageService() # Defaults to sqlite:///data/listings.db
         
         self.enricher = EnrichmentAgent(self.compliance)
+        self.augmenter = ListingAugmentor()
         self.valuation = ValuationService(self.storage)
         self.retriever = CompRetriever()
 
@@ -35,12 +37,12 @@ class Orchestrator:
             raise ValueError("target_area_required")
 
         # Determine source.
-        source_id = "idealista_es"
+        source_id = "idealista"
         search_path = target_area
         
         if target_area:
             if "pisos.com" in target_area:
-                 source_id = "pisos_es"
+                 source_id = "pisos"
                  search_path = target_area # Full URL for pisos
             elif target_area.startswith("file://"):
                  source_id = "idealista_local_test"
@@ -99,7 +101,10 @@ class Orchestrator:
         enriched_listings = enrich_resp.data
         logger.info("enrichment_completed", enriched=enrich_resp.metadata.get("enriched_count", 0))
 
-        # 3b. Index for Retrieval (MVP)
+        # 3b. Derived fields (rent/yield, missing city)
+        enriched_listings = self.augmenter.augment_listings(enriched_listings)
+
+        # 3c. Index for Retrieval (MVP)
         self.retriever.add_listings(enriched_listings)
 
         # 4. Save to DB

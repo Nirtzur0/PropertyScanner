@@ -35,6 +35,8 @@ class AgentState(TypedDict):
     enrichment_status: str
     filtered_count: int
     strategy: str
+    pipeline_status: Dict[str, Any]
+    pipeline_checked: bool
     
     # Final output
     final_report: Optional[str]

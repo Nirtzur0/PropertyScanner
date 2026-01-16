@@ -109,7 +109,7 @@ def _run_crawl_process(config: Dict[str, Any], input_payload: Dict[str, Any]) ->
                 raw_path = meta.file_path if meta else None
                 
                 raw_listing = RawListing(
-                    source_id="idealista",
+                    source_id=config.get("id", "idealista"),
                     external_id=lid,
                     url=url,
                     html_snapshot_path=raw_path,

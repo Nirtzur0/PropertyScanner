@@ -7,9 +7,7 @@ Regime-aware index drift forecaster:
 - Explicitly requires sufficient history (no fallbacks)
 """
 
-import sqlite3
-from datetime import timedelta
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -18,6 +16,8 @@ import structlog
 from src.core.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
 from src.core.domain.schema import ValuationProjection
 from src.services.area_intelligence import AreaIntelligenceService
+from src.repositories.base import resolve_db_url
+from src.repositories.market_data import MarketDataRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -34,14 +34,16 @@ class ForecastingService:
     def __init__(
         self,
         db_path: str = str(DEFAULT_DB_PATH),
+        db_url: Optional[str] = None,
         min_history_months: int = 12,
         return_window_months: int = 12,
         index_source: str = "market",
         forecast_mode: str = "analytic",
         tft_model_path: str = str(TFT_MODEL_PATH),
     ):
-        self.db_path = db_path
-        self.area_intelligence = AreaIntelligenceService(db_path)
+        self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
+        self.area_intelligence = AreaIntelligenceService(db_url=self.db_url)
+        self.market_repo = MarketDataRepository(db_url=self.db_url)
         self.min_history_months = max(6, int(min_history_months))
         self.return_window_months = max(self.min_history_months, int(return_window_months))
         self.index_source = index_source.strip().lower()
@@ -51,45 +53,13 @@ class ForecastingService:
         if self.forecast_mode == "tft":
             try:
                 from src.training.forecasting_tft import TFTForecastingService
-                self.tft = TFTForecastingService(db_path=self.db_path, model_path=tft_model_path)
+                self.tft = TFTForecastingService(db_path=db_path, model_path=tft_model_path)
             except Exception as e:
                 raise RuntimeError("tft_unavailable") from e
 
     def _load_time_series(self, region_id: str) -> pd.DataFrame:
         """Load price index history joined with macro indicators and area intelligence."""
-        conn = sqlite3.connect(self.db_path)
-        if self.index_source == "hedonic":
-            query = """
-                SELECT
-                    hi.month_date,
-                    hi.hedonic_index_sqm as index_value,
-                    mi.inventory_count,
-                    mac.euribor_12m,
-                    mac.ecb_deposit_rate
-                FROM hedonic_indices hi
-                LEFT JOIN market_indices mi ON hi.region_id = mi.region_id AND hi.month_date = mi.month_date
-                LEFT JOIN macro_indicators mac ON hi.month_date = mac.date
-                WHERE hi.region_id = ?
-                ORDER BY hi.month_date ASC
-            """
-        else:
-            query = """
-                SELECT
-                    mi.month_date,
-                    mi.price_index_sqm as index_value,
-                    mi.inventory_count,
-                    mac.euribor_12m,
-                    mac.ecb_deposit_rate
-                FROM market_indices mi
-                LEFT JOIN macro_indicators mac ON mi.month_date = mac.date
-                WHERE mi.region_id = ?
-                ORDER BY mi.month_date ASC
-            """
-
-        try:
-            df = pd.read_sql(query, conn, params=(region_id,))
-        finally:
-            conn.close()
+        df = self.market_repo.load_price_series(region_id, index_source=self.index_source)
 
         if df.empty:
             return df
@@ -112,24 +82,7 @@ class ForecastingService:
 
     def _load_rent_time_series(self, region_id: str) -> pd.DataFrame:
         """Load rent index history joined with macro indicators and area intelligence."""
-        conn = sqlite3.connect(self.db_path)
-        query = """
-            SELECT
-                mi.month_date,
-                mi.rent_index_sqm as index_value,
-                mi.inventory_count,
-                mac.euribor_12m,
-                mac.ecb_deposit_rate
-            FROM market_indices mi
-            LEFT JOIN macro_indicators mac ON mi.month_date = mac.date
-            WHERE mi.region_id = ?
-            ORDER BY mi.month_date ASC
-        """
-
-        try:
-            df = pd.read_sql(query, conn, params=(region_id,))
-        finally:
-            conn.close()
+        df = self.market_repo.load_rent_series(region_id)
 
         if df.empty:
             return df

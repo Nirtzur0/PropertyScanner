@@ -4,15 +4,12 @@ from typing import List, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import IntegrityError
 from src.core.domain.models import Base, DBListing
 from src.core.domain.schema import CanonicalListing
 from src.core.migrations import run_migrations
-from src.services.enrichment_service import EnrichmentService
 from src.services.feature_sanitizer import sanitize_listing_features
 from src.core.config import DEFAULT_DB_URL
-from src.services.description_analyst import DescriptionAnalyst
-from src.services.rent_estimator import RentEstimator
+import geolib.geohash
 
 logger = structlog.get_logger()
 
@@ -39,9 +36,6 @@ class StorageService:
             logger.warning("migrations_failed", error=str(e))
 
         self.SessionLocal = sessionmaker(bind=self.engine)
-        self.enrichment_service = EnrichmentService()
-        self.description_analyst = DescriptionAnalyst()
-        self.rent_estimator = RentEstimator(db_url)
 
     def get_session(self) -> Session:
         return self.SessionLocal()
@@ -154,20 +148,20 @@ class StorageService:
                     if item.image_embeddings:
                         db_item.image_embeddings = item.image_embeddings
                     
-                    # Enrichment (Main Flow)
-                    # Automatically fill missing city/data
-                    self.enrichment_service.enrich_db_listing(db_item)
-
                     # Persistence of new fields
                     if hasattr(item, "listing_type") and item.listing_type:
                         db_item.listing_type = item.listing_type
-                        
-                    # Rental Estimation (Only for Sales)
-                    if db_item.listing_type == "sale" and db_item.price > 0:
-                        rent = self.rent_estimator.estimate_rent(item)
-                        if rent:
-                            db_item.estimated_rent = rent
-                            db_item.gross_yield = self.rent_estimator.calculate_yield(db_item.price, rent)
+
+                    if hasattr(item, "estimated_rent") and item.estimated_rent is not None:
+                        db_item.estimated_rent = item.estimated_rent
+                    if hasattr(item, "gross_yield") and item.gross_yield is not None:
+                        db_item.gross_yield = item.gross_yield
+
+                    if db_item.lat is not None and db_item.lon is not None and not db_item.geohash:
+                        try:
+                            db_item.geohash = geolib.geohash.encode(db_item.lat, db_item.lon, 9)
+                        except Exception as e:
+                            logger.warning("geohash_failed", id=item.id, error=str(e))
                     
                 except Exception as e:
                     logger.error("db_save_item_error", id=item.id, error=str(e))

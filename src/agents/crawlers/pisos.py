@@ -68,7 +68,7 @@ def _run_pisos_crawl(config: Dict, input_payload: Dict) -> List[RawListing]:
                 lid = url.split("-")[-1].replace("/", "")
                 
                 raw = RawListing(
-                    source_id="pisos",
+                    source_id=config.get("id", "pisos"),
                     external_id=lid,
                     url=url,
                     raw_data={"html_snippet": full_html, "is_detail_page": True},

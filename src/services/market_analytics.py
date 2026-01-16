@@ -1,12 +1,13 @@
-import sqlite3
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 import structlog
 from src.core.domain.schema import MarketProfile, ValuationProjection, CanonicalListing
 from src.core.config import DEFAULT_DB_PATH
 from src.services.eri_signals import ERISignalsService
+from src.repositories.base import resolve_db_url
+from src.repositories.listings import ListingsRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -16,33 +17,27 @@ class MarketAnalyticsService:
     Computes market trends, liquidity scores, and value projections.
     Implements the "Triple-Signal" approach.
     """
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
-        self.db_path = db_path
-        self.eri = ERISignalsService(db_path=db_path)
+    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None):
+        self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
+        self.eri = ERISignalsService(db_url=self.db_url)
+        self.listings_repo = ListingsRepository(db_url=self.db_url)
 
     def _get_listings_df(self, city: str = None) -> pd.DataFrame:
         """Load listings into a DataFrame for vectorized analysis"""
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        query = "SELECT * FROM listings"
-        if city:
-            query += f" WHERE city = '{city}'"
-        
         try:
-            df = pd.read_sql(query, conn)
+            df = self.listings_repo.load_listings_df(city=city)
             # Ensure types
             df['price'] = pd.to_numeric(df['price'], errors='coerce')
             df['surface_area_sqm'] = pd.to_numeric(df['surface_area_sqm'], errors='coerce')
             df['listed_at'] = pd.to_datetime(df['listed_at'])
-            
+
             # Derived
             df['price_sqm'] = df['price'] / df['surface_area_sqm']
-            
+
             return df
         except Exception as e:
             logger.error("dataframe_load_failed", error=str(e))
             return pd.DataFrame()
-        finally:
-            conn.close()
 
     def calculate_momentum(self, df_zone: pd.DataFrame) -> Tuple[float, float]:
         """

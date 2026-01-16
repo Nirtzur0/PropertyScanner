@@ -67,6 +67,7 @@ Traditional models predict price directly from features ($f(x) \rightarrow y$). 
 - The **Target Listing** queries the **Comparable Listings**.
 - The model learns "how much better or worse" the target is compared to the comps.
 - **Baseline**: A robust comp aggregate (weighted median + MAD filtering) is computed outside the model.
+- **Anchoring**: If internal comp density is low, the baseline calculation is **anchored** by the official **INE IPV** index to prevent model drift in sparse areas.
 - **Residual**: The model predicts log-residuals over this baseline.
 
 ### 2. Quantile Regression (Uncertainty)

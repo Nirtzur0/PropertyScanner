@@ -86,9 +86,14 @@ class IdealistaNormalizerAgent(BaseAgent):
             
         for txt in feature_texts:
             # Sqm
-            if "m²" in txt or "construido" in txt:
+            if "m²" in txt:
                  sqm_match = re.search(r'(\d+)', txt.replace('.', ''))
                  if sqm_match: sqm = float(sqm_match.group(1))
+            elif "construido" in txt and "año" not in txt and "19" not in txt and "20" not in txt:
+                 # Fallback but risky if it's year
+                 sqm_match = re.search(r'(\d+)', txt.replace('.', ''))
+                 if sqm_match and float(sqm_match.group(1)) < 1800: # Sanity check vs year
+                    sqm = float(sqm_match.group(1))
             
             # Bedrooms
             elif "hab" in txt or "bedroom" in txt:
