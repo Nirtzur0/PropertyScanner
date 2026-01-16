@@ -14,6 +14,12 @@ class AgentFactory:
         "idealista_local_test": ("src.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
         "pisos_es": ("src.agents.crawlers.pisos", "PisosCrawlerAgent"),
         "pisos": ("src.agents.crawlers.pisos", "PisosCrawlerAgent"),
+        "immobiliare_it": ("src.agents.crawlers.immobiliare", "ImmobiliareCrawlerAgent"),
+        "immobiliare": ("src.agents.crawlers.immobiliare", "ImmobiliareCrawlerAgent"),
+        "rightmove_uk": ("src.agents.crawlers.rightmove", "RightmoveCrawlerAgent"),
+        "rightmove": ("src.agents.crawlers.rightmove", "RightmoveCrawlerAgent"),
+        "zoopla_uk": ("src.agents.crawlers.zoopla", "ZooplaCrawlerAgent"),
+        "zoopla": ("src.agents.crawlers.zoopla", "ZooplaCrawlerAgent"),
     }
     
     _NORMALIZERS: Dict[str, Tuple[str, str]] = {
@@ -22,6 +28,12 @@ class AgentFactory:
         "idealista_local_test": ("src.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "pisos_es": ("src.agents.processors.pisos", "PisosNormalizerAgent"),
         "pisos": ("src.agents.processors.pisos", "PisosNormalizerAgent"),
+        "immobiliare_it": ("src.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
+        "immobiliare": ("src.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
+        "rightmove_uk": ("src.agents.processors.rightmove", "RightmoveNormalizerAgent"),
+        "rightmove": ("src.agents.processors.rightmove", "RightmoveNormalizerAgent"),
+        "zoopla_uk": ("src.agents.processors.zoopla", "ZooplaNormalizerAgent"),
+        "zoopla": ("src.agents.processors.zoopla", "ZooplaNormalizerAgent"),
     }
 
     @classmethod

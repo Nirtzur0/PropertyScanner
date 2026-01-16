@@ -77,6 +77,10 @@ class ForecastingService:
         area_data = self.area_intelligence.get_area_indicators(region_id)
         df["area_sentiment"] = area_data.get("sentiment_score", 0.5)
         df["area_development"] = area_data.get("future_development_score", 0.5)
+        area_confidence = area_data.get("area_confidence")
+        if area_confidence is None:
+            area_confidence = 1.0
+        df["area_confidence"] = float(area_confidence)
 
         return df
 
@@ -100,6 +104,10 @@ class ForecastingService:
         area_data = self.area_intelligence.get_area_indicators(region_id)
         df["area_sentiment"] = area_data.get("sentiment_score", 0.5)
         df["area_development"] = area_data.get("future_development_score", 0.5)
+        area_confidence = area_data.get("area_confidence")
+        if area_confidence is None:
+            area_confidence = 1.0
+        df["area_confidence"] = float(area_confidence)
 
         return df
 
@@ -125,8 +133,12 @@ class ForecastingService:
         macro_adj = -0.0025 * rate_trend
         sentiment = float(window["area_sentiment"].iloc[-1])
         development = float(window["area_development"].iloc[-1])
-        sentiment_adj = (sentiment - 0.5) * 0.002
-        development_adj = (development - 0.5) * 0.0015
+        area_conf = float(window.get("area_confidence", pd.Series([1.0])).iloc[-1])
+        if pd.isna(area_conf):
+            area_conf = 1.0
+        area_conf = max(0.0, min(1.0, area_conf))
+        sentiment_adj = (sentiment - 0.5) * 0.002 * area_conf
+        development_adj = (development - 0.5) * 0.0015 * area_conf
 
         drift = base_drift + macro_adj + sentiment_adj + development_adj
         vol = max(vol, 1e-4)

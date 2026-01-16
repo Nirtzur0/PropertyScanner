@@ -285,7 +285,7 @@ def train_model(
     use_vlm: bool = True,
     k_folds: int = 1,
     listing_type: str = "sale",
-    label_source: str = "ask",
+    label_source: str = "auto",
     time_safe_comps: bool = True,
     normalize_to: str = "latest",
     use_retriever: bool = True,
@@ -469,7 +469,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     parser.add_argument("--no-vlm", action="store_true", help="Disable VLM")
     parser.add_argument("--listing-type", default="sale", choices=["sale", "rent", "all"])
-    parser.add_argument("--label-source", default="ask", choices=["ask", "sold"])
+    parser.add_argument("--label-source", default="auto", choices=["ask", "sold", "auto"])
     parser.add_argument("--normalize-to", default="latest", help="latest, none, or ISO date for hedonic normalization")
     parser.add_argument("--time-safe-comps", action="store_true", help="Enforce comp dates <= target date")
     parser.add_argument("--no-time-safe-comps", dest="time_safe_comps", action="store_false")

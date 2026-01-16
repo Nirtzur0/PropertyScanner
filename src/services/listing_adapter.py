@@ -64,6 +64,7 @@ def db_listing_to_canonical(db_item: DBListing) -> CanonicalListing:
         listing_type=getattr(db_item, "listing_type", "sale") or "sale",
         estimated_rent=getattr(db_item, "estimated_rent", None),
         gross_yield=getattr(db_item, "gross_yield", None),
+        sold_price=getattr(db_item, "sold_price", None),
         property_type=normalize_property_type(db_item.property_type),
         bedrooms=to_int(db_item.bedrooms),
         bathrooms=to_int(db_item.bathrooms),
@@ -81,6 +82,7 @@ def db_listing_to_canonical(db_item: DBListing) -> CanonicalListing:
         listed_at=db_item.listed_at,
         updated_at=db_item.updated_at,
         status=db_item.status,
+        sold_at=getattr(db_item, "sold_at", None),
         tags=db_item.tags or [],
     )
     return sanitize_listing_features(listing)

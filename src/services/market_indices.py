@@ -43,7 +43,16 @@ class MarketIndexService:
             # Use 'mixed' format to handle ISO and other string formats robustly
             df["listed_at"] = pd.to_datetime(df["listed_at"], format="mixed", errors="coerce")
             df["updated_at"] = pd.to_datetime(df["updated_at"], format="mixed", errors="coerce")
-            df["price_sqm"] = df["price"] / df["surface_area_sqm"]
+            sold_price = df.get("sold_price")
+            if sold_price is not None:
+                df["sold_price"] = pd.to_numeric(df["sold_price"], errors="coerce")
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+            effective_price = df["price"]
+            if "sold_price" in df.columns:
+                sold_mask = df.get("status").astype(str).str.lower() == "sold"
+                sold_override = sold_mask & df["sold_price"].notna() & (df["sold_price"] > 0)
+                effective_price = effective_price.where(~sold_override, df["sold_price"])
+            df["price_sqm"] = effective_price / df["surface_area_sqm"]
 
             if has_listing_type:
                 df["listing_type"] = (
@@ -133,6 +142,12 @@ class MarketIndexService:
                         ]
                     )
 
+                    # Sold count (if sold_at is tracked)
+                    sold_count = 0
+                    if "sold_at" in df_reg.columns:
+                        sold_at = pd.to_datetime(df_reg["sold_at"], errors="coerce")
+                        sold_count = int(((sold_at >= month_start) & (sold_at <= month_end)).sum())
+
                     # Absorption (proxy)
                     # Simple turnover rate: new / total
                     absorption = new_count / inventory if inventory > 0 else 0
@@ -155,7 +170,7 @@ class MarketIndexService:
                             float(rent_index) if rent_index is not None and not pd.isna(rent_index) else None,
                             int(inventory),
                             int(new_count),
-                            0,  # Sold count placeholder (need explicit sold status history)
+                            int(sold_count),
                             float(absorption),
                             int(median_dom) if not pd.isna(median_dom) else 0,
                             0.0,  # Price cut placeholder
@@ -171,7 +186,7 @@ class MarketIndexService:
                             float(rent_index) if rent_index is not None and not pd.isna(rent_index) else None,
                             int(inventory),
                             int(new_count),
-                            0,  # Sold count placeholder (need explicit sold status history)
+                            int(sold_count),
                             float(absorption),
                             int(median_dom) if not pd.isna(median_dom) else 0,
                             0.0,  # Price cut placeholder

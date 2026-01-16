@@ -42,7 +42,7 @@ Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `Ag
 **Typical Flow**: `Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report`
 
 ## Operational Requirements
-- Provide explicit `areas` (search paths or URLs) when invoking the cognitive orchestrator.
+- Provide `areas` as search URLs, search paths, or plain location strings. The source router maps them to the correct site using `config/sources.yaml`.
 - Provide at least one LLM provider (Ollama, Gemini, or OpenAI) for Supervisor + Report.
 - Provide a strategy in state (default: `balanced`) if running the graph directly.
 - Evaluation is delegated to `ValuationService` and requires comps, indices, model artifacts, and a retriever metadata match (encoder + VLM policy).

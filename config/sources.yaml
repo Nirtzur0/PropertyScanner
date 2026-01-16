@@ -20,6 +20,8 @@ sources:
     base_url: "https://www.idealista.com"
     type: "html_browser"  # Will likely need browser automation
     enabled: true
+    countries: ["ES"]
+    search_path_template: "/venta-viviendas/{slug}/"
     rate_limit:
       requests: 1
       period_seconds: 10 # Very conservative for MVP
@@ -33,10 +35,58 @@ sources:
     base_url: "https://www.pisos.com"
     type: "html_browser"
     enabled: true
+    countries: ["ES"]
+    search_url_template: "https://www.pisos.com/venta/pisos-{slug}/"
     rate_limit:
       requests: 1
       period_seconds: 2
     compliance:
       robots_txt_url: "https://www.pisos.com/robots.txt"
       allowed_paths: ["/comprar/"]
+      disallowed_paths: ["/login"]
+
+  - id: "rightmove_uk"
+    name: "Rightmove UK"
+    base_url: "https://www.rightmove.co.uk"
+    type: "html"
+    enabled: true
+    countries: ["GB"]
+    listing_url_template: "https://www.rightmove.co.uk/properties/{listing_id}"
+    rate_limit:
+      requests: 1
+      period_seconds: 5
+    compliance:
+      robots_txt_url: "https://www.rightmove.co.uk/robots.txt"
+      allowed_paths: ["/property-for-sale", "/property-to-rent", "/properties/"]
+      disallowed_paths: ["/login"]
+
+  - id: "zoopla_uk"
+    name: "Zoopla UK"
+    base_url: "https://www.zoopla.co.uk"
+    type: "html"
+    enabled: true
+    countries: ["GB"]
+    search_url_template: "https://www.zoopla.co.uk/for-sale/property/{slug}/"
+    listing_url_template: "https://www.zoopla.co.uk/for-sale/details/{listing_id}/"
+    rate_limit:
+      requests: 1
+      period_seconds: 5
+    compliance:
+      robots_txt_url: "https://www.zoopla.co.uk/robots.txt"
+      allowed_paths: ["/for-sale", "/to-rent", "/details/"]
+      disallowed_paths: ["/login"]
+
+  - id: "immobiliare_it"
+    name: "Immobiliare.it"
+    base_url: "https://www.immobiliare.it"
+    type: "html_browser"
+    enabled: true
+    countries: ["IT"]
+    search_url_template: "https://www.immobiliare.it/vendita-case/{slug}/"
+    rate_limit:
+      requests: 1
+      period_seconds: 3
+    compliance:
+      robots_txt_url: "https://www.immobiliare.it/robots.txt"
+      allowed_paths: ["/vendita-case", "/affitto-case", "/annunci/"]
       disallowed_paths: ["/login"]

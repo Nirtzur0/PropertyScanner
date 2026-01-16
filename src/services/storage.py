@@ -156,6 +156,10 @@ class StorageService:
                         db_item.estimated_rent = item.estimated_rent
                     if hasattr(item, "gross_yield") and item.gross_yield is not None:
                         db_item.gross_yield = item.gross_yield
+                    if hasattr(item, "sold_price") and item.sold_price is not None:
+                        db_item.sold_price = item.sold_price
+                        if item.status == "sold" and item.sold_at and not db_item.sold_at:
+                            db_item.sold_at = item.sold_at
 
                     if db_item.lat is not None and db_item.lon is not None and not db_item.geohash:
                         try:

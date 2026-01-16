@@ -5,7 +5,8 @@ import structlog
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from src.workflows.preflight import add_preflight_args, run_preflight
+from src.api.pipeline import PipelineAPI
+from src.workflows.preflight import add_preflight_args
 
 logger = structlog.get_logger(__name__)
 
@@ -34,12 +35,13 @@ def schedule_preflight(
     run_on_start: bool,
     preflight_kwargs: Dict[str, Any],
 ) -> None:
+    api = PipelineAPI()
     scheduler = BlockingScheduler()
 
     def _job() -> None:
         logger.info("preflight_scheduled_run_started")
         try:
-            run_preflight(**preflight_kwargs)
+            api.preflight(**preflight_kwargs)
             logger.info("preflight_scheduled_run_completed")
         except Exception as exc:
             logger.error("preflight_scheduled_run_failed", error=str(exc))

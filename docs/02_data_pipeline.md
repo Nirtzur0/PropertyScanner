@@ -11,6 +11,7 @@ flowchart LR
     UI["src/cli.py dashboard"] --> Preflight["src/workflows/preflight.py"]
     Scheduler["src/workflows/scheduler.py"] --> Preflight
     Preflight --> Harvest
+    Preflight --> Transactions
     Preflight --> MarketData
     Preflight --> Index
     Preflight --> Train
@@ -20,6 +21,7 @@ flowchart LR
 - `python3 -m src.cli dashboard` triggers preflight unless `--skip-preflight` is passed.
 - `python3 -m src.cli schedule` runs preflight on an interval or cron schedule (canonical automation entry point).
 - Preflight uses `PipelineStateService` to compare listing freshness against market data, index files, and model artifacts.
+- If `--transactions-path` is provided, preflight ingests sold transactions before market data and training.
 
 ## 1. Ingestion (Harvester with Quality Gate)
 
@@ -39,6 +41,16 @@ flowchart LR
 
 - URL de-dupe and resume are handled by `SeenUrlStore` and `HarvestState`.
 - Listings are validated before persistence. If invalid ratio exceeds threshold, the harvest halts.
+
+## 1.5 Transactions (Sold/Registry Ingestion)
+
+```
+python3 -m src.cli transactions -- --path data/transactions.csv
+```
+
+- `src/workflows/transactions.py` ingests sold price and sold date updates.
+- Records are matched by `listing_id`, `(source_id, external_id)`, or `url`.
+- `status`, `sold_price`, and `sold_at` are updated so downstream training and valuation use ground-truth sales.
 
 ## 2. Derived Data and Caches
 
@@ -65,11 +77,12 @@ flowchart LR
 
 Recommended order (manual path):
 1) Harvest + normalize + store
-2) Build market data (macro + indices)
-3) Build vector index
-4) Train fusion model
-5) Backfill valuations
-6) Update calibration registry
+2) Ingest transactions (sold/registry data)
+3) Build market data (macro + indices)
+4) Build vector index
+5) Train fusion model
+6) Backfill valuations
+7) Update calibration registry
 
 ## 3. Quality Gates and Run Logs
 
@@ -104,7 +117,7 @@ sequenceDiagram
     participant Train as Trainer
 
     Train->>DB: Load listing + time-safe comps
-    Train->>Train: Normalize labels to reference date (hedonic index)
+    Train->>Train: Normalize labels to reference date (hedonic for sale, rent index for rent)
     Train->>Train: Compute robust comp baseline and predict log-residuals
     Train->>Train: Weighted pinball loss optimization
 ```

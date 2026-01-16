@@ -45,6 +45,7 @@ class DBListing(Base):
     listing_type = Column(String, default="sale") # "sale" or "rent"
     estimated_rent = Column(Float, nullable=True) # For sales: inferred rent
     gross_yield = Column(Float, nullable=True)    # For sales: (rent*12)/price
+    sold_price = Column(Float, nullable=True)     # Closed transaction price when available
     
     # Meta
     image_urls = Column(JSON, default=list)

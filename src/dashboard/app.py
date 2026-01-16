@@ -12,9 +12,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from src.services.storage import StorageService
-from src.services.valuation import ValuationService
-from src.services.retrieval import CompRetriever
+from src.api.pipeline import PipelineAPI
 from src.services.listing_adapter import db_listing_to_canonical
 from src.services.pipeline_state import PipelineStateService
 from src.core.domain.models import DBListing
@@ -35,10 +33,8 @@ load_css()
 
 @st.cache_resource
 def get_services():
-    storage = StorageService()
-    valuation = ValuationService(storage)
-    retriever = CompRetriever()
-    return storage, valuation, retriever
+    api = PipelineAPI()
+    return api.storage, api.valuation, api.retriever
 
 
 storage, valuation, retriever = get_services()

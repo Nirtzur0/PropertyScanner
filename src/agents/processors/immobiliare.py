@@ -92,6 +92,9 @@ class ImmobiliareNormalizerAgent(BaseAgent):
         bedrooms = None
         bathrooms = None
         sqm = None
+        floor = None
+        has_elevator = None
+        energy_rating = None
         
         # Extract from DOM feature list
         # .in-feat__item (New UI)
@@ -131,7 +134,6 @@ class ImmobiliareNormalizerAgent(BaseAgent):
                 
             # Floor (Piano)
             # "piano terra", "piano 1", "3 piano"
-            floor = None
             if "piano terra" in ftxt or "piano rialzato" in ftxt:
                 floor = 0
             else:
@@ -139,15 +141,37 @@ class ImmobiliareNormalizerAgent(BaseAgent):
                 if m_floor: floor = int(m_floor.group(1))
             
             # Elevator (Ascensore)
-            has_elevator = None
             if "ascensore" in ftxt:
                 has_elevator = True
                 
             # Energy Rating (Classe energetica) or APE
-            energy_rating = None
             m_en = re.search(r'(?:classe|energetica|ape)[:\s]+([A-G])\b', ftxt, re.IGNORECASE)
             if m_en:
                 energy_rating = m_en.group(1).upper()
+
+        # JSON-LD fallback for numeric features (less brittle than DOM)
+        if json_data:
+            if sqm is None and json_data.get("floorSize"):
+                floor_size = json_data.get("floorSize") or {}
+                raw_val = floor_size.get("value")
+                unit_code = str(floor_size.get("unitCode") or "").upper()
+                try:
+                    sqm_val = float(raw_val)
+                    if unit_code in {"FTK", "FT2", "SQF", "SQFT"}:
+                        sqm_val *= 0.092903
+                    sqm = float(sqm_val)
+                except (TypeError, ValueError):
+                    pass
+            if bedrooms is None and json_data.get("numberOfRooms") is not None:
+                try:
+                    bedrooms = int(float(json_data.get("numberOfRooms")))
+                except (TypeError, ValueError):
+                    pass
+            if bathrooms is None and json_data.get("numberOfBathroomsTotal") is not None:
+                try:
+                    bathrooms = int(float(json_data.get("numberOfBathroomsTotal")))
+                except (TypeError, ValueError):
+                    pass
 
         # Images
         image_urls = []
@@ -175,12 +199,12 @@ class ImmobiliareNormalizerAgent(BaseAgent):
             except: pass
 
         # Construct
-        unique_string = f"immobiliare_it_{raw.external_id}"
+        unique_string = f"{raw.source_id}_{raw.external_id}"
         unique_hash = hashlib.md5(unique_string.encode()).hexdigest()
 
         canonical = CanonicalListing(
             id=unique_hash,
-            source_id="immobiliare_it",
+            source_id=raw.source_id,
             external_id=raw.external_id,
             url=raw.url,
             title=title,

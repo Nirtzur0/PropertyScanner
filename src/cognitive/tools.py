@@ -6,6 +6,7 @@ import structlog
 from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+from src.api.pipeline import get_pipeline_api
 
 logger = structlog.get_logger()
 
@@ -97,7 +98,7 @@ def crawl_listings(search_path: str, source_id: str = "idealista") -> Dict[str, 
     Crawl property listings from a specified source.
     
     Use this tool when you need to fetch new property listings from real estate websites.
-    Supports idealista and pisos sources.
+    Supports idealista, pisos, rightmove_uk, zoopla_uk, and immobiliare_it sources.
     
     Returns a dict with 'status', 'data' (list of raw listings), and 'errors'.
     """
@@ -424,10 +425,9 @@ def preflight_pipeline(
     """
     Run the preflight pipeline to refresh stale data and artifacts.
     """
-    from src.workflows.preflight import run_preflight
-
     try:
-        result = run_preflight(
+        api = get_pipeline_api()
+        result = api.preflight(
             skip_harvest=skip_harvest,
             skip_market_data=skip_market_data,
             skip_index=skip_index,
@@ -444,13 +444,9 @@ def harvest_pipeline(mode: str = "sale", target_count: int = 0, no_vlm: bool = F
     """
     Run the listing harvester workflow.
     """
-    from src.workflows.harvest import Harvester
-
     try:
-        if target_count and target_count > 0:
-            Harvester(mode=mode, target_count=target_count, run_vlm=not no_vlm).run()
-        else:
-            Harvester(mode=mode, run_vlm=not no_vlm).run()
+        api = get_pipeline_api()
+        api.harvest(mode=mode, target_count=target_count, run_vlm=not no_vlm)
         return {"status": "success", "mode": mode, "target_count": target_count}
     except Exception as e:
         logger.error("harvest_workflow_failed", error=str(e))
@@ -467,10 +463,9 @@ def build_market_data_workflow(
     """
     Build macro data and market/hedonic indices.
     """
-    from src.workflows.market_data import build_market_data
-
     try:
-        build_market_data(
+        api = get_pipeline_api()
+        api.build_market_data(
             skip_macro=skip_macro,
             skip_market_indices=skip_market_indices,
             skip_hedonic=skip_hedonic,
@@ -491,10 +486,9 @@ def build_vector_index_workflow(
     """
     Build the vector index for retrieval.
     """
-    from src.workflows.indexing import build_vector_index
-
     try:
-        count = build_vector_index(listing_type=listing_type, limit=limit, clear=clear)
+        api = get_pipeline_api()
+        count = api.build_vector_index(listing_type=listing_type, limit=limit, clear=clear)
         return {"status": "success", "indexed": count}
     except Exception as e:
         logger.error("index_workflow_failed", error=str(e))
@@ -510,10 +504,9 @@ def train_model_workflow(
     """
     Train the fusion model.
     """
-    from src.training.train import train_model
-
     try:
-        history = train_model(epochs=epochs, listing_type=listing_type, use_vlm=not no_vlm)
+        api = get_pipeline_api()
+        history = api.train_model(epochs=epochs, listing_type=listing_type, use_vlm=not no_vlm)
         return {"status": "success", "folds": len(history)}
     except Exception as e:
         logger.error("train_workflow_failed", error=str(e))

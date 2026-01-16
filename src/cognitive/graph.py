@@ -11,6 +11,7 @@ from langgraph.graph import StateGraph, END
 
 from src.cognitive.state import AgentState
 from src.cognitive.plan import ActionType, AgentPlan, build_default_plan, coerce_plan, default_action_budgets
+from src.cognitive.source_router import SourceRouter
 from src.cognitive.tools import (
     crawl_listings,
     normalize_listings,
@@ -229,6 +230,9 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
     
     raw_listings = []
     sources_crawled = list(state["sources_crawled"])
+    router = SourceRouter()
+    unresolved_areas = []
+    crawl_errors = []
     
     # Determine search path
     areas = state["target_areas"]
@@ -237,29 +241,53 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
     
     for area in areas:
         try:
-            # Determine source
-            if "idealista" in area:
-                source_id = "idealista"
-            else:
-                source_id = "pisos"
-                
-            result = crawl_listings.invoke({
-                "search_path": area,
-                "source_id": source_id
-            })
-            
-            if result["status"] == "success":
-                raw_listings.extend(result["data"])
-                sources_crawled.append(source_id)
+            targets = router.resolve(area)
+            if not targets:
+                unresolved_areas.append(area)
+                continue
+
+            for target in targets:
+                result = crawl_listings.invoke({
+                    "search_path": target.search_path,
+                    "source_id": target.source_id,
+                })
+
+                if result["status"] == "success":
+                    raw_listings.extend(result["data"])
+                    if target.source_id not in sources_crawled:
+                        sources_crawled.append(target.source_id)
+                else:
+                    crawl_errors.append(f"{target.source_id}:{area}")
                 
         except Exception as e:
             logger.error("crawl_failed", area=area, error=str(e))
-            
+            crawl_errors.append(f"{area}:{e}")
+
+    if unresolved_areas:
+        logger.warning("crawl_source_unresolved", areas=unresolved_areas)
+    if crawl_errors:
+        logger.warning("crawl_source_failed", errors=crawl_errors)
+
+    messages = [{
+        "role": "crawl",
+        "content": f"Crawled {len(raw_listings)} listings",
+    }]
+    if unresolved_areas:
+        messages.append({
+            "role": "crawl",
+            "content": f"Unresolved areas: {', '.join(unresolved_areas)}",
+        })
+    if crawl_errors:
+        messages.append({
+            "role": "crawl",
+            "content": f"Crawl errors: {', '.join(crawl_errors)}",
+        })
+
     return {
         "raw_listings": raw_listings,
         "sources_crawled": sources_crawled,
         "current_stage": "crawled",
-        "messages": [{"role": "crawl", "content": f"Crawled {len(raw_listings)} listings"}]
+        "messages": messages,
     }
 
 

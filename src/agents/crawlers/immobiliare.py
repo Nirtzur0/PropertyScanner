@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 from typing import Any, Dict, List
+from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright, Page, TimeoutError
 from playwright_stealth import Stealth
 from src.agents.base import BaseAgent, AgentResponse
@@ -17,16 +18,39 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         super().__init__(name="ImmobiliareCrawler", config=config)
         self.compliance_manager = compliance_manager
         self.snapshot_service = SnapshotService()
-        self.base_url = "https://www.immobiliare.it"
+        self.base_url = config.get("base_url", "https://www.immobiliare.it")
+        rate_conf = config.get("rate_limit", {}) or {}
+        self.rate_limit_seconds = float(rate_conf.get("period_seconds", 3))
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
+        source_id = self.config.get("id", "immobiliare_it")
         start_url = input_payload.get("start_url")
         if not start_url:
             # Check for city/search params if full URL not provided
             city = input_payload.get("city", "milano")
             start_url = f"{self.base_url}/vendita-case/{city}/"
 
-        if not self.compliance_manager.check_and_wait(start_url, rate_limit_seconds=3.0):
+        target_urls = list(input_payload.get("target_urls") or [])
+        listing_url = input_payload.get("listing_url")
+        if listing_url:
+            target_urls.append(listing_url)
+        listing_id = input_payload.get("listing_id")
+        if listing_id:
+            target_urls.append(f"{self.base_url}/annunci/{listing_id}/")
+        listing_ids = input_payload.get("listing_ids") or []
+        for lid in listing_ids:
+            target_urls.append(f"{self.base_url}/annunci/{lid}/")
+
+        normalized_targets = []
+        for url in target_urls:
+            if str(url).startswith("http"):
+                normalized_targets.append(url)
+            else:
+                normalized_targets.append(urljoin(self.base_url, str(url)))
+        target_urls = normalized_targets
+
+        compliance_url = target_urls[0] if target_urls else start_url
+        if not self.compliance_manager.check_and_wait(compliance_url, rate_limit_seconds=self.rate_limit_seconds):
             return AgentResponse(status="failure", errors=["Rate Limited or Disallowed"])
 
         listings = []
@@ -50,8 +74,8 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             listing_urls = []
             
             # --- Input Strategy ---
-            if input_payload.get("target_urls"):
-                listing_urls = input_payload["target_urls"]
+            if target_urls:
+                listing_urls = target_urls
                 self.logger.info("direct_crawl_mode", count=len(listing_urls))
             else:
                 # --- Step 1: Search Page ---
@@ -115,14 +139,16 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                         lid = "unknown_" + str(int(time.time()))
                     
                     # Save HTML snapshot
-                    snapshot_path = self.snapshot_service.save_snapshot(
+                    meta = self.snapshot_service.save_snapshot(
                         content=full_html,
-                        source_id="immobiliare_it",
-                        external_id=lid
+                        source_id=source_id,
+                        external_id=lid,
+                        listing_url=url,
                     )
+                    snapshot_path = meta.file_path if meta else None
 
                     raw = RawListing(
-                        source_id="immobiliare_it",
+                        source_id=source_id,
                         external_id=lid,
                         url=url,
                         html_snapshot_path=snapshot_path,

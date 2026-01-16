@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from sqlalchemy import text
 
@@ -49,3 +49,31 @@ class IneIpvRepository(RepositoryBase):
         with self.engine.begin() as conn:
             result = conn.execute(query, payloads)
         return int(result.rowcount or 0)
+
+    def fetch_latest_metric(
+        self,
+        region_id: str,
+        housing_type: str = "general",
+        metric: str = "yoy",
+    ) -> Optional[Tuple[str, float]]:
+        query = text(
+            """
+            SELECT period, value
+            FROM ine_ipv
+            WHERE LOWER(region_id) = :region_id
+              AND housing_type = :housing_type
+              AND metric = :metric
+            ORDER BY period DESC
+            LIMIT 1
+            """
+        )
+        params = {
+            "region_id": region_id.lower().strip(),
+            "housing_type": housing_type,
+            "metric": metric,
+        }
+        with self.engine.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        if not row or row[1] is None:
+            return None
+        return str(row[0]), float(row[1])

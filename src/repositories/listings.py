@@ -60,9 +60,15 @@ class ListingsRepository(RepositoryBase):
 
     def load_listings_for_indices(self) -> Tuple[pd.DataFrame, bool]:
         has_listing_type = self.has_column("listings", "listing_type")
+        has_sold_price = self.has_column("listings", "sold_price")
+        has_sold_at = self.has_column("listings", "sold_at")
         query = """
             SELECT id, city, price, surface_area_sqm, listed_at, updated_at, status
         """
+        if has_sold_price:
+            query = query.rstrip() + ", sold_price\n"
+        if has_sold_at:
+            query = query.rstrip() + ", sold_at\n"
         if has_listing_type:
             query = query.rstrip() + ", listing_type\n"
         query += """
@@ -120,7 +126,7 @@ class ListingsRepository(RepositoryBase):
         self,
         *,
         listing_type: str = "sale",
-        label_source: str = "ask",
+        label_source: str = "auto",
     ) -> List[Dict[str, Any]]:
         extra_cols = []
         if self.has_column("listings", "plot_area_sqm"):
@@ -136,6 +142,7 @@ class ListingsRepository(RepositoryBase):
             "title",
             "description",
             "price",
+            "sold_price",
             "city",
             "bedrooms",
             "bathrooms",

@@ -7,6 +7,32 @@ from src.repositories.base import RepositoryBase
 
 
 class MarketIndicesRepository(RepositoryBase):
+    def fetch_index_value(self, region_id: str, month_date: str, index_type: str = "price") -> Optional[float]:
+        index_type = str(index_type).strip().lower()
+        if index_type not in {"price", "rent"}:
+            raise ValueError("invalid_index_type")
+
+        month_key = str(month_date).strip()
+        if len(month_key) > 7:
+            month_key = month_key[:7]
+
+        column = "price_index_sqm" if index_type == "price" else "rent_index_sqm"
+        query = text(
+            f"""
+            SELECT {column}
+            FROM market_indices
+            WHERE region_id = :region_id
+              AND substr(month_date, 1, 7) = :month_key
+            ORDER BY month_date DESC
+            LIMIT 1
+            """
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(query, {"region_id": region_id, "month_key": month_key}).fetchone()
+        if not row:
+            return None
+        value = row[0]
+        return float(value) if value is not None else None
     def fetch_latest_snapshot(self, region_id: str) -> Optional[Tuple[float, int, int]]:
         query = text(
             """

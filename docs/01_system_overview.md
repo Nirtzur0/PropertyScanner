@@ -19,6 +19,7 @@ flowchart LR
         Store["StorageService (persistence only)"]
         BuildIndex["src/workflows/indexing.py"]
         BuildMarket["src/workflows/market_data.py"]
+        Transactions["src/workflows/transactions.py"]
         Preflight["src/workflows/preflight.py"]
     end
 
@@ -55,6 +56,7 @@ flowchart LR
     Agent --> Norm
     Gov --> GovData
     Norm --> Fusion --> Aug --> Store --> Listings
+    Transactions --> Listings
 
     Listings --> BuildIndex --> VectorIndex --> Retriever
     Listings --> BuildMarket --> Indices
@@ -66,6 +68,7 @@ flowchart LR
     Model --> Val
 
     Preflight --> Harvest
+    Preflight --> Transactions
     Preflight --> BuildMarket
     Preflight --> BuildIndex
     Preflight --> Runs
@@ -77,7 +80,7 @@ flowchart LR
 
 ## Components in One Line Each
 - Acquisition: `src/workflows/harvest.py`, plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
-- Processing: normalize, fuse VLM signals, augment listings, then persist via StorageService.
+- Processing: normalize, fuse VLM signals, ingest sold transactions, then persist via StorageService.
 - Data: SQLite is the system of record; `pipeline_runs` records operational health.
 - Intelligence: time-safe comps, hedonic indices, income-aware valuation, and area intelligence.
 - Interface: CLI and the Scout Intelligence dashboard.
@@ -88,6 +91,7 @@ flowchart LR
 - `src/workflows/**`: batch orchestration (harvest, market data, indexing, preflight).
 - `src/repositories/**`: centralized data access; services do not execute raw SQL.
 - `src/services/**`: valuation, retrieval, forecasting, and data augmentation.
+- `src/api/**`: public pipeline + valuation API used by CLI/agent/dashboard.
 - `src/cognitive/**`: LangGraph agent tools and orchestrator.
 - `src/scripts/**`: thin wrappers for legacy entry points.
 - `src/dashboard/**`: Streamlit UI.

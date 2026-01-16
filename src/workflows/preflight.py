@@ -42,6 +42,8 @@ def run_preflight(
     skip_market_data: bool = False,
     skip_index: bool = False,
     skip_training: bool = False,
+    transactions_path: Optional[str] = None,
+    skip_transactions: bool = False,
 ) -> Dict[str, Any]:
     db_url = resolve_db_url(db_path=db_path)
     tracker = PipelineRunTracker(db_path=db_path)
@@ -139,6 +141,8 @@ def add_preflight_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     parser.add_argument("--skip-market-data", action="store_true")
     parser.add_argument("--skip-index", action="store_true")
     parser.add_argument("--skip-training", action="store_true")
+    parser.add_argument("--transactions-path", type=str, default=None, help="CSV/JSONL path for sold data")
+    parser.add_argument("--skip-transactions", action="store_true")
     return parser
 
 
@@ -161,9 +165,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         skip_market_data=args.skip_market_data,
         skip_index=args.skip_index,
         skip_training=args.skip_training,
+        transactions_path=args.transactions_path,
+        skip_transactions=args.skip_transactions,
     )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    if not skip_transactions:
+        try:
+            from src.core.config import TRANSACTIONS_PATH
+            from src.services.transactions import TransactionsIngestService
+
+            tx_path = transactions_path or str(TRANSACTIONS_PATH)
+            if tx_path and tx_path.strip():
+                logger.info("preflight_transactions", path=tx_path)
+                service = TransactionsIngestService(db_path=db_path)
+                _run_step(
+                    tracker,
+                    step_name="transactions_ingest",
+                    func=lambda: service.ingest_file(tx_path),
+                    metadata={"path": tx_path},
+                )
+                results["steps"].append("transactions_ingest")
+        except FileNotFoundError:
+            logger.info("preflight_transactions_missing", path=transactions_path)
+        except Exception as e:
+            logger.warning("preflight_transactions_failed", error=str(e))

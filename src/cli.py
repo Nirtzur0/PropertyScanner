@@ -33,6 +33,7 @@ def main(argv: List[str] = None) -> int:
     passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.workflows.maintenance)")
     passthrough("preflight", "Refresh stale data and artifacts (wraps src.workflows.preflight)")
     passthrough("schedule", "Run scheduled preflight refreshes (wraps src.workflows.scheduler)")
+    passthrough("transactions", "Ingest sold/transaction data (wraps src.workflows.transactions)")
 
     args = parser.parse_args(argv)
     cmd_args = getattr(args, "args", []) or []
@@ -48,6 +49,7 @@ def main(argv: List[str] = None) -> int:
         "clean-data": "src.workflows.maintenance",
         "preflight": "src.workflows.preflight",
         "schedule": "src.workflows.scheduler",
+        "transactions": "src.workflows.transactions",
     }
 
     if args.command == "dashboard":

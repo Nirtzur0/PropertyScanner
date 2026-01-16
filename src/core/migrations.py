@@ -97,6 +97,13 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     except Exception:
         pass
 
+    # 4b2. Sold transaction price (when available)
+    try:
+        conn.execute("ALTER TABLE listings ADD COLUMN sold_price FLOAT")
+        logger.info("migration_sold_price_added")
+    except Exception:
+        pass
+
     # 4c. Location metadata (zip, country)
     try:
         conn.execute("ALTER TABLE listings ADD COLUMN zip_code TEXT")
@@ -151,12 +158,32 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
             area_id TEXT PRIMARY KEY,
             last_updated DATETIME,
             sentiment_score FLOAT,
+            sentiment_as_of DATETIME,
+            sentiment_credibility FLOAT,
             future_development_score FLOAT,
+            development_as_of DATETIME,
+            development_credibility FLOAT,
             news_summary TEXT,
             top_keywords TEXT,
             source_urls TEXT
         )
     """)
+    try:
+        conn.execute("ALTER TABLE area_intelligence ADD COLUMN sentiment_as_of DATETIME")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE area_intelligence ADD COLUMN sentiment_credibility FLOAT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE area_intelligence ADD COLUMN development_as_of DATETIME")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE area_intelligence ADD COLUMN development_credibility FLOAT")
+    except Exception:
+        pass
 
     # 6. ERI (Registral) Metrics
     conn.execute("""

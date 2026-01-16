@@ -17,6 +17,7 @@ import io
 from src.services.feature_sanitizer import sanitize_listing_dict, sanitize_year_built
 from src.core.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 from src.repositories.listings import ListingsRepository
+from src.repositories.market_indices import MarketIndicesRepository
 
 logger = structlog.get_logger()
 
@@ -39,7 +40,7 @@ class PropertyDataset(Dataset):
         text_model: str = "all-MiniLM-L6-v2",
         use_vlm: bool = True,
         listing_type: str = "sale",
-        label_source: str = "ask",
+        label_source: str = "auto",
         min_price: float = 10_000,
         max_price: float = 15_000_000,
         geo_radius_km: float = 5.0,
@@ -76,7 +77,9 @@ class PropertyDataset(Dataset):
         self.cache_embeddings = cache_embeddings
         self.use_vlm = use_vlm
         self.listing_type = listing_type
-        self.label_source = label_source
+        self.label_source = str(label_source).lower().strip()
+        if self.label_source not in {"ask", "sold", "auto"}:
+            raise ValueError("invalid_label_source")
         self.min_price = min_price
         self.max_price = max_price
         self.geo_radius_km = float(geo_radius_km)
@@ -90,6 +93,8 @@ class PropertyDataset(Dataset):
         self.retriever_model_name = retriever_model_name
         self.retriever_vlm_policy = retriever_vlm_policy
         self.require_hedonic = bool(require_hedonic)
+        self.market_repo = MarketIndicesRepository(db_path=self.db_path)
+        self._market_index_cache: Dict[Tuple[str, str, str], Optional[float]] = {}
         
         # Load encoder
         from src.services.encoders import TextEncoder, TabularEncoder
@@ -159,13 +164,20 @@ class PropertyDataset(Dataset):
             label_source=self.label_source,
         )
         
-        # Filter outliers
+        # Filter outliers based on label price
         valid_listings = []
         dropped_count = 0
         for l in raw_listings:
-            p = l.get("price", 0)
-            if self.min_price <= p <= self.max_price:
-                valid_listings.append(sanitize_listing_dict(l))
+            listing = sanitize_listing_dict(l)
+            label_price = self._resolve_label_price(listing)
+            label_source = self._resolve_label_source(listing)
+            if label_price is None:
+                dropped_count += 1
+                continue
+            listing["label_price"] = label_price
+            listing["label_source"] = label_source
+            if self.min_price <= label_price <= self.max_price:
+                valid_listings.append(listing)
             else:
                 dropped_count += 1
                 
@@ -201,6 +213,35 @@ class PropertyDataset(Dataset):
         text = text.lower()
         return text or None
 
+    def _resolve_label_price(self, listing: Dict[str, Any]) -> Optional[float]:
+        listing_type = str(listing.get("listing_type") or "sale").strip().lower()
+        ask_price = self._safe_float(listing.get("price"), default=0.0)
+        sold_price = self._safe_float(listing.get("sold_price"), default=0.0)
+
+        if listing_type == "rent":
+            return ask_price if ask_price > 0 else None
+
+        if self.label_source == "sold":
+            return sold_price if sold_price > 0 else None
+        if self.label_source == "ask":
+            return ask_price if ask_price > 0 else None
+
+        # auto: prefer sold price, fallback to ask
+        if sold_price > 0:
+            return sold_price
+        return ask_price if ask_price > 0 else None
+
+    def _resolve_label_source(self, listing: Dict[str, Any]) -> str:
+        listing_type = str(listing.get("listing_type") or "sale").strip().lower()
+        sold_price = self._safe_float(listing.get("sold_price"), default=0.0)
+        if listing_type == "rent":
+            return "ask"
+        if self.label_source == "sold":
+            return "sold"
+        if self.label_source == "ask":
+            return "ask"
+        return "sold" if sold_price > 0 else "ask"
+
     def _parse_dt(self, value: Any) -> Optional[datetime]:
         if value is None:
             return None
@@ -219,7 +260,8 @@ class PropertyDataset(Dataset):
         sold_at = self._parse_dt(listing.get("sold_at"))
         listed_at = self._parse_dt(listing.get("listed_at"))
         updated_at = self._parse_dt(listing.get("updated_at"))
-        if self.label_source == "sold" and sold_at:
+        label_source = listing.get("label_source") or self.label_source
+        if label_source == "sold" and sold_at:
             return sold_at
         return listed_at or updated_at or sold_at
 
@@ -271,7 +313,7 @@ class PropertyDataset(Dataset):
         for listing in self.listings:
             # NOTE: price is NOT included - it's the target variable
             area = self._safe_float(listing.get("surface_area_sqm"), default=0.0)
-            price = self._safe_float(listing.get("price"), default=0.0)
+            price = self._safe_float(listing.get("label_price"), default=0.0)
             price_per_sqm = price / area if area > 0 else 0.0
             features = {
                 "bedrooms": self._safe_float(listing.get("bedrooms")),
@@ -297,29 +339,82 @@ class PropertyDataset(Dataset):
             return None
         return str(city).lower().strip()
 
+    def _normalize_listing_type(self, listing_type: Optional[str]) -> str:
+        value = str(listing_type or self.listing_type or "sale").lower().strip()
+        if value not in {"sale", "rent"}:
+            return "sale"
+        return value
+
+    def _month_key(self, value: Optional[datetime]) -> Optional[str]:
+        if not value:
+            return None
+        return value.strftime("%Y-%m")
+
+    def _fetch_market_index(
+        self, region_id: str, month_key: str, index_type: str
+    ) -> Optional[float]:
+        cache_key = (region_id, month_key, index_type)
+        if cache_key in self._market_index_cache:
+            return self._market_index_cache[cache_key]
+        value = self.market_repo.fetch_index_value(region_id, month_key, index_type=index_type)
+        if value is None and region_id != "all":
+            value = self.market_repo.fetch_index_value("all", month_key, index_type=index_type)
+        self._market_index_cache[cache_key] = value
+        return value
+
     def _label_weight(self, listing: Dict[str, Any]) -> float:
-        status = str(listing.get("status") or "").lower()
-        if status == "sold":
+        label_source = listing.get("label_source") or self.label_source
+        listing_type = str(listing.get("listing_type") or "sale").lower()
+        sold_price = self._safe_float(listing.get("sold_price"), default=0.0)
+
+        if label_source == "sold" and sold_price > 0:
             return 1.0
-        if self.label_source == "sold":
+        if label_source == "sold":
             return 0.0
-        listed_at = listing.get("obs_date")
-        updated_at = self._parse_dt(listing.get("updated_at"))
-        if listed_at and updated_at and updated_at > listed_at:
-            return 0.7
-        return 0.5
+        if listing_type == "rent":
+            return 0.8
+        return 0.6
 
     def _time_normalize_price(
         self,
         raw_price: float,
         region_id: Optional[str],
-        obs_date: Optional[datetime]
+        obs_date: Optional[datetime],
+        listing_type: Optional[str] = None
     ) -> Optional[float]:
         if raw_price <= 0:
             return None
-        if not self.reference_date or not self.hedonic:
+        if not self.reference_date:
             return float(raw_price)
         if not region_id or not obs_date:
+            if self.require_hedonic:
+                return None
+            return float(raw_price)
+        listing_type_norm = self._normalize_listing_type(listing_type)
+        if listing_type_norm == "rent":
+            comp_month = self._month_key(obs_date)
+            target_month = self._month_key(self.reference_date)
+            if not comp_month or not target_month:
+                if self.require_hedonic:
+                    return None
+                return float(raw_price)
+            comp_index = self._fetch_market_index(region_id, comp_month, "rent")
+            target_index = self._fetch_market_index(region_id, target_month, "rent")
+            if not comp_index or not target_index or comp_index <= 0 or target_index <= 0:
+                if self.require_hedonic:
+                    return None
+                return float(raw_price)
+            adj_factor = target_index / comp_index
+            if adj_factor <= 0:
+                if self.require_hedonic:
+                    return None
+                return float(raw_price)
+            if adj_factor < 0.5 or adj_factor > 2.0:
+                if self.require_hedonic:
+                    return None
+                return float(raw_price)
+            return float(raw_price * adj_factor)
+        if not self.hedonic:
             if self.require_hedonic:
                 return None
             return float(raw_price)
@@ -454,7 +549,7 @@ class PropertyDataset(Dataset):
             url=target.get("url") or "http://example.invalid",
             title=target.get("title") or "listing",
             description=target.get("description"),
-            price=target.get("price") or 0.0,
+            price=target.get("label_price") or target.get("price") or 0.0,
             currency="EUR",
             listing_type=target.get("listing_type") or "sale",
             property_type=prop_type,
@@ -610,7 +705,9 @@ class PropertyDataset(Dataset):
                 continue
             target_date = listing.get("obs_date")
             region_id = self._region_id(listing)
-            target_price_adj = self._time_normalize_price(float(listing.get("price", 0)), region_id, target_date)
+            listing_type = listing.get("listing_type") or self.listing_type
+            target_price_raw = self._safe_float(listing.get("label_price"), default=0.0)
+            target_price_adj = self._time_normalize_price(target_price_raw, region_id, target_date, listing_type)
             if target_price_adj is None or target_price_adj <= 0:
                 missing_hedonic += 1
                 continue
@@ -632,7 +729,9 @@ class PropertyDataset(Dataset):
             for comp_idx, metric in filtered:
                 comp = self.listings[comp_idx]
                 comp_date = comp.get("obs_date")
-                comp_price_adj = self._time_normalize_price(float(comp.get("price", 0)), region_id, comp_date)
+                comp_type = comp.get("listing_type") or listing_type
+                comp_price_raw = self._safe_float(comp.get("label_price"), default=0.0)
+                comp_price_adj = self._time_normalize_price(comp_price_raw, region_id, comp_date, comp_type)
                 if comp_price_adj is None:
                     continue
                 comp_prices_adj.append(comp_price_adj)
@@ -742,25 +841,28 @@ class PropertyDataset(Dataset):
         # Build tensors
         target_text = torch.from_numpy(self._get_text_embedding(target)).float()
         target_tab = torch.from_numpy(self._get_tabular_features(target)).float()
-        target_price_raw = float(target["price"])
+        target_price_raw = self._safe_float(target.get("label_price"), default=0.0)
 
         comp_text = torch.stack([torch.from_numpy(self._get_text_embedding(c)).float() for c in comps])
         comp_tab = torch.stack([torch.from_numpy(self._get_tabular_features(c)).float() for c in comps])
 
         target_date = target.get("obs_date")
         region_id = self._region_id(target)
+        listing_type = target.get("listing_type") or self.listing_type
         target_price_adj = self._target_adj_cache.get(target_idx)
         if target_price_adj is None:
-            target_price_adj = self._time_normalize_price(target_price_raw, region_id, target_date)
+            target_price_adj = self._time_normalize_price(target_price_raw, region_id, target_date, listing_type)
         if target_price_adj is None or target_price_adj <= 0:
             raise ValueError("invalid_target_price_adjusted")
 
         comp_prices_adj = []
         for comp in comps:
             comp_date = comp.get("obs_date")
-            comp_price_adj = self._time_normalize_price(float(comp["price"]), region_id, comp_date)
+            comp_type = comp.get("listing_type") or listing_type
+            comp_price_raw = self._safe_float(comp.get("label_price"), default=0.0)
+            comp_price_adj = self._time_normalize_price(comp_price_raw, region_id, comp_date, comp_type)
             if comp_price_adj is None:
-                comp_price_adj = float(comp["price"])
+                comp_price_adj = float(comp_price_raw)
             comp_prices_adj.append(comp_price_adj)
 
         baseline = self._baseline_cache.get(target_idx)
@@ -846,7 +948,7 @@ def create_dataloaders(
     num_workers: int = 0,
     use_vlm: bool = True,
     listing_type: str = "sale",
-    label_source: str = "ask",
+    label_source: str = "auto",
     time_safe_comps: bool = True,
     normalize_to: str = "latest",
     use_retriever: bool = True,

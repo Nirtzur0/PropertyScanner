@@ -63,7 +63,8 @@ The model predicts price relative to the market:
 - The target listing queries comparable listings.
 - A robust comp baseline (weighted median + MAD filtering) is computed outside the model.
 - The model predicts log-residuals over the baseline.
-- Hedonic indices time-adjust comps; INE IPV anchors are used when local data is thin.
+- Hedonic indices time-adjust sale comps; rent comps use the rent index.
+- INE IPV anchors are used when local data is thin.
 
 ### 2. Quantile Regression (Uncertainty)
 The model outputs a distribution, not a single number:
@@ -77,6 +78,11 @@ Weighted pinball loss trains the quantile heads and encodes label reliability.
 - Comps are time-safe (comp date <= target date).
 - Retriever metadata (encoder + VLM policy) must match across train and infer.
 - If comps or indices are missing, valuation fails instead of guessing.
+
+### 4. Label Strategy
+- Sale training labels prefer `sold_price` when available; ask prices are a fallback.
+- Rent training labels use asking rent and are normalized via the rent index.
+- Label weights reflect reliability: sold > rent ask > sale ask.
 
 ## System-Level Valuation Blend
 The model output is combined with income and area intelligence signals:
@@ -92,7 +98,7 @@ flowchart LR
 ```
 
 - **Income blend** rewards listings with stronger rent-to-price economics.
-- **Area adjustment** nudges valuation based on sentiment and development scores.
+- **Area adjustment** nudges valuation using sentiment and development scores derived from official ERI/INE data, with freshness and credibility scaling.
 - Evidence is recorded in `external_signals` for transparency.
 
 ## Hyperparameters (Current Configuration)

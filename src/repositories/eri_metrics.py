@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 from sqlalchemy import text
@@ -74,3 +74,22 @@ class ERIMetricsRepository(RepositoryBase):
             """
         )
         return pd.read_sql(query, self.engine, params={"region_id": region_id})
+
+    def fetch_latest_period_date(self, region_id: str) -> Optional[pd.Timestamp]:
+        query = text(
+            """
+            SELECT period_date
+            FROM eri_metrics
+            WHERE LOWER(region_id) = :region_id
+            ORDER BY period_date DESC
+            LIMIT 1
+            """
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(query, {"region_id": region_id.lower().strip()}).fetchone()
+        if not row or row[0] is None:
+            return None
+        dt = pd.to_datetime(row[0], format="mixed", errors="coerce")
+        if pd.isna(dt):
+            return None
+        return dt

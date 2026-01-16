@@ -62,6 +62,7 @@ class CanonicalListing(BaseModel):
     listing_type: str = "sale" # "sale" or "rent"
     estimated_rent: Optional[float] = None
     gross_yield: Optional[float] = None
+    sold_price: Optional[float] = None
     
     property_type: PropertyType
     
@@ -91,6 +92,7 @@ class CanonicalListing(BaseModel):
     listed_at: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.now)
     status: ListingStatus = ListingStatus.ACTIVE
+    sold_at: Optional[datetime] = None
     
     tags: List[str] = Field(default_factory=list)  # e.g., "pool", "garage"
 

@@ -25,7 +25,7 @@ class ERISignalsService:
         self.eri_repo = ERIMetricsRepository(db_url=self.db_url)
         self.market_repo = MarketIndicesRepository(db_url=self.db_url)
 
-    def _load_series(self, region_id: str) -> pd.DataFrame:
+    def _load_series(self, region_id: str, allow_proxy: bool = True) -> pd.DataFrame:
         # Priority 1: Official ERI Data
         try:
             df = self.eri_repo.load_series(region_id)
@@ -33,7 +33,7 @@ class ERISignalsService:
             logger.warning("eri_load_failed", error=str(e))
             df = pd.DataFrame()
 
-        if df.empty:
+        if df.empty and allow_proxy:
             # Fallback to internal proxy
             try:
                 proxy = self.market_repo.fetch_series(region_id)
@@ -83,8 +83,13 @@ class ERISignalsService:
             return self.trailing_years * 4
         return self.trailing_years * 12
 
-    def get_signals(self, region_id: str, as_of_date: Optional[datetime]) -> Dict[str, float]:
-        df = self._load_series(region_id)
+    def get_signals(
+        self,
+        region_id: str,
+        as_of_date: Optional[datetime],
+        allow_proxy: bool = True
+    ) -> Dict[str, float]:
+        df = self._load_series(region_id, allow_proxy=allow_proxy)
         if df.empty:
             return {}
 

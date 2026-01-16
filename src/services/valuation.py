@@ -255,6 +255,8 @@ class ValuationService:
             listed_at=db_item.listed_at,
             updated_at=db_item.updated_at,
             status=db_item.status,
+            sold_price=getattr(db_item, "sold_price", None),
+            sold_at=getattr(db_item, "sold_at", None),
             tags=db_item.tags or [],
         )
         return sanitize_listing_features(listing)
@@ -619,8 +621,10 @@ class ValuationService:
             if not comp_timestamp:
                 continue
 
+            raw_price = self._resolve_comp_price(comp)
+
             adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
-                raw_price=comp.price,
+                raw_price=raw_price,
                 region_id=region_id,
                 comp_timestamp=comp_timestamp,
                 target_timestamp=valuation_date
@@ -640,11 +644,11 @@ class ValuationService:
                 id=comp.id,
                 url=str(comp.url) if comp.url else None,
                 observed_month=comp_timestamp.strftime("%Y-%m"),
-                raw_price=comp.price,
+                raw_price=raw_price,
                 adj_factor=adj_factor,
                 adj_price=adj_price,
                 attention_weight=0.0,  # Updated after fusion
-                is_sold=comp.status.value == "sold" if comp.status else False,
+                is_sold=bool(getattr(comp, "sold_price", None)) or (comp.status.value == "sold" if comp.status else False),
                 similarity_score=similarity_by_id.get(comp.id)
             ))
 
@@ -1064,12 +1068,17 @@ class ValuationService:
 
         area_sentiment = float(market_signals.get("area_sentiment", 0.5))
         area_development = float(market_signals.get("area_development", 0.5))
+        area_confidence = market_signals.get("area_confidence")
+        if area_confidence is None:
+            area_confidence = 1.0
+        area_confidence = float(max(0.0, min(1.0, area_confidence)))
         area_adjustment = (
             (area_sentiment - 0.5) * self.config.area_sentiment_weight
             + (area_development - 0.5) * self.config.area_development_weight
         )
         cap = self.config.area_adjustment_cap
         area_adjustment = float(max(-cap, min(cap, area_adjustment)))
+        area_adjustment = float(area_adjustment * area_confidence)
         if area_adjustment != 0:
             adjusted_value = adjusted_value * (1 + area_adjustment)
             adjusted_uncertainty = adjusted_uncertainty * (1 + abs(area_adjustment))
@@ -1077,8 +1086,18 @@ class ValuationService:
         adjustments.update({
             "area_sentiment": area_sentiment,
             "area_development": area_development,
+            "area_confidence": area_confidence,
             "area_adjustment": area_adjustment,
         })
+        for key in (
+            "area_sentiment_credibility",
+            "area_development_credibility",
+            "area_sentiment_freshness_days",
+            "area_development_freshness_days",
+        ):
+            value = market_signals.get(key)
+            if value is not None:
+                adjustments[key] = float(value)
 
         return adjusted_value, adjusted_uncertainty, adjustments
     
@@ -1111,6 +1130,7 @@ class ValuationService:
         catchup = market_signals.get("catchup")
         area_sentiment = market_signals.get("area_sentiment")
         area_development = market_signals.get("area_development")
+        area_confidence = market_signals.get("area_confidence")
         if market_yield is None or market_yield <= 0:
             raise ValueError("missing_market_yield")
         if momentum is None or liquidity is None or catchup is None:
@@ -1128,6 +1148,8 @@ class ValuationService:
             sent_component = (float(area_sentiment) - 0.5) / 0.5
             dev_component = (float(area_development) - 0.5) / 0.5
             area_component = float(0.5 * (sent_component + dev_component))
+            if area_confidence is not None:
+                area_component = float(area_component * max(0.0, min(1.0, float(area_confidence))))
         else:
             area_component = 0.0
 
@@ -1190,6 +1212,13 @@ class ValuationService:
         if listing.location and listing.location.city:
             return listing.location.city.lower()
         return "unknown"
+
+    def _resolve_comp_price(self, comp: CanonicalListing) -> float:
+        if comp.listing_type == "sale":
+            sold_price = getattr(comp, "sold_price", None)
+            if sold_price is not None and sold_price > 0:
+                return float(sold_price)
+        return float(comp.price)
 
     def _get_market_index_value(self, region_id: str, month_key: str, column: str) -> float:
         allowed = {"price_index_sqm", "rent_index_sqm"}
@@ -1325,7 +1354,7 @@ class ValuationService:
         market_yield = self._get_market_yield(region_id, valuation_date)
         area_data = self.area_intel.get_area_indicators(region_id)
 
-        return {
+        signals = {
             "momentum": profile.momentum_score,
             "liquidity": profile.liquidity_score,
             "catchup": profile.catchup_potential,
@@ -1333,6 +1362,19 @@ class ValuationService:
             "area_sentiment": float(area_data.get("sentiment_score", 0.5)),
             "area_development": float(area_data.get("future_development_score", 0.5)),
         }
+        area_confidence = area_data.get("area_confidence")
+        if area_confidence is not None:
+            signals["area_confidence"] = float(area_confidence)
+        for key, out_key in (
+            ("sentiment_credibility", "area_sentiment_credibility"),
+            ("development_credibility", "area_development_credibility"),
+            ("sentiment_freshness_days", "area_sentiment_freshness_days"),
+            ("development_freshness_days", "area_development_freshness_days"),
+        ):
+            value = area_data.get(key)
+            if value is not None:
+                signals[out_key] = float(value)
+        return signals
 
     def _adjust_rent_price(
         self,
