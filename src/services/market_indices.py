@@ -81,7 +81,8 @@ class MarketIndexService:
                 df["region_id"] = region_norm
 
             # Define Regions
-            regions = df["region_id"].dropna().unique()
+            regions = list(df["region_id"].dropna().unique())
+            regions.append("all")
 
             # Time Range (e.g. last 24 months)
             min_date = df["listed_at"].min()
@@ -100,7 +101,10 @@ class MarketIndexService:
                     continue
 
                 # Filter for region
-                df_reg = df[df["region_id"] == region]
+                if region == "all":
+                    df_reg = df
+                else:
+                    df_reg = df[df["region_id"] == region]
 
                 for month_start in buckets:
                     month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)

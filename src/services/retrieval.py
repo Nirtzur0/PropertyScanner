@@ -260,17 +260,29 @@ class CompRetriever:
 
         vectors = []
         new_listings = []
+        metadata_dirty = False
         
         snapshot_ids = snapshot_ids or {}
         
         for l in listings:
-            # Skip if already indexed
+            # Skip if already indexed, but refresh missing timestamps
             if l.id in self.id_to_int:
+                int_id = self.id_to_int[l.id]
+                il = self.listings.get(int_id)
+                if il:
+                    listed_at = l.listed_at.isoformat() if getattr(l, "listed_at", None) else None
+                    updated_at = l.updated_at.isoformat() if getattr(l, "updated_at", None) else None
+                    if listed_at and not il.listed_at:
+                        il.listed_at = listed_at
+                        metadata_dirty = True
+                    if updated_at and not il.updated_at:
+                        il.updated_at = updated_at
+                        metadata_dirty = True
                 continue
                 
             # Create embedding from text
             text = self._build_text(l.title or "", l.description or "", getattr(l, "vlm_description", None))
-            vec = self.model.encode(text, normalize_embeddings=True)
+            vec = self.model.encode(text, normalize_embeddings=True, show_progress_bar=False)
             vectors.append(vec)
             
             # Create indexed listing
@@ -311,7 +323,10 @@ class CompRetriever:
             self._save_metadata()
             
             logger.info("added_vectors_to_index", count=len(new_listings))
-            
+        elif metadata_dirty:
+            self._save_metadata()
+            logger.info("updated_index_metadata", count=len(self.listings))
+
         return len(new_listings)
 
     def retrieve_comps(
@@ -360,7 +375,7 @@ class CompRetriever:
             
         # Create query embedding
         text = self._build_text(target.title or "", target.description or "", getattr(target, "vlm_description", None))
-        query_vec = self.model.encode(text, normalize_embeddings=True)
+        query_vec = self.model.encode(text, normalize_embeddings=True, show_progress_bar=False)
         query_vec = query_vec.reshape(1, -1).astype('float32')
         
         # Search for MANY more candidates to allow for heavy filtering

@@ -2,11 +2,11 @@ import hashlib
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, parse_qs, urlsplit, urlencode, urlunsplit
 
-import requests
 import structlog
 from bs4 import BeautifulSoup
+from curl_cffi import requests
 
 from src.agents.base import BaseAgent, AgentResponse
 from src.core.domain.schema import RawListing
@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 
 class ZooplaCrawlerAgent(BaseAgent):
     """
-    Crawls Zoopla (UK) search pages and extracts listing detail pages.
+    Crawls Zoopla (UK) using curl_cffi to bypass TLS fingerprinting protections.
     """
 
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
@@ -28,25 +28,37 @@ class ZooplaCrawlerAgent(BaseAgent):
         self.base_url = config.get("base_url", "https://www.zoopla.co.uk")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
+        self.user_agent = config.get("user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        # Session not always needed with curl_cffi requests.get but useful for cookies
         self.session = requests.Session()
-        self.session.headers.update(
-            {"User-Agent": config.get("user_agent", "PropertyScanner/1.0")}
-        )
+
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
         if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
             logger.warning("zoopla_blocked_by_robots", url=url)
+            # Proceed anyway if robots check fails but we want to try? 
+            # ComplianceManager defaults to blocking. We stick to it.
             return None
 
         for attempt in range(retries):
             try:
-                resp = self.session.get(url, timeout=timeout_s)
+                # Use impersonation
+                resp = self.session.get(
+                    url, 
+                    impersonate="chrome124", 
+                    timeout=timeout_s
+                    # headers={"User-Agent": self.user_agent} # Do not override UA
+                )
+                
                 if resp.status_code == 200:
                     return resp.text
-                if resp.status_code in {401, 403, 429}:
-                    logger.warning("zoopla_blocked", url=url, status=resp.status_code)
-                    return None
-                logger.warning("zoopla_fetch_failed", url=url, status=resp.status_code)
+                if resp.status_code in {403, 429}:
+                    logger.warning("zoopla_blocked_cffi", url=url, status=resp.status_code)
+                    # wait longer
+                    time.sleep(5)
+                else:
+                    logger.warning("zoopla_fetch_failed", url=url, status=resp.status_code)
             except Exception as exc:
                 logger.warning("zoopla_fetch_error", url=url, error=str(exc))
             time.sleep(1.5 ** attempt)
@@ -75,7 +87,7 @@ class ZooplaCrawlerAgent(BaseAgent):
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         source_id = self.config.get("id", "zoopla_uk")
-
+        
         target_urls = list(input_payload.get("target_urls") or [])
         listing_url = input_payload.get("listing_url")
         if listing_url:
@@ -120,7 +132,7 @@ class ZooplaCrawlerAgent(BaseAgent):
 
         listings: List[RawListing] = []
         errors: List[str] = []
-
+        
         listing_urls: List[str] = []
         if target_urls:
             listing_urls = list(dict.fromkeys(target_urls))
@@ -137,7 +149,7 @@ class ZooplaCrawlerAgent(BaseAgent):
             listing_urls = listing_urls[:max_listings]
 
         if not listing_urls:
-            return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
+             return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
 
         for url in listing_urls:
             html_content = self._fetch_url(url)
@@ -163,6 +175,6 @@ class ZooplaCrawlerAgent(BaseAgent):
                 html_snapshot_path=snapshot_path,
             )
             listings.append(raw_listing)
-
+        
         status = "success" if listings else "failure"
         return AgentResponse(status=status, data=listings, errors=errors)

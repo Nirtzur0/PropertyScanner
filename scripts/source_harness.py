@@ -14,7 +14,7 @@ from src.utils.config import ConfigLoader
 
 def _serialize(obj: Any) -> Any:
     if hasattr(obj, "model_dump"):
-        return obj.model_dump()
+        return obj.model_dump(mode="json")
     return obj
 
 

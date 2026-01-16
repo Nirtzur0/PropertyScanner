@@ -248,6 +248,18 @@ class HedonicIndexService:
                 is_fallback=False,
             )
 
+        if region_id != "all":
+            row = self.repo.fetch_index("all", month_date)
+            if row:
+                value, r_squared, n_observations = row
+                return IndexResult(
+                    value=float(value),
+                    r_squared=float(r_squared) if r_squared else 0.0,
+                    n_observations=int(n_observations) if n_observations else 0,
+                    is_fallback=True,
+                    fallback_reason="all_region",
+                )
+
         # Fallback: Try INE IPV (Official Benchmark)
         ine_val = self._get_ine_benchmark(region_id, month_date)
         if ine_val:
@@ -355,6 +367,8 @@ class HedonicIndexService:
             "target_index": target_index.value,
             "comp_index_fallback": comp_index.is_fallback,
             "target_index_fallback": target_index.is_fallback,
+            "comp_fallback_reason": comp_index.fallback_reason,
+            "target_fallback_reason": target_index.fallback_reason,
             "raw_factor": adj_factor,
             "clamped": False,
         }

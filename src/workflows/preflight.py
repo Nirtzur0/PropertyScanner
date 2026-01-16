@@ -107,8 +107,8 @@ def run_preflight(
             _run_step(
                 tracker,
                 step_name="vector_index",
-                func=lambda: build_vector_index(db_url=db_url),
-                metadata={"db_url": db_url},
+                func=lambda: build_vector_index(db_url=db_url, listing_type="all"),
+                metadata={"db_url": db_url, "listing_type": "all"},
             )
             results["steps"].append("vector_index")
 

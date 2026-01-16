@@ -143,30 +143,110 @@ class RightmoveNormalizerAgent(BaseAgent):
         cleaned = [str(p).strip() for p in parts if p]
         return ", ".join(cleaned) if cleaned else fallback
 
+    def _extract_page_model(self, html: str) -> Dict[str, Any]:
+        """
+        Extracts the window.PAGE_MODEL JSON object from the HTML.
+        This is a fallback when JSON-LD is missing or incomplete.
+        """
+        match = re.search(r"window\.PAGE_MODEL\s*=\s*", html)
+        if match:
+            start_idx = match.end()
+            # Skip any leading whitespace/newlines
+            while start_idx < len(html) and html[start_idx] in [' ', '\n', '\r', '\t']:
+                start_idx += 1
+            
+            try:
+                data, _ = json.JSONDecoder().raw_decode(html, idx=start_idx)
+                return data
+            except Exception:
+                pass
+        return {}
+
     def _parse_item(self, raw: RawListing) -> Optional[CanonicalListing]:
         html = raw.raw_data.get("html_snippet", "")
         if not html:
             return None
 
         soup = BeautifulSoup(html, "html.parser")
+        
+        # 1. Try JSON-LD
         data = self._extract_json_ld(soup)
+        
+        # 2. Key fields check (Price is critical)
+        offers = data.get("offers") or {}
+        if isinstance(offers, list) and offers:
+            offers = offers[0]
+        price = self._parse_float(offers.get("price")) or 0.0
+
+        # 3. If critical data missing, try PAGE_MODEL
+        page_model = {}
+        if price == 0.0:
+            page_model = self._extract_page_model(html)
+            if page_model:
+                # Merge or use page_model data
+                analytics = page_model.get("analyticsInfo", {}).get("analyticsProperty", {})
+                property_data = page_model.get("propertyData", {})
+                
+                # Price
+                if price == 0.0:
+                    price = self._parse_float(analytics.get("price")) or self._parse_float(property_data.get("prices", {}).get("primaryPrice")) or 0.0
+                
+                # Title/Desc
+                if not data.get("name"):
+                    data["name"] = property_data.get("text", {}).get("pageTitle")
+                if not data.get("description"):
+                    data["description"] = property_data.get("text", {}).get("description")
+                
+                # Beds/Baths
+                if not data.get("numberOfRooms"):
+                    data["numberOfRooms"] = analytics.get("beds") or property_data.get("bedrooms")
+                if not data.get("numberOfBathroomsTotal"):
+                    data["numberOfBathroomsTotal"] = property_data.get("bathrooms")
+                
+                # Location from Analytics
+                if not data.get("geo"):
+                    data["geo"] = {
+                        "latitude": analytics.get("latitude"),
+                        "longitude": analytics.get("longitude")
+                    }
+                
+                # Address
+                if not data.get("address"):
+                    addr = property_data.get("address", {})
+                    data["address"] = {
+                        "streetAddress": addr.get("displayAddress") or analytics.get("displayAddress"),
+                        "postalCode": analytics.get("postcode"),
+                        "addressCountry": analytics.get("country")
+                    }
+                
+                # Images
+                if not data.get("image"):
+                    images = property_data.get("images", [])
+                    if images:
+                        data["image"] = [img.get("url") for img in images if img.get("url")]
 
         title = data.get("name") or ""
         if not title:
             title_el = soup.find("h1") or soup.select_one("meta[property='og:title']")
             title = title_el.get_text(strip=True) if title_el else "Unknown Property"
+        
         description = data.get("description") or ""
         if not description:
-            meta_desc = soup.select_one("meta[name='description']")
+            meta_desc = soup.select_one("meta[name='description']") or soup.select_one("meta[property='og:description']")
             if meta_desc:
                 description = meta_desc.get("content", "") or ""
 
-        offers = data.get("offers") or {}
-        if isinstance(offers, list) and offers:
-            offers = offers[0]
-        price = self._parse_float(offers.get("price")) or 0.0
-        currency = offers.get("priceCurrency") or "GBP"
+        # Recalculate price if still 0 from meta tags
+        if price == 0.0:
+            # Try to find price in text or meta
+            # e.g. "6 bedroom house for sale ... for £29,950,000"
+            match = re.search(r"[£$€]\s?([\d,]+)", description)
+            if match:
+                price = self._parse_float(match.group(1))
 
+        # Re-extract offers/currency in case data was patched
+        currency = offers.get("priceCurrency") or "GBP"
+        
         bedrooms = self._parse_float(data.get("numberOfRooms"))
         if bedrooms is not None:
             bedrooms = int(bedrooms)
@@ -200,7 +280,7 @@ class RightmoveNormalizerAgent(BaseAgent):
         address = data.get("address") or {}
         if isinstance(address, str):
             address = {"streetAddress": address}
-        city = address.get("addressLocality") or address.get("addressRegion") or "Unknown"
+        city = address.get("addressLocality") or address.get("addressRegion") or "London" # Fallback to London as mostly London listings
         country = address.get("addressCountry") or "GB"
         address_full = self._compose_address(address, title)
 
@@ -210,6 +290,9 @@ class RightmoveNormalizerAgent(BaseAgent):
         if geo:
             lat = self._parse_float(geo.get("latitude"))
             lon = self._parse_float(geo.get("longitude"))
+
+        # Final Validity Check: If Price is 0, it's likely invalid or Sold STC (sometimes hides price)
+        # But we want to extract it anyway. Squeaky clean scraping.
 
         location = None
         if address_full or city or (lat is not None and lon is not None):
@@ -231,7 +314,7 @@ class RightmoveNormalizerAgent(BaseAgent):
             url=raw.url,
             title=title or "Unknown Property",
             description=description or None,
-            price=price,
+            price=price or 0.0,
             currency=self._map_currency(currency),
             listing_type=self._infer_listing_type(str(raw.url)),
             property_type=self._map_property_type(data.get("@type"), title),

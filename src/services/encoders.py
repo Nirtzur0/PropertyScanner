@@ -40,7 +40,7 @@ class TextEncoder:
         Returns:
             numpy array of shape (len(texts), dimension)
         """
-        embeddings = self.model.encode(texts, normalize_embeddings=normalize)
+        embeddings = self.model.encode(texts, normalize_embeddings=normalize, show_progress_bar=False)
         return np.array(embeddings).astype('float32')
 
     def encode_single(self, text: str, normalize: bool = True) -> np.ndarray:

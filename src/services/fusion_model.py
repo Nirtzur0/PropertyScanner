@@ -307,6 +307,12 @@ class FusionModelService:
         with open(self.config_path, "r") as f:
             self.config = json.load(f)
 
+        try:
+            torch.set_num_threads(1)
+            torch.set_num_interop_threads(1)
+        except Exception as exc:
+            logger.warning("torch_thread_config_failed", error=str(exc))
+
         required = {"tabular_dim", "text_dim", "image_dim", "hidden_dim", "num_heads"}
         missing = required.difference(self.config.keys())
         if missing:

@@ -34,8 +34,7 @@ def process_single_listing(describer, row):
             return listing_id, None, None
             
         # Generate description
-        # We process max 2 images per listing as per original logic implicit in slice
-        desc = describer.describe_images(image_urls[:2])
+        desc = describer.describe_images(image_urls, max_images=2)
         return listing_id, desc, None
         
     except Exception as e:

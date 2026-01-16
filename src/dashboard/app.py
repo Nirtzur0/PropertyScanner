@@ -80,31 +80,327 @@ def _format_ts(value):
     return f"{label} ({days}d ago)"
 
 
+VIEW_OPTIONS = ["Atlas", "Deal Flow", "Signal Lab", "Investment Memo"]
+DEFAULT_PRICE_RANGE = (120000, 1200000)
+
+
+def _ensure_session_defaults(available_cities, available_types):
+    state = st.session_state
+    if "selected_city" not in state:
+        state.selected_city = "All"
+    if state.selected_city != "All" and state.selected_city not in available_cities:
+        state.selected_city = "All"
+
+    if "selected_types" not in state:
+        state.selected_types = list(available_types)
+    else:
+        state.selected_types = [t for t in state.selected_types if t in available_types]
+        if not state.selected_types and available_types:
+            state.selected_types = list(available_types)
+
+    if "price_range" not in state:
+        state.price_range = DEFAULT_PRICE_RANGE
+    if "min_score" not in state:
+        state.min_score = 0.55
+    if "min_yield" not in state:
+        state.min_yield = 3.5
+    if "min_momentum" not in state:
+        state.min_momentum = -1.0
+    if "min_area_sentiment" not in state:
+        state.min_area_sentiment = 0.4
+    if "max_listings" not in state:
+        state.max_listings = 300
+    if "sort_by" not in state:
+        state.sort_by = "Deal Score"
+    if "sort_order" not in state:
+        state.sort_order = "Desc"
+    if "active_view" not in state:
+        state.active_view = VIEW_OPTIONS[0]
+    if "selected_title" not in state:
+        state.selected_title = None
+    if "orchestrator_log" not in state:
+        state.orchestrator_log = []
+    if "orchestrator_input" not in state:
+        state.orchestrator_input = ""
+
+
+def _log_orchestrator(role: str, text: str) -> None:
+    st.session_state.orchestrator_log.append({"role": role, "text": text})
+
+
+def _reset_filters(available_cities, available_types) -> None:
+    st.session_state.selected_city = "All"
+    st.session_state.selected_types = list(available_types)
+    st.session_state.price_range = DEFAULT_PRICE_RANGE
+    st.session_state.min_score = 0.55
+    st.session_state.min_yield = 3.5
+    st.session_state.min_momentum = -1.0
+    st.session_state.min_area_sentiment = 0.4
+    st.session_state.max_listings = 300
+    st.session_state.sort_by = "Deal Score"
+    st.session_state.sort_order = "Desc"
+
+
+def _apply_action(action, available_cities, available_types):
+    kind = action.get("type")
+    if kind == "set_filters":
+        for key, value in action.get("payload", {}).items():
+            if key in st.session_state:
+                st.session_state[key] = value
+    elif kind == "set_view":
+        st.session_state.active_view = action.get("view", VIEW_OPTIONS[0])
+    elif kind == "select_listing":
+        st.session_state.selected_title = action.get("title")
+        st.session_state.active_view = "Investment Memo"
+    elif kind == "reset_filters":
+        _reset_filters(available_cities, available_types)
+    elif kind == "preflight":
+        api = PipelineAPI()
+        with st.spinner("Refreshing pipeline artifacts..."):
+            api.preflight()
+        load_pipeline_status.clear()
+        load_filter_options.clear()
+
+
+def _parse_prompt(prompt, available_cities, available_types):
+    actions = []
+    responses = []
+    if not prompt:
+        return actions, "Ask me to navigate the live intel."
+
+    lower = prompt.lower().strip()
+
+    if "refresh" in lower or "preflight" in lower:
+        actions.append({"type": "preflight"})
+        responses.append("Refreshing pipeline artifacts.")
+
+    if "reset" in lower or "clear filters" in lower:
+        actions.append({"type": "reset_filters"})
+        responses.append("Resetting filters to the default mandate.")
+
+    for city in available_cities:
+        if city.lower() in lower:
+            actions.append({"type": "set_filters", "payload": {"selected_city": city}})
+            responses.append(f"Focusing on {city}.")
+            break
+
+    for prop_type in available_types:
+        if prop_type.lower() in lower:
+            actions.append({"type": "set_filters", "payload": {"selected_types": [prop_type]}})
+            responses.append(f"Filtering to {prop_type} listings.")
+            break
+
+    if "yield" in lower:
+        actions.append(
+            {"type": "set_filters", "payload": {"sort_by": "Yield %", "min_yield": max(st.session_state.min_yield, 4.0)}}
+        )
+        responses.append("Ranking by yield leaders.")
+    if "value gap" in lower or "undervalued" in lower:
+        actions.append({"type": "set_filters", "payload": {"sort_by": "Value Delta %", "sort_order": "Asc"}})
+        responses.append("Sorting for undervalued opportunities.")
+    if "momentum" in lower:
+        actions.append({"type": "set_filters", "payload": {"sort_by": "Momentum %"}})
+        responses.append("Prioritizing market momentum.")
+    if "deal flow" in lower or "table" in lower:
+        actions.append({"type": "set_view", "view": "Deal Flow"})
+        responses.append("Opening Deal Flow.")
+    if "signal" in lower or "lab" in lower:
+        actions.append({"type": "set_view", "view": "Signal Lab"})
+        responses.append("Opening Signal Lab.")
+    if "map" in lower or "atlas" in lower:
+        actions.append({"type": "set_view", "view": "Atlas"})
+        responses.append("Opening Atlas.")
+    if "memo" in lower or "analysis" in lower:
+        actions.append({"type": "set_view", "view": "Investment Memo"})
+        responses.append("Opening the Investment Memo.")
+
+    response = " ".join(responses) if responses else "Give me a focus: yield, value gap, momentum, or a city."
+    return actions, response
+
+
+def _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error):
+    if pipeline_error:
+        return "Pipeline telemetry is degraded. Want a refresh, or should we operate on cached signals?"
+    if pipeline_needs_refresh:
+        return "Signals are drifting. Want me to refresh the pipeline or keep scouting with current intel?"
+    if filtered_df.empty:
+        return "No matches in the current lens. Should I widen filters or switch cities?"
+    return (
+        f"I found {len(filtered_df)} opportunities. Do you want yield leaders, undervalued deals, "
+        "or momentum plays?"
+    )
+
+
+def _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities):
+    suggestions = []
+    if pipeline_needs_refresh:
+        suggestions.append(
+            {
+                "title": "Refresh the pipeline",
+                "body": "Run preflight to sync indices, comps, and valuations.",
+                "cta": "Run refresh",
+                "action": {"type": "preflight"},
+                "log": "Queued a pipeline refresh.",
+            }
+        )
+
+    if filtered_df.empty:
+        suggestions.extend(
+            [
+                {
+                    "title": "Widen the lens",
+                    "body": "Lower the minimum deal score to expand coverage.",
+                    "cta": "Loosen filters",
+                    "action": {"type": "set_filters", "payload": {"min_score": 0.4}},
+                    "log": "Lowered the minimum deal score to broaden results.",
+                },
+                {
+                    "title": "Reset filters",
+                    "body": "Return to the default scouting mandate.",
+                    "cta": "Reset",
+                    "action": {"type": "reset_filters"},
+                    "log": "Reset filters to the default mandate.",
+                },
+            ]
+        )
+        return suggestions
+
+    top_city = (
+        filtered_df["City"].dropna().value_counts().index[0]
+        if "City" in filtered_df.columns and not filtered_df["City"].dropna().empty
+        else None
+    )
+    top_pick_title = filtered_df.iloc[0]["Title"] if not filtered_df.empty else None
+
+    suggestions.extend(
+        [
+            {
+                "title": "Yield leaders",
+                "body": "Sort by income strength with a 4%+ yield floor.",
+                "cta": "Show yields",
+                "action": {"type": "set_filters", "payload": {"sort_by": "Yield %", "min_yield": max(st.session_state.min_yield, 4.0)}},
+                "log": "Surfacing yield leaders.",
+            },
+            {
+                "title": "Undervalued focus",
+                "body": "Sort by deepest value gaps versus ask.",
+                "cta": "Find mispricing",
+                "action": {"type": "set_filters", "payload": {"sort_by": "Value Delta %", "sort_order": "Asc"}},
+                "log": "Hunting undervalued listings.",
+            },
+            {
+                "title": "Momentum sweep",
+                "body": "Rank by market momentum to spot rising zones.",
+                "cta": "Show momentum",
+                "action": {"type": "set_filters", "payload": {"sort_by": "Momentum %"}},
+                "log": "Prioritizing momentum-driven zones.",
+            },
+            {
+                "title": "Atlas view",
+                "body": "Explore geospatial distribution of the short list.",
+                "cta": "Open map",
+                "action": {"type": "set_view", "view": "Atlas"},
+                "log": "Opening Atlas view.",
+            },
+        ]
+    )
+
+    if top_city:
+        suggestions.append(
+            {
+                "title": f"Lock on {top_city}",
+                "body": "Filter to the city with the densest opportunity set.",
+                "cta": "Focus city",
+                "action": {"type": "set_filters", "payload": {"selected_city": top_city}},
+                "log": f"Locking on {top_city}.",
+            }
+        )
+    if top_pick_title:
+        suggestions.append(
+            {
+                "title": "Open investment memo",
+                "body": "Jump to the most promising listing.",
+                "cta": "View memo",
+                "action": {"type": "select_listing", "title": top_pick_title},
+                "log": "Opening the top investment memo.",
+            }
+        )
+
+    return suggestions
+
+
 available_cities, available_types = load_filter_options()
+_ensure_session_defaults(available_cities, available_types)
+
+# --- Pipeline Status ---
+pipeline_status = load_pipeline_status()
+pipeline_needs_refresh = bool(pipeline_status.get("needs_refresh"))
+pipeline_error = pipeline_status.get("error")
+pipeline_reasons = pipeline_status.get("reasons") or []
+if pipeline_error:
+    pipeline_state_text = "Status Error"
+    pipeline_reason_text = f"{pipeline_error}"
+    pipeline_badge = "Error"
+    pipeline_badge_class = "pipeline-badge pipeline-badge--stale"
+else:
+    pipeline_state_text = "Stale" if pipeline_needs_refresh else "Fresh"
+    pipeline_reason_text = ", ".join(pipeline_reasons) if pipeline_reasons else "All systems aligned"
+    pipeline_badge = "Refresh" if pipeline_needs_refresh else "Live"
+    pipeline_badge_class = "pipeline-badge pipeline-badge--fresh" if not pipeline_needs_refresh else "pipeline-badge pipeline-badge--stale"
+
+pipeline_listings = int(pipeline_status.get("listings_count", 0) or 0)
+pipeline_listings_at = _format_ts(pipeline_status.get("listings_last_seen"))
+pipeline_market_at = _format_ts(pipeline_status.get("market_data_at"))
+pipeline_index_at = _format_ts(pipeline_status.get("index_at"))
+pipeline_model_at = _format_ts(pipeline_status.get("model_at"))
+
+st.markdown(
+    f"""
+    <div class="app-bar">
+        <div class="app-brand">
+            <span>Property Scanner</span>
+            <small>Scout OS</small>
+        </div>
+        <div class="app-actions">
+            <span class="app-chip">{pipeline_state_text}</span>
+            <span class="app-chip">{st.session_state.active_view}</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # --- Sidebar Controls ---
-st.sidebar.markdown("<div class='sidebar-title'>Command Deck</div>", unsafe_allow_html=True)
-selected_city = st.sidebar.selectbox("City Focus", ["All"] + available_cities)
-selected_types = st.sidebar.multiselect(
-    "Property Type", available_types, default=available_types if available_types else []
-)
-min_price, max_price = st.sidebar.slider(
-    "Price Range (EUR)", 0, 2000000, (120000, 1200000), step=10000
-)
-min_score = st.sidebar.slider("Minimum Deal Score", 0.0, 1.0, 0.55, step=0.05)
-min_yield = st.sidebar.slider("Minimum Yield (%)", 0.0, 12.0, 3.5, step=0.1)
-min_momentum = st.sidebar.slider("Momentum Floor (Annual %)", -8.0, 12.0, -1.0, step=0.5)
-min_area_sentiment = st.sidebar.slider("Area Sentiment Floor", 0.0, 1.0, 0.4, step=0.05)
-max_listings = st.sidebar.slider("Max Listings to Analyze", 50, 1500, 300, step=50)
-sort_by = st.sidebar.selectbox(
-    "Sort By",
-    ["Deal Score", "Yield %", "Value Delta %", "Fair Value", "Momentum %"],
-)
-ascending = st.sidebar.radio("Order", ["Desc", "Asc"], horizontal=True) == "Asc"
+st.sidebar.markdown("<div class='sidebar-title'>Control Room</div>", unsafe_allow_html=True)
+
+with st.sidebar.expander("Lens", expanded=True):
+    selected_city = st.selectbox("Location", ["All"] + available_cities, key="selected_city")
+    selected_types = st.multiselect("Type", available_types, key="selected_types")
+    min_price, max_price = st.slider(
+        "Budget (EUR)", 0, 2000000, key="price_range", step=10000
+    )
+
+with st.sidebar.expander("Performance", expanded=True):
+    min_score = st.slider("Conviction Score", 0.0, 1.0, key="min_score", step=0.05)
+    min_yield = st.slider("Income Yield (%)", 0.0, 12.0, key="min_yield", step=0.1)
+
+with st.sidebar.expander("Signals", expanded=False):
+    min_momentum = st.slider("Momentum Floor (Annual %)", -8.0, 12.0, key="min_momentum", step=0.5)
+    min_area_sentiment = st.slider("Area Sentiment Floor", 0.0, 1.0, key="min_area_sentiment", step=0.05)
+
+with st.sidebar.expander("Results", expanded=False):
+    max_listings = st.slider("Max Results", 50, 1500, key="max_listings", step=50)
+    sort_by = st.selectbox(
+        "Rank By",
+        ["Deal Score", "Yield %", "Value Delta %", "Fair Value", "Momentum %"],
+        key="sort_by",
+    )
+    ascending = st.radio("Order", ["Desc", "Asc"], key="sort_order", horizontal=True) == "Asc"
 
 # --- Load Data ---
 session = storage.get_session()
 raw_rows = []
+failed_valuations = 0
 try:
     query = session.query(DBListing)
     if selected_city != "All":
@@ -170,10 +466,19 @@ try:
                 else {}
             )
         else:
-            comps = retriever.retrieve_comps(listing, k=3)
-            analysis = valuation.evaluate_deal(listing, comps=comps)
-            if analysis.evidence and analysis.evidence.external_signals:
-                ext_signals = analysis.evidence.external_signals
+            try:
+                comps = retriever.retrieve_comps(listing, k=3)
+                analysis = valuation.evaluate_deal(listing, comps=comps)
+                if persister:
+                    try:
+                        persister.save_valuation(db_item.id, analysis)
+                    except Exception:
+                        pass
+                if analysis.evidence and analysis.evidence.external_signals:
+                    ext_signals = analysis.evidence.external_signals
+            except Exception:
+                failed_valuations += 1
+                continue
 
         signals = analysis.market_signals or {}
         momentum = signals.get("momentum")
@@ -247,6 +552,8 @@ try:
 finally:
     session.close()
 
+if failed_valuations:
+    st.warning(f"{failed_valuations} listings failed valuation and were skipped.")
 
 df = pd.DataFrame(raw_rows)
 
@@ -281,27 +588,117 @@ if sort_key not in filtered_df.columns:
     sort_key = "Deal Score"
 filtered_df = filtered_df.sort_values(by=sort_key, ascending=ascending)
 
-# --- Pipeline Status ---
-pipeline_status = load_pipeline_status()
-pipeline_needs_refresh = bool(pipeline_status.get("needs_refresh"))
-pipeline_error = pipeline_status.get("error")
-pipeline_reasons = pipeline_status.get("reasons") or []
-if pipeline_error:
-    pipeline_state_text = "Status Error"
-    pipeline_reason_text = f"{pipeline_error}"
-    pipeline_badge = "Error"
-    pipeline_badge_class = "pipeline-badge pipeline-badge--stale"
+if not filtered_df.empty:
+    titles = list(filtered_df["Title"].unique())
+    if st.session_state.selected_title not in titles:
+        st.session_state.selected_title = titles[0]
 else:
-    pipeline_state_text = "Stale" if pipeline_needs_refresh else "Fresh"
-    pipeline_reason_text = ", ".join(pipeline_reasons) if pipeline_reasons else "All systems aligned"
-    pipeline_badge = "Refresh" if pipeline_needs_refresh else "Live"
-    pipeline_badge_class = "pipeline-badge pipeline-badge--fresh" if not pipeline_needs_refresh else "pipeline-badge pipeline-badge--stale"
+    st.session_state.selected_title = None
 
-pipeline_listings = int(pipeline_status.get("listings_count", 0) or 0)
-pipeline_listings_at = _format_ts(pipeline_status.get("listings_last_seen"))
-pipeline_market_at = _format_ts(pipeline_status.get("market_data_at"))
-pipeline_index_at = _format_ts(pipeline_status.get("index_at"))
-pipeline_model_at = _format_ts(pipeline_status.get("model_at"))
+# --- Orchestrator Console ---
+orchestrator_prompt = _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error)
+suggestions = _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities)
+
+st.markdown(
+    f"""
+    <div class="orchestrator-panel">
+        <div class="orchestrator-header">
+            <div>
+                <div class="orchestrator-label">LLM Orchestrator</div>
+                <div class="orchestrator-title">Scout Dialogue</div>
+            </div>
+            <div class="orchestrator-status">{pipeline_state_text}</div>
+        </div>
+        <div class="orchestrator-prompt">{orchestrator_prompt}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.form("orchestrator_form", clear_on_submit=True):
+    prompt = st.text_input(
+        "Ask the Scout",
+        placeholder="e.g. show undervalued apartments in Alicante, open the map",
+        key="orchestrator_input",
+        label_visibility="collapsed",
+    )
+    submitted = st.form_submit_button("Send")
+
+if submitted and prompt:
+    _log_orchestrator("user", prompt)
+    actions, response = _parse_prompt(prompt, available_cities, available_types)
+    _log_orchestrator("assistant", response)
+    for action in actions:
+        _apply_action(action, available_cities, available_types)
+    st.rerun()
+
+if suggestions:
+    st.markdown("<div class='section-title'>Suggested Responses</div>", unsafe_allow_html=True)
+    cols = st.columns(3)
+    for idx, suggestion in enumerate(suggestions):
+        col = cols[idx % 3]
+        with col:
+            st.markdown(
+                f"""
+                <div class="answer-banner">
+                    <div class="answer-title">{suggestion['title']}</div>
+                    <div class="answer-body">{suggestion['body']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button(suggestion["cta"], key=f"suggestion_{idx}"):
+                log = suggestion.get("log")
+                if log:
+                    _log_orchestrator("assistant", log)
+                _apply_action(suggestion["action"], available_cities, available_types)
+                st.rerun()
+
+st.markdown("<div class='section-title'>Navigator</div>", unsafe_allow_html=True)
+st.radio("", VIEW_OPTIONS, key="active_view", horizontal=True, label_visibility="collapsed")
+
+with st.expander("Dialogue Log"):
+    if st.session_state.orchestrator_log:
+        for msg in st.session_state.orchestrator_log[-6:]:
+            st.markdown(
+                f"<div class='orchestrator-log orchestrator-log--{msg['role']}'>{msg['text']}</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("No dialogue yet. Ask the Scout above.")
+
+# --- Lens Summary ---
+type_label = "All types"
+if selected_types:
+    type_label = ", ".join(selected_types[:2])
+    if len(selected_types) > 2:
+        type_label = f"{type_label} +{len(selected_types) - 2}"
+
+lens_tags = [
+    f"Location: {selected_city}",
+    f"Type: {type_label}",
+    f"Budget: €{min_price:,.0f}–€{max_price:,.0f}",
+    f"Score ≥ {min_score:.2f}",
+    f"Yield ≥ {min_yield:.1f}%",
+]
+
+lens_cols = st.columns([4, 1])
+with lens_cols[0]:
+    st.markdown(
+        f"""
+        <div class="lens-card">
+            <div class="lens-title">Active Lens</div>
+            <div class="lens-tags">
+                {"".join([f"<span class='lens-tag'>{tag}</span>" for tag in lens_tags])}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with lens_cols[1]:
+    if st.button("Reset Lens"):
+        _reset_filters(available_cities, available_types)
+        st.rerun()
 
 # --- Hero ---
 avg_price = filtered_df["Price"].mean() if not filtered_df.empty else 0
@@ -326,17 +723,17 @@ st.markdown(
     f"""
     <div class="lux-hero">
         <div>
-            <div class="lux-brand">Property Scanner</div>
-            <h1 class="lux-title">Scout Intelligence</h1>
-            <p class="lux-subtitle">A private-market view into pricing power, rental alpha, and neighborhood drift.</p>
+            <div class="lux-brand">Scout OS</div>
+            <h1 class="lux-title">Property Scanner</h1>
+            <p class="lux-subtitle">A private-market command layer for valuation, rental strength, and neighborhood momentum.</p>
             <div class="lux-tags">
-                <span class="pill">Live Signals</span>
-                <span class="pill">Income-Adjusted Valuation</span>
+                <span class="pill">Comp-Fusion Valuation</span>
+                <span class="pill">Income-Adjusted Yield</span>
                 <span class="pill">Area Intelligence</span>
             </div>
         </div>
         <div class="hero-metric">
-            <div class="hero-metric-label">Market Pulse</div>
+            <div class="hero-metric-label">Signal Pulse</div>
             <div class="hero-metric-value">{market_heat_index}</div>
             <div class="hero-metric-sub">Momentum-driven composite</div>
         </div>
@@ -345,31 +742,43 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- Pipeline Widget ---
+# --- System Health ---
+with st.expander("System Health", expanded=False):
+    st.markdown(
+        f"""
+        <div class="system-card">
+            <div class="pipeline-head">
+                <div>
+                    <div class="pipeline-label">Pipeline Health</div>
+                    <div class="pipeline-title">{pipeline_state_text}</div>
+                    <div class="pipeline-reason">{pipeline_reason_text}</div>
+                </div>
+                <div class="{pipeline_badge_class}">{pipeline_badge}</div>
+            </div>
+            <div class="pipeline-grid">
+                <div><span>Listings</span><strong>{pipeline_listings}</strong></div>
+                <div><span>Listings Last Seen</span><strong>{pipeline_listings_at}</strong></div>
+                <div><span>Market Data</span><strong>{pipeline_market_at}</strong></div>
+                <div><span>Index</span><strong>{pipeline_index_at}</strong></div>
+                <div><span>Model</span><strong>{pipeline_model_at}</strong></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# --- Highlights ---
+kpi_label = "Highlights"
+kpi_note = "A curated pulse from your active lens."
 st.markdown(
     f"""
-    <div class="pipeline-card">
-        <div class="pipeline-head">
-            <div>
-                <div class="pipeline-label">Pipeline Freshness</div>
-                <div class="pipeline-title">{pipeline_state_text}</div>
-                <div class="pipeline-reason">{pipeline_reason_text}</div>
-            </div>
-            <div class="{pipeline_badge_class}">{pipeline_badge}</div>
-        </div>
-        <div class="pipeline-grid">
-            <div><span>Listings</span><strong>{pipeline_listings}</strong></div>
-            <div><span>Listings Last Seen</span><strong>{pipeline_listings_at}</strong></div>
-            <div><span>Market Data</span><strong>{pipeline_market_at}</strong></div>
-            <div><span>Index</span><strong>{pipeline_index_at}</strong></div>
-            <div><span>Model</span><strong>{pipeline_model_at}</strong></div>
-        </div>
+    <div class="section-intro">
+        <div class="section-title">{kpi_label}</div>
+        <div class="section-subtitle">{kpi_note}</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
-
-# --- KPI Row ---
 kpi_cols = st.columns(4)
 
 kpi_data = [
@@ -414,9 +823,9 @@ for col, (label, value) in zip(strip_cols, signal_blocks):
             unsafe_allow_html=True,
         )
 
-# --- Top Picks ---
+# --- Featured Selection ---
 if not filtered_df.empty:
-    st.markdown("<div class='section-title'>Top Picks</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>Featured Selection</div>", unsafe_allow_html=True)
     top_picks = filtered_df.head(3)
     pick_cols = st.columns(len(top_picks))
     for col, (_, row) in zip(pick_cols, top_picks.iterrows()):
@@ -442,10 +851,10 @@ if not filtered_df.empty:
                 unsafe_allow_html=True,
             )
 
-# --- Tabs ---
-tab1, tab2, tab3 = st.tabs(["Atlas", "Deal Flow", "Signal Lab"])
+# --- Intel Views ---
+active_view = st.session_state.active_view
 
-with tab1:
+if active_view == "Atlas":
     map_data = filtered_df.dropna(subset=["lat", "lon"]).copy()
     if not map_data.empty:
         def score_color(score):
@@ -490,7 +899,7 @@ with tab1:
     else:
         st.info("No geocoded listings available for the current filters.")
 
-with tab2:
+elif active_view == "Deal Flow":
     display_cols = [
         "Title",
         "Price",
@@ -516,7 +925,7 @@ with tab2:
         height=420,
     )
 
-with tab3:
+elif active_view == "Signal Lab":
     left, right = st.columns(2)
     with left:
         st.markdown("### Yield vs Value Gap")
@@ -536,12 +945,17 @@ with tab3:
             st.caption("No deal scores available.")
 
 # --- Investment Memo ---
-st.markdown("<div class='section-title'>Investment Memo</div>", unsafe_allow_html=True)
+if active_view == "Investment Memo":
+    st.markdown("<div class='section-title'>Investment Memo</div>", unsafe_allow_html=True)
 
-if not filtered_df.empty:
-    selected_title = st.selectbox("Select Opportunity", filtered_df["Title"].unique())
-    if selected_title:
-        item = filtered_df[filtered_df["Title"] == selected_title].iloc[0]
+    if not filtered_df.empty:
+        selected_title = st.selectbox(
+            "Select Opportunity",
+            filtered_df["Title"].unique(),
+            key="selected_title",
+        )
+        if selected_title:
+            item = filtered_df[filtered_df["Title"] == selected_title].iloc[0]
 
         header_left, header_right = st.columns([3, 1])
         with header_left:
@@ -646,3 +1060,5 @@ if not filtered_df.empty:
             )
         else:
             st.caption("No direct comparables available for this asset.")
+    else:
+        st.caption("No listings match the current filters.")

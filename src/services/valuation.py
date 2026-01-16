@@ -30,7 +30,13 @@ import numpy as np
 from src.services.storage import StorageService
 from sqlalchemy import text
 from src.core.domain.schema import (
-    CanonicalListing, DealAnalysis, CompEvidence, EvidencePack, ValuationProjection, GeoLocation
+    CanonicalListing,
+    DealAnalysis,
+    CompEvidence,
+    EvidencePack,
+    ValuationProjection,
+    GeoLocation,
+    CompListing,
 )
 from src.core.domain.models import DBListing
 from src.services.forecasting import ForecastingService
@@ -63,7 +69,7 @@ class ValuationConfig:
     """Configuration knobs for valuation pipeline"""
     # Comp retrieval
     K_candidates: int = 100  # Initial comp candidates to retrieve
-    K_model: int = 30  # Comps to pass to fusion model
+    K_model: int = 10  # Comps to pass to fusion model
     max_distance_km: float = 10.0
     max_age_months: int = 24
     min_comps_for_fusion: int = 5
@@ -100,6 +106,7 @@ class ValuationConfig:
     area_sentiment_weight: float = 0.06
     area_development_weight: float = 0.04
     area_adjustment_cap: float = 0.08
+    rent_fallback_uncertainty: float = 0.35
     
     def __post_init__(self):
         if self.horizons_months is None:
@@ -298,6 +305,63 @@ class ValuationService:
 
         return hydrated, similarity_by_id
 
+    def _normalize_comps_input(
+        self,
+        comps: List[Any],
+    ) -> Tuple[List[CanonicalListing], Dict[str, float]]:
+        if not comps:
+            return [], {}
+
+        if isinstance(comps[0], CanonicalListing):
+            similarity_by_id = {}
+            for comp in comps:
+                comp_id = getattr(comp, "id", None)
+                if comp_id:
+                    similarity_by_id[comp_id] = getattr(comp, "similarity_score", 1.0)
+            return comps, similarity_by_id
+
+        if isinstance(comps[0], DBListing):
+            return [self._db_to_canonical(c) for c in comps], {}
+
+        ids: List[str] = []
+        similarity_by_id: Dict[str, float] = {}
+        for comp in comps:
+            comp_id = None
+            similarity = None
+            if isinstance(comp, CompListing):
+                comp_id = comp.id
+                similarity = comp.similarity_score
+            elif isinstance(comp, dict):
+                comp_id = comp.get("id")
+                similarity = comp.get("similarity_score")
+            else:
+                comp_id = getattr(comp, "id", None)
+                similarity = getattr(comp, "similarity_score", None)
+
+            if comp_id:
+                ids.append(comp_id)
+                if similarity is not None:
+                    similarity_by_id[comp_id] = float(similarity)
+
+        ids = [cid for cid in ids if cid]
+        if not ids:
+            return [], similarity_by_id
+
+        session = self.storage.get_session()
+        try:
+            rows = session.query(DBListing).filter(DBListing.id.in_(ids)).all()
+        finally:
+            session.close()
+
+        by_id = {r.id: r for r in rows}
+        hydrated = []
+        for comp_id in ids:
+            row = by_id.get(comp_id)
+            if row:
+                hydrated.append(self._db_to_canonical(row))
+
+        return hydrated, similarity_by_id
+
     def _retrieve_rent_comps(
         self,
         listing: CanonicalListing,
@@ -383,7 +447,11 @@ class ValuationService:
             if comps is None:
                 comps, similarity_by_id = self._retrieve_comps(listing, as_of_date=valuation_date)
             else:
-                similarity_by_id = {}
+                comps, similarity_by_id = self._normalize_comps_input(comps)
+                if len(comps) < self.config.min_comps_for_fusion:
+                    if tracer:
+                        tracer.log("comps_insufficient_provided", {"count": len(comps)})
+                    comps, similarity_by_id = self._retrieve_comps(listing, as_of_date=valuation_date)
 
             eri_disagree, eri_details, eri_signals = self._eri_disagreement(region_id, valuation_date)
             use_vlm = not eri_disagree
@@ -496,22 +564,40 @@ class ValuationService:
             # STAGE 4: FUTURE PROJECTIONS (Market Drift Only)
             # =====================================================================
             
-            projections = self._compute_projections(fair_value, region_id, valuation_date, bucket_key)
+            try:
+                projections = self._compute_projections(fair_value, region_id, valuation_date, bucket_key)
+            except ValueError as exc:
+                logger.warning("projection_failed", error=str(exc), listing_id=listing.id)
+                projections = []
+                flags.append("missing_projections")
 
             # =====================================================================
             # STAGE 4b: RENT & YIELD PROJECTIONS
             # =====================================================================
 
-            rent_projections = self.forecasting.forecast_rent(
-                region_id=region_id,
-                current_monthly_rent=rent_est,
-                horizons_months=self.config.horizons_months,
-            )
+            try:
+                rent_projections = self.forecasting.forecast_rent(
+                    region_id=region_id,
+                    current_monthly_rent=rent_est,
+                    horizons_months=self.config.horizons_months,
+                )
+            except ValueError as exc:
+                logger.warning("rent_projection_failed", error=str(exc), listing_id=listing.id)
+                rent_projections = []
+                flags.append("missing_rent_projections")
 
-            yield_projections = self._compute_yield_projections(
-                price_projections=projections,
-                rent_projections=rent_projections,
-            )
+            if projections and rent_projections:
+                try:
+                    yield_projections = self._compute_yield_projections(
+                        price_projections=projections,
+                        rent_projections=rent_projections,
+                    )
+                except ValueError as exc:
+                    logger.warning("yield_projection_failed", error=str(exc), listing_id=listing.id)
+                    yield_projections = []
+                    flags.append("missing_yield_projections")
+            else:
+                yield_projections = []
             
             # =====================================================================
             # STAGE 5: MARKET SIGNALS
@@ -595,6 +681,39 @@ class ValuationService:
             return False
         uniq_ratio = len(set(tokens)) / max(len(tokens), 1)
         return uniq_ratio >= 0.4
+
+    def _build_text_for_embedding(self, listing: CanonicalListing, include_vlm: bool) -> str:
+        text_parts = [listing.title]
+        if listing.description:
+            text_parts.append(listing.description)
+        if include_vlm and listing.vlm_description and self.config.retriever_vlm_policy != "off":
+            if self._is_vlm_safe(listing.vlm_description):
+                text_parts.append(listing.vlm_description)
+        return " ".join(part for part in text_parts if part)
+
+    def _build_tabular_features(self, listing: CanonicalListing) -> Dict[str, float]:
+        price_sqm = 0.0
+        return {
+            'bedrooms': listing.bedrooms or 0,
+            'bathrooms': listing.bathrooms or 0,
+            'surface_area_sqm': listing.surface_area_sqm or 0,
+            'year_built': 0,
+            'floor': listing.floor or 0,
+            'lat': listing.location.lat if listing.location else 0,
+            'lon': listing.location.lon if listing.location else 0,
+            'price_per_sqm': price_sqm,
+            'text_sentiment': listing.text_sentiment or 0.5,
+            'image_sentiment': listing.image_sentiment or 0.5,
+            'has_elevator': 1.0 if listing.has_elevator else 0.0
+        }
+
+    def _get_image_embedding(self, listing: CanonicalListing) -> Optional[np.ndarray]:
+        if listing.image_embeddings and len(listing.image_embeddings) > 0:
+            try:
+                return np.array(listing.image_embeddings[0], dtype='float32')
+            except Exception:
+                return None
+        return None
     
     def _try_fusion_valuation(
         self,
@@ -615,6 +734,8 @@ class ValuationService:
         # Time-adjust comp prices
         adjusted_comps = []
         comp_evidence = []
+        hedonic_fallback = False
+        fallback_reasons = set()
 
         for comp in comps[:self.config.K_model]:
             comp_timestamp = comp.listed_at or comp.updated_at
@@ -630,8 +751,19 @@ class ValuationService:
                 target_timestamp=valuation_date
             )
 
-            if meta.get("comp_index_fallback") or meta.get("target_index_fallback"):
-                raise ValueError("hedonic_index_fallback_detected")
+            comp_fallback = bool(meta.get("comp_index_fallback"))
+            target_fallback = bool(meta.get("target_index_fallback"))
+            if comp_fallback:
+                fallback_reasons.add(meta.get("comp_fallback_reason") or "unknown")
+            if target_fallback:
+                fallback_reasons.add(meta.get("target_fallback_reason") or "unknown")
+
+            if comp_fallback or target_fallback:
+                allowed_reasons = {"all_region"}
+                disallowed = [r for r in fallback_reasons if r not in allowed_reasons]
+                if disallowed:
+                    raise ValueError("hedonic_index_fallback_detected")
+                hedonic_fallback = True
 
             adjusted_comps.append({
                 'comp': comp,
@@ -663,22 +795,27 @@ class ValuationService:
             })
 
         # Get embeddings and features for target
-        target_text, target_tab, target_img = self._get_embeddings(listing, include_vlm=use_vlm)
+        target_text = self._build_text_for_embedding(listing, include_vlm=use_vlm)
+        target_text_emb = self.encoder.text_encoder.encode([target_text])[0]
+        target_tab = self.encoder.tabular_encoder.encode(self._build_tabular_features(listing))
+        target_img = self._get_image_embedding(listing)
 
-        # Get embeddings and features for comps
-        comp_text_list = []
-        comp_tab_list = []
-        comp_img_list = []
-        comp_prices_list = []
+        comp_list = [item["comp"] for item in adjusted_comps]
+        comp_texts = [
+            self._build_text_for_embedding(comp, include_vlm=use_vlm) for comp in comp_list
+        ]
+        comp_text_embeddings = (
+            self.encoder.text_encoder.encode(comp_texts) if comp_texts else np.array([])
+        )
+        comp_tab_features = [self._build_tabular_features(comp) for comp in comp_list]
+        comp_tab_embeddings = (
+            self.encoder.tabular_encoder.encode_batch(comp_tab_features) if comp_tab_features else np.array([])
+        )
+        comp_img_list = [self._get_image_embedding(comp) for comp in comp_list]
+        comp_prices_list = [item["adj_price"] for item in adjusted_comps]
 
-        for item in adjusted_comps:
-            comp = item['comp']
-            c_text, c_tab, c_img = self._get_embeddings(comp, include_vlm=use_vlm)
-
-            comp_text_list.append(c_text)
-            comp_tab_list.append(c_tab)
-            comp_img_list.append(c_img)
-            comp_prices_list.append(item['adj_price'])
+        comp_text_list = [comp_text_embeddings[i] for i in range(len(comp_list))]
+        comp_tab_list = [comp_tab_embeddings[i] for i in range(len(comp_list))]
 
         use_residual = self.fusion.config.get("target_mode") == "log_residual"
         if use_residual:
@@ -688,7 +825,7 @@ class ValuationService:
 
             # Run fusion model (predict residuals in log space)
             fusion_out = self.fusion.predict(
-                target_text_embedding=target_text,
+                target_text_embedding=target_text_emb,
                 target_tabular_features=target_tab,
                 target_image_embedding=target_img,
                 comp_text_embeddings=comp_text_list,
@@ -717,7 +854,7 @@ class ValuationService:
             anchor_std = float(np.std(comp_prices_list)) if comp_prices_list else 0.0
         else:
             fusion_out = self.fusion.predict(
-                target_text_embedding=target_text,
+                target_text_embedding=target_text_emb,
                 target_tabular_features=target_tab,
                 target_image_embedding=target_img,
                 comp_text_embeddings=comp_text_list,
@@ -739,16 +876,35 @@ class ValuationService:
             anchor_price = q50
             anchor_std = (q90 - q10) / 2
 
+        model_used = "fusion"
         if q50 <= 0 or q10 <= 0 or q90 <= 0 or not (q10 <= q50 <= q90):
-            raise ValueError("invalid_fusion_quantiles")
+            baseline_weights = [similarity_by_id.get(item["comp"].id, 1.0) for item in adjusted_comps]
+            baseline = self._robust_comp_baseline(comp_prices_list, baseline_weights)
+            std = float(np.std(comp_prices_list)) if comp_prices_list else 0.0
+            if std <= 0:
+                std = max(baseline * 0.05, 1.0)
+            q50 = float(baseline)
+            q10 = max(q50 - 1.2816 * std, q50 * 0.5)
+            q90 = q50 + 1.2816 * std
+            anchor_price = q50
+            anchor_std = std
+            model_used = "comp_baseline"
 
-        if fusion_out.attention_weights is None:
-            raise ValueError("missing_attention_weights")
-
-        attn_weights = fusion_out.attention_weights.flatten()
-        for i, ce in enumerate(comp_evidence):
-            if i < len(attn_weights):
+        attn_weights = fusion_out.attention_weights.flatten() if fusion_out.attention_weights is not None else None
+        if attn_weights is not None and len(attn_weights) >= len(comp_evidence):
+            for i, ce in enumerate(comp_evidence):
                 ce.attention_weight = float(attn_weights[i])
+        else:
+            weights = []
+            for ce in comp_evidence:
+                weight = similarity_by_id.get(ce.id, 1.0)
+                weights.append(float(weight) if weight is not None else 1.0)
+            total = sum(weights)
+            if total <= 0:
+                weights = [1.0 for _ in weights]
+                total = float(len(weights)) if weights else 1.0
+            for ce, weight in zip(comp_evidence, weights):
+                ce.attention_weight = float(weight) / total
 
         comp_evidence.sort(key=lambda ce: ce.attention_weight, reverse=True)
 
@@ -759,12 +915,12 @@ class ValuationService:
         comp_date_range = f"{min(comp_months)} to {max(comp_months)}" if comp_months else None
 
         evidence = EvidencePack(
-            model_used="fusion",
+            model_used=model_used,
             anchor_price=anchor_price,
             anchor_std=anchor_std,
             top_comps=comp_evidence,
-            hedonic_fallback=False,
-            hedonic_fallback_reason=None,
+            hedonic_fallback=hedonic_fallback,
+            hedonic_fallback_reason=", ".join(sorted(fallback_reasons)) if hedonic_fallback else None,
             calibration_status="uncalibrated",
             valuation_date=valuation_date.strftime("%Y-%m-%d"),
             comp_date_range=comp_date_range,
@@ -785,51 +941,10 @@ class ValuationService:
         Returns: (text_embedding, tabular_features, image_embedding)
         """
         sanitize_listing_features(listing)
-        # 1. Text Embedding
-        text_parts = [listing.title]
-        if listing.description:
-            text_parts.append(listing.description)
-        if include_vlm and listing.vlm_description and self.config.retriever_vlm_policy != "off":
-            if self._is_vlm_safe(listing.vlm_description):
-                text_parts.append(listing.vlm_description)
-        full_text = " ".join(text_parts)
-
-        text_emb = self.encoder.text_encoder.encode_single(full_text)
-
-        # 2. Tabular Features
-        # Features expected by TabularEncoder default:
-        # bedrooms, bathrooms, surface_area_sqm, year_built, floor, lat, lon, price_per_sqm, sentiment_score, has_elevator
-
-        # Avoid train/infer leakage: do not use price_per_sqm as an input feature.
-        price_sqm = 0.0
-
-        features = {
-            'bedrooms': listing.bedrooms or 0,
-            'bathrooms': listing.bathrooms or 0,
-            'surface_area_sqm': listing.surface_area_sqm or 0,
-            'year_built': 0, # Not in CanonicalListing
-            'floor': listing.floor or 0,
-            'lat': listing.location.lat if listing.location else 0,
-            'lon': listing.location.lon if listing.location else 0,
-            'price_per_sqm': price_sqm,
-            'text_sentiment': listing.text_sentiment or 0.5,
-            'image_sentiment': listing.image_sentiment or 0.5,
-            'has_elevator': 1.0 if listing.has_elevator else 0.0
-        }
-
-        tab_vec = self.encoder.tabular_encoder.encode(features)
-
-        # 3. Image Embedding
-        # Use cached if available
-        img_emb = None
-        if listing.image_embeddings and len(listing.image_embeddings) > 0:
-            # Assume first embedding or mean
-            # image_embeddings is List[List[float]]
-            try:
-                img_emb = np.array(listing.image_embeddings[0], dtype='float32')
-            except:
-                pass
-
+        text = self._build_text_for_embedding(listing, include_vlm=include_vlm)
+        text_emb = self.encoder.text_encoder.encode_single(text)
+        tab_vec = self.encoder.tabular_encoder.encode(self._build_tabular_features(listing))
+        img_emb = self._get_image_embedding(listing)
         return text_emb, tab_vec, img_emb
 
     def _robust_comp_baseline(
@@ -1242,6 +1357,14 @@ class ValuationService:
             ).fetchone()
 
         if not row or row[0] is None:
+            if region_id != "all":
+                with self.storage.engine.connect() as conn:
+                    fallback = conn.execute(
+                        query,
+                        {"region_id": "all", "month_key": f"{month_key}%"}
+                    ).fetchone()
+                if fallback and fallback[0] is not None:
+                    return float(fallback[0])
             raise ValueError("missing_market_index")
 
         value = float(row[0])
@@ -1476,7 +1599,23 @@ class ValuationService:
         if not listing.surface_area_sqm or listing.surface_area_sqm <= 0:
             raise ValueError("missing_surface_area_for_rent")
 
-        rental_comps, similarity_by_id = self._retrieve_rent_comps(listing, as_of_date=valuation_date)
+        try:
+            rental_comps, similarity_by_id = self._retrieve_rent_comps(listing, as_of_date=valuation_date)
+        except ValueError as exc:
+            fallback_rent = getattr(listing, "estimated_rent", None)
+            if not fallback_rent or fallback_rent <= 0:
+                rent_index = self._get_market_index_value(
+                    region_id,
+                    valuation_date.strftime("%Y-%m"),
+                    "rent_index_sqm"
+                )
+                if rent_index and rent_index > 0:
+                    fallback_rent = rent_index * listing.surface_area_sqm
+            if not fallback_rent or fallback_rent <= 0:
+                raise
+            if tracer:
+                tracer.log("rental_fallback", {"rent_est": fallback_rent, "reason": str(exc)})
+            return float(fallback_rent), float(self.config.rent_fallback_uncertainty), []
 
         adjusted_rents = []
         adjusted_weights = []

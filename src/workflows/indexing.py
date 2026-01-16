@@ -16,7 +16,7 @@ logger = structlog.get_logger(__name__)
 def build_vector_index(
     *,
     db_url: str = DEFAULT_DB_URL,
-    listing_type: str = "sale",
+    listing_type: str = "all",
     limit: int = 0,
     index_path: str = str(VECTOR_INDEX_PATH),
     metadata_path: str = str(VECTOR_METADATA_PATH),
@@ -72,7 +72,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--listing-type",
         type=str,
-        default="sale",
+        default="all",
         choices=["sale", "rent", "all"],
         help="Filter listings",
     )

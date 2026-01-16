@@ -57,16 +57,14 @@ def build_market_data(
     if not skip_hedonic:
         try:
             hedonic = HedonicIndexService(db_path=db_path)
+            hedonic.save_to_db(region_name=None)
             if city:
                 cities = [city.strip().lower()]
             else:
                 cities = _list_cities(db_path)
 
-            if not cities:
-                hedonic.save_to_db(region_name=None)
-            else:
-                for target_city in cities:
-                    hedonic.save_to_db(region_name=target_city)
+            for target_city in cities:
+                hedonic.save_to_db(region_name=target_city)
         except Exception as e:
             logger.warning("hedonic_indices_failed", error=str(e))
 
