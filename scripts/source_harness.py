@@ -2,11 +2,14 @@ import argparse
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List
 
 sys.path.append(os.getcwd())
 
 from src.listings.agents.factory import AgentFactory
+from src.listings.services.feature_fusion import FeatureFusionService
 from src.platform.settings import SourceConfig
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
@@ -38,6 +41,14 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--output", default="data/source_output.json", help="Output JSON/JSONL path")
     parser.add_argument("--jsonl", action="store_true", help="Write JSONL output")
     parser.add_argument("--raw", action="store_true", help="Output raw listings instead of normalized")
+    parser.add_argument("--no-fusion", action="store_true", help="Skip LLM/VLM feature fusion")
+    parser.add_argument("--no-vlm", action="store_true", help="Disable VLM image analysis during fusion")
+    parser.add_argument(
+        "--fusion-workers",
+        type=int,
+        default=0,
+        help="Parallel workers for LLM/VLM fusion (0 = auto)",
+    )
     parser.add_argument("--max-listings", type=int, default=0, help="Limit number of listings")
     parser.add_argument("--max-pages", type=int, default=1, help="Max search pages (Rightmove only)")
     parser.add_argument("--page-size", type=int, default=24, help="Search page size (Rightmove only)")
@@ -82,7 +93,44 @@ def main(argv: List[str] = None) -> int:
             raw_objs.append(item)
 
     norm_result = normalizer.run({"raw_listings": raw_objs})
-    records = [_serialize(r) for r in (norm_result.data or [])]
+    canonical_listings = norm_result.data or []
+
+    if canonical_listings and not args.no_fusion:
+        run_vlm = not args.no_vlm
+        max_workers = int(args.fusion_workers)
+        if max_workers <= 0:
+            max_workers = min(4, os.cpu_count() or 4)
+
+        fusion_local = threading.local()
+
+        def _fuse_one(listing):
+            service = getattr(fusion_local, "service", None)
+            if service is None:
+                service = FeatureFusionService(app_config=config_loader.app)
+                fusion_local.service = service
+            return service.fuse(listing, run_vlm=run_vlm)
+
+        if max_workers <= 1 or len(canonical_listings) <= 1:
+            fused = []
+            for listing in canonical_listings:
+                try:
+                    fused.append(_fuse_one(listing))
+                except Exception as exc:
+                    print(f"Fusion failed for {getattr(listing, 'id', 'unknown')}: {exc}")
+            canonical_listings = fused or canonical_listings
+        else:
+            fused = []
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_map = {executor.submit(_fuse_one, listing): listing for listing in canonical_listings}
+                for future in as_completed(future_map):
+                    listing = future_map[future]
+                    try:
+                        fused.append(future.result())
+                    except Exception as exc:
+                        print(f"Fusion failed for {getattr(listing, 'id', 'unknown')}: {exc}")
+            canonical_listings = fused or canonical_listings
+
+    records = [_serialize(r) for r in canonical_listings]
     _write_output(args.output, records, args.jsonl)
     return 0
 

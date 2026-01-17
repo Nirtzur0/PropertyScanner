@@ -1,18 +1,17 @@
-import time
-from typing import Any, Dict, List, Optional
-from bs4 import BeautifulSoup
-from src.platform.utils.stealth_requests import create_session, request_get
 import hashlib
-import structlog
 from datetime import datetime
-from urllib.parse import urljoin
+from typing import Any, Dict, Optional
+
+import structlog
+
+from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
-from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
 
 logger = structlog.get_logger(__name__)
+
 
 class IdealistaCrawlerAgent(BaseAgent):
     """
@@ -22,55 +21,48 @@ class IdealistaCrawlerAgent(BaseAgent):
         super().__init__(name="IdealistaCrawler", config=config)
         self.compliance = compliance
         self.base_url = config.get("base_url", "https://www.idealista.com")
-        self.snapshot_service = SnapshotService()
         self.user_agent = config.get(
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        self.session = create_session(self.user_agent)
-        # Idealista is very sensitive
-        self.rate_limit_seconds = float(config.get("period_seconds", 10))
+        max_workers = int(config.get("max_workers", 6))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
+        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
+        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        self.scrape_client = ScrapeClient(
+            source_id=config.get("id", "idealista"),
+            base_url=self.base_url,
+            compliance_manager=self.compliance,
+            user_agent=self.user_agent,
+            rate_limit_seconds=float(config.get("period_seconds", 10)),
+            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_playwright=prefer_playwright,
+            enable_playwright=bool(config.get("enable_playwright", True)),
+            browser_wait_s=float(config.get("browser_wait_s", 8.0)),
+            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
+            playwright_headless=bool(config.get("playwright_headless", True)),
+            engine_order=config.get("engine_order"),
+            max_workers=max_workers,
+            browser_max_concurrency=browser_max_concurrency,
+            playwright_max_concurrency=playwright_max_concurrency,
+        )
 
     def _fetch_url(self, url: str) -> Optional[str]:
-        if not self.compliance.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
-             logger.warning("idealista_blocked_compliance", url=url)
-             # return None # Compliance manager usually blocks on robots.txt 403.
-             # But for Idealista, robots.txt is often 403.
-             # We might want to force proceed if robots check failed due to 403 but not explicit Disallow.
-             pass
-
         try:
-            # Impersonate chrome
-            resp = request_get(
-                self.session,
-                url,
-                impersonate="chrome124",
-                timeout=30,
-            )
-            
-            if resp.status_code == 200:
-                if "human verification" in resp.text.lower() or "captcha" in resp.text.lower():
-                    logger.warning("idealista_captcha_detected", url=url)
-                    return None
-                return resp.text
-            elif resp.status_code in {403, 429}:
-                logger.warning("idealista_blocked_cffi", url=url, status=resp.status_code)
-                return None
-            else:
-                 logger.warning("idealista_fetch_failed", url=url, status=resp.status_code)
-                 return None
-
+            return self.scrape_client.fetch_html(url, retries=3, timeout_s=30)
         except Exception as e:
             logger.warning("idealista_fetch_error", url=url, error=str(e))
             return None
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         search_path = input_payload.get("search_path", "/venta-viviendas/madrid/centro/")
-        if not search_path.startswith("/"):
-             start_url = search_path
+        if search_path.startswith("http"):
+            start_url = search_path
+        elif search_path.startswith("/"):
+            start_url = f"{self.base_url}{search_path}"
         else:
-             start_url = f"{self.base_url}{search_path}"
-             
+            start_url = f"{self.base_url}/{search_path}"
+
         listing_urls = []
         if input_payload.get("target_urls"):
             listing_urls = input_payload["target_urls"]
@@ -78,33 +70,31 @@ class IdealistaCrawlerAgent(BaseAgent):
             # Fetch Search Page
             html = self._fetch_url(start_url)
             if html:
-                soup = BeautifulSoup(html, "html.parser")
-                items = soup.select("article.item")
-                for item in items:
-                    link = item.select_one("a.item-link")
-                    if link:
-                        href = link.get("href")
-                        if href:
-                             listing_urls.append(urljoin(self.base_url, href))
+                listing_urls = self.scrape_client.extract_links(
+                    html,
+                    LinkExtractorSpec(
+                        selectors=["article.item a.item-link"],
+                        include=["/inmueble/"],
+                    ),
+                )
         
         results = []
-        for url in listing_urls:
-            html = self._fetch_url(url)
-            if not html:
+        for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=3):
+            if not result.html:
                 continue
+            url = result.url
+            html = result.html
             
             try:
                 lid = url.split("/inmueble/")[1].replace("/", "")
             except:
                 lid = hashlib.md5(url.encode()).hexdigest()[:12]
             
-            meta = self.snapshot_service.save_snapshot(
-                content=html,
-                source_id=self.config.get("id", "idealista"),
+            raw_path = self.scrape_client.build_raw_listing(
                 external_id=lid,
-                listing_url=url
+                url=url,
+                html=html,
             )
-            raw_path = meta.file_path if meta else None
             
             raw_listing = RawListing(
                 source_id=self.config.get("id", "idealista"),

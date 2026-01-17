@@ -5,13 +5,11 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import structlog
-from bs4 import BeautifulSoup
+from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
-from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
-from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
 
@@ -24,42 +22,52 @@ class RightmoveCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="RightmoveCrawler", config=config)
         self.compliance_manager = compliance_manager
-        self.snapshot_service = SnapshotService()
         self.base_url = config.get("base_url", "https://www.rightmove.co.uk")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
         user_agent = config.get("user_agent", "PropertyScanner/1.0")
-        self.session = create_session(user_agent)
+        max_workers = int(config.get("max_workers", 6))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
+        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
+        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        self.scrape_client = ScrapeClient(
+            source_id=config.get("id", "rightmove_uk"),
+            base_url=self.base_url,
+            compliance_manager=self.compliance_manager,
+            user_agent=user_agent,
+            rate_limit_seconds=self.rate_limit_seconds,
+            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_playwright=prefer_playwright,
+            enable_playwright=bool(config.get("enable_playwright", True)),
+            browser_wait_s=float(config.get("browser_wait_s", 8.0)),
+            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
+            playwright_headless=bool(config.get("playwright_headless", True)),
+            engine_order=config.get("engine_order"),
+            max_workers=max_workers,
+            browser_max_concurrency=browser_max_concurrency,
+            playwright_max_concurrency=playwright_max_concurrency,
+        )
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
-        if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
-            logger.warning("rightmove_blocked_by_robots", url=url)
-            return None
-
         for attempt in range(retries):
             try:
-                resp = request_get(self.session, url, timeout=timeout_s)
-                if resp.status_code == 200:
-                    return resp.text
-                if resp.status_code in {401, 403, 429}:
-                    logger.warning("rightmove_blocked", url=url, status=resp.status_code)
-                    return None
-                logger.warning("rightmove_fetch_failed", url=url, status=resp.status_code)
+                html = self.scrape_client.fetch_html(url, retries=1, timeout_s=timeout_s)
+                if html:
+                    return html
             except Exception as exc:
                 logger.warning("rightmove_fetch_error", url=url, error=str(exc))
             time.sleep(1.5 ** attempt)
         return None
 
     def _extract_listing_urls(self, html: str) -> List[str]:
-        soup = BeautifulSoup(html, "html.parser")
-        urls = set()
-        for anchor in soup.find_all("a", href=True):
-            href = anchor["href"]
-            if "/properties/" not in href:
-                continue
-            full = urljoin(self.base_url, href)
-            urls.add(full.split("#")[0])
-        return sorted(urls)
+        urls = self.scrape_client.extract_links(
+            html,
+            LinkExtractorSpec(
+                selectors=["a[href*='/properties/']"],
+                include=["/properties/"],
+            ),
+        )
+        return [u.split("#")[0] for u in urls]
 
     def _expand_search_urls(self, start_url: str, max_pages: int, page_size: int) -> List[str]:
         if max_pages <= 1:
@@ -157,20 +165,19 @@ class RightmoveCrawlerAgent(BaseAgent):
         if not listing_urls:
             return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
 
-        for url in listing_urls:
-            html_content = self._fetch_url(url)
-            if not html_content:
-                errors.append(f"fetch_failed:{url}")
+        for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
+            if not result.html:
+                errors.append(f"fetch_failed:{result.url}")
                 continue
+            html_content = result.html
+            url = result.url
 
             external_id = self._extract_external_id(url)
-            meta = self.snapshot_service.save_snapshot(
-                content=html_content,
-                source_id=source_id,
+            snapshot_path = self.scrape_client.build_raw_listing(
                 external_id=external_id,
-                listing_url=url,
+                url=url,
+                html=html_content,
             )
-            snapshot_path = meta.file_path if meta else None
 
             raw_listing = RawListing(
                 source_id=source_id,

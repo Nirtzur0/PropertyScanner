@@ -1,28 +1,18 @@
-import time
+import hashlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
-from bs4 import BeautifulSoup
-from src.platform.utils.stealth_requests import create_session, request_get
-import hashlib
+
 import structlog
+
+from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
-from src.listings.services.snapshot_storage import SnapshotService
 
 logger = structlog.get_logger(__name__)
 
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:  # pragma: no cover - optional dependency
-    sync_playwright = None
-
-try:
-    from playwright_stealth import Stealth
-except Exception:  # pragma: no cover - optional dependency
-    Stealth = None
 
 class ImmobiliareCrawlerAgent(BaseAgent):
     """
@@ -31,7 +21,6 @@ class ImmobiliareCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="ImmobiliareCrawler", config=config)
         self.compliance_manager = compliance_manager
-        self.snapshot_service = SnapshotService()
         self.base_url = config.get("base_url", "https://www.immobiliare.it")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 3))
@@ -39,56 +28,31 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        self.session = create_session(self.user_agent)
+        max_workers = int(config.get("max_workers", 6))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
+        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
+        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        self.scrape_client = ScrapeClient(
+            source_id=config.get("id", "immobiliare_it"),
+            base_url=self.base_url,
+            compliance_manager=self.compliance_manager,
+            user_agent=self.user_agent,
+            rate_limit_seconds=self.rate_limit_seconds,
+            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_playwright=prefer_playwright,
+            enable_playwright=bool(config.get("enable_playwright", True)),
+            browser_wait_s=float(config.get("browser_wait_s", 8.0)),
+            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
+            playwright_headless=bool(config.get("playwright_headless", True)),
+            engine_order=config.get("engine_order"),
+            max_workers=max_workers,
+            browser_max_concurrency=browser_max_concurrency,
+            playwright_max_concurrency=playwright_max_concurrency,
+        )
 
-    def _fetch_with_playwright(self, url: str) -> Optional[str]:
-        if not sync_playwright:
-            return None
+    def _fetch_url(self, url: str) -> Optional[str]:
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context()
-                page = context.new_page()
-                if Stealth:
-                    try:
-                        Stealth().apply_stealth_sync(page)
-                    except Exception:
-                        pass
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                html = page.content()
-                browser.close()
-                return html
-        except Exception as e:
-            logger.warning("immobiliare_playwright_failed", url=url, error=str(e))
-            return None
-
-    def _fetch_url(self, url: str, *, use_playwright: bool = False) -> Optional[str]:
-        if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
-            # Pass compliance errors if strict
-            pass
-
-        if use_playwright:
-            html = self._fetch_with_playwright(url)
-            if html:
-                return html
-
-        try:
-            resp = request_get(
-                self.session,
-                url,
-                impersonate="chrome124",
-                timeout=30,
-            )
-            
-            if resp.status_code == 200:
-                return resp.text
-            elif resp.status_code in {403, 429}:
-                logger.warning("immobiliare_blocked_cffi", url=url, status=resp.status_code)
-                return None
-            else:
-                 logger.warning("immobiliare_fetch_failed", url=url, status=resp.status_code)
-                 return None
-
+            return self.scrape_client.fetch_html(url, retries=3, timeout_s=30)
         except Exception as e:
             logger.warning("immobiliare_fetch_error", url=url, error=str(e))
             return None
@@ -119,51 +83,48 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                 normalized_targets.append(urljoin(self.base_url, str(url)))
         target_urls = normalized_targets
 
-        prefer_playwright = self.config.get("use_playwright")
-        if prefer_playwright is None:
-            prefer_playwright = bool(sync_playwright and listing_url)
-        
         listing_urls = []
         if target_urls:
             listing_urls = target_urls
         else:
             # Search Page
-            html = self._fetch_url(start_url, use_playwright=False)
+            html = self._fetch_url(start_url)
             if html:
-                soup = BeautifulSoup(html, "html.parser")
-                # Immobiliare uses various selectors
-                anchors = soup.select("li.nd-list__item a.in-card__title, li.in-realEstateResults__item a.in-card__title, a.in-reListCard__title")
-                for a in anchors:
-                    href = a.get("href")
-                    if href:
-                        listing_urls.append(href)
+                listing_urls = self.scrape_client.extract_links(
+                    html,
+                    LinkExtractorSpec(
+                        selectors=[
+                            "li.nd-list__item a.in-card__title",
+                            "li.in-realEstateResults__item a.in-card__title",
+                            "a.in-reListCard__title",
+                        ],
+                        include=["/annunci/"],
+                    ),
+                )
                         
         listings = []
         errors = []
         
         listing_urls = list(set(listing_urls))
         
-        for url in listing_urls:
-             # Check limits
-             full_url = url if url.startswith("http") else urljoin(self.base_url, url)
-             html = self._fetch_url(full_url, use_playwright=bool(prefer_playwright))
-             if not html:
-                 continue
-             
-             try:
-                 lid = full_url.split("/annunci/")[1].split("/")[0]
-             except:
-                 lid = hashlib.md5(full_url.encode()).hexdigest()[:12]
-             
-             meta = self.snapshot_service.save_snapshot(
-                content=html,
-                source_id=source_id,
+        for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
+            full_url = result.url if result.url.startswith("http") else urljoin(self.base_url, result.url)
+            html = result.html
+            if not html:
+                continue
+            
+            try:
+                lid = full_url.split("/annunci/")[1].split("/")[0]
+            except:
+                lid = hashlib.md5(full_url.encode()).hexdigest()[:12]
+            
+            snapshot_path = self.scrape_client.build_raw_listing(
                 external_id=lid,
-                listing_url=full_url,
+                url=full_url,
+                html=html,
             )
-             snapshot_path = meta.file_path if meta else None
-             
-             raw = RawListing(
+            
+            raw = RawListing(
                 source_id=source_id,
                 external_id=lid,
                 url=full_url,
@@ -171,7 +132,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                 raw_data={"html_snippet": html, "is_detail_page": True},
                 fetched_at=datetime.now()
             )
-             listings.append(raw)
+            listings.append(raw)
              
         status = "success" if listings else "failure"
         return AgentResponse(status=status, data=listings, errors=errors)

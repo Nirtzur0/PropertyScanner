@@ -2,15 +2,13 @@ import hashlib
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin, parse_qs, urlsplit, urlencode, urlunsplit
+from urllib.parse import urljoin
 
 import structlog
-from bs4 import BeautifulSoup
-from src.platform.utils.stealth_requests import create_session, request_get
+from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
-from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
 
 logger = structlog.get_logger(__name__)
@@ -24,55 +22,52 @@ class ZooplaCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="ZooplaCrawler", config=config)
         self.compliance_manager = compliance_manager
-        self.snapshot_service = SnapshotService()
         self.base_url = config.get("base_url", "https://www.zoopla.co.uk")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
-        self.user_agent = config.get("user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        
-        self.session = create_session(self.user_agent)
-
+        self.user_agent = config.get(
+            "user_agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        max_workers = int(config.get("max_workers", 6))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
+        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
+        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        self.scrape_client = ScrapeClient(
+            source_id=config.get("id", "zoopla_uk"),
+            base_url=self.base_url,
+            compliance_manager=self.compliance_manager,
+            user_agent=self.user_agent,
+            rate_limit_seconds=self.rate_limit_seconds,
+            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_playwright=prefer_playwright,
+            enable_playwright=bool(config.get("enable_playwright", True)),
+            browser_wait_s=float(config.get("browser_wait_s", 8.0)),
+            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
+            playwright_headless=bool(config.get("playwright_headless", True)),
+            engine_order=config.get("engine_order"),
+            max_workers=max_workers,
+            browser_max_concurrency=browser_max_concurrency,
+            playwright_max_concurrency=playwright_max_concurrency,
+        )
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
-        if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
-            logger.warning("zoopla_blocked_by_robots", url=url)
-            # Proceed anyway if robots check fails but we want to try? 
-            # ComplianceManager defaults to blocking. We stick to it.
-            return None
-
         for attempt in range(retries):
-            try:
-                # Use impersonation
-                resp = request_get(
-                    self.session,
-                    url,
-                    impersonate="chrome124",
-                    timeout=timeout_s,
-                )
-                
-                if resp.status_code == 200:
-                    return resp.text
-                if resp.status_code in {403, 429}:
-                    logger.warning("zoopla_blocked_cffi", url=url, status=resp.status_code)
-                    # wait longer
-                    time.sleep(5)
-                else:
-                    logger.warning("zoopla_fetch_failed", url=url, status=resp.status_code)
-            except Exception as exc:
-                logger.warning("zoopla_fetch_error", url=url, error=str(exc))
+            html = self.scrape_client.fetch_html(url, retries=1, timeout_s=timeout_s)
+            if html:
+                return html
             time.sleep(1.5 ** attempt)
         return None
 
     def _extract_listing_urls(self, html: str) -> List[str]:
-        soup = BeautifulSoup(html, "html.parser")
-        urls = set()
-        for anchor in soup.find_all("a", href=True):
-            href = anchor["href"]
-            if "/details/" not in href:
-                continue
-            full = urljoin(self.base_url, href)
-            urls.add(full.split("#")[0])
-        return sorted(urls)
+        urls = self.scrape_client.extract_links(
+            html,
+            LinkExtractorSpec(
+                selectors=["a[href*='/details/']"],
+                include=["/details/"],
+            ),
+        )
+        return [u.split("#")[0] for u in urls]
 
     def _extract_external_id(self, url: str) -> str:
         try:
@@ -148,22 +143,21 @@ class ZooplaCrawlerAgent(BaseAgent):
             listing_urls = listing_urls[:max_listings]
 
         if not listing_urls:
-             return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
+            return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
 
-        for url in listing_urls:
-            html_content = self._fetch_url(url)
-            if not html_content:
-                errors.append(f"fetch_failed:{url}")
+        for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
+            if not result.html:
+                errors.append(f"fetch_failed:{result.url}")
                 continue
+            html_content = result.html
+            url = result.url
 
             external_id = self._extract_external_id(url)
-            meta = self.snapshot_service.save_snapshot(
-                content=html_content,
-                source_id=source_id,
+            snapshot_path = self.scrape_client.build_raw_listing(
                 external_id=external_id,
-                listing_url=url,
+                url=url,
+                html=html_content,
             )
-            snapshot_path = meta.file_path if meta else None
 
             raw_listing = RawListing(
                 source_id=source_id,

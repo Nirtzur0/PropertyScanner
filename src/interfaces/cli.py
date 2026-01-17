@@ -34,6 +34,7 @@ def main(argv: List[str] = None) -> int:
     passthrough("preflight", "Refresh stale data and artifacts (wraps src.platform.workflows.preflight)")
     passthrough("schedule", "Run scheduled preflight refreshes (wraps src.platform.workflows.scheduler)")
     passthrough("transactions", "Ingest sold/transaction data (wraps src.market.workflows.transactions)")
+    passthrough("unified-crawl", "Run unified multi-source crawl (wraps src.listings.workflows.unified_crawl)")
 
     args, remaining = parser.parse_known_args(argv)
     cmd_args = getattr(args, "args", None)
@@ -54,6 +55,7 @@ def main(argv: List[str] = None) -> int:
         "preflight": "src.platform.workflows.preflight",
         "schedule": "src.platform.workflows.scheduler",
         "transactions": "src.market.workflows.transactions",
+        "unified-crawl": "src.listings.workflows.unified_crawl",
     }
 
     if args.command == "dashboard":
