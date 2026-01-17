@@ -82,6 +82,55 @@ def _format_ts(value):
     return f"{label} ({days}d ago)"
 
 
+def _safe_num(value, default: float | None = 0.0) -> float | None:
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_label(value, fallback: str = "Unknown") -> str:
+    if value is None:
+        return fallback
+    try:
+        if pd.isna(value):
+            return fallback
+    except Exception:
+        pass
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def _safe_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return []
+
+
+def _humanize_reason(reason: str) -> str:
+    if not reason:
+        return ""
+    mapping = {
+        "needs_harvest": "new listings needed",
+        "needs_market_data": "market data stale",
+        "needs_index": "search index stale",
+        "needs_training": "model refresh needed",
+        "needs_refresh": "signals stale",
+        "status_unavailable": "status unavailable",
+        "pipeline_status_failed": "status check failed",
+    }
+    return mapping.get(reason, reason.replace("_", " ").strip())
+
+
 VIEW_OPTIONS = ["Atlas", "Deal Flow", "Signal Lab", "Investment Memo"]
 DEFAULT_PRICE_RANGE = (120000, 1200000)
 
@@ -168,28 +217,28 @@ def _parse_prompt(prompt, available_cities, available_types):
     actions = []
     responses = []
     if not prompt:
-        return actions, "Ask me to navigate the live intel."
+        return actions, "Tell me what to explore: yield leaders, value gap, momentum, a city, or the map."
 
     lower = prompt.lower().strip()
 
     if "refresh" in lower or "preflight" in lower:
         actions.append({"type": "preflight"})
-        responses.append("Refreshing pipeline artifacts.")
+        responses.append("Running a refresh to sync signals.")
 
     if "reset" in lower or "clear filters" in lower:
         actions.append({"type": "reset_filters"})
-        responses.append("Resetting filters to the default mandate.")
+        responses.append("Resetting to the default lens.")
 
     for city in available_cities:
         if city.lower() in lower:
             actions.append({"type": "set_filters", "payload": {"selected_city": city}})
-            responses.append(f"Focusing on {city}.")
+            responses.append(f"Locking on {city}.")
             break
 
     for prop_type in available_types:
         if prop_type.lower() in lower:
             actions.append({"type": "set_filters", "payload": {"selected_types": [prop_type]}})
-            responses.append(f"Filtering to {prop_type} listings.")
+            responses.append(f"Filtering to {prop_type} only.")
             break
 
     if "yield" in lower:
@@ -199,37 +248,36 @@ def _parse_prompt(prompt, available_cities, available_types):
         responses.append("Ranking by yield leaders.")
     if "value gap" in lower or "undervalued" in lower:
         actions.append({"type": "set_filters", "payload": {"sort_by": "Value Delta %", "sort_order": "Asc"}})
-        responses.append("Sorting for undervalued opportunities.")
+        responses.append("Sorting by value gap to surface undervalued deals.")
     if "momentum" in lower:
         actions.append({"type": "set_filters", "payload": {"sort_by": "Momentum %"}})
-        responses.append("Prioritizing market momentum.")
+        responses.append("Ranking by momentum.")
     if "deal flow" in lower or "table" in lower:
         actions.append({"type": "set_view", "view": "Deal Flow"})
-        responses.append("Opening Deal Flow.")
+        responses.append("Opening the Deal Flow table.")
     if "signal" in lower or "lab" in lower:
         actions.append({"type": "set_view", "view": "Signal Lab"})
         responses.append("Opening Signal Lab.")
     if "map" in lower or "atlas" in lower:
         actions.append({"type": "set_view", "view": "Atlas"})
-        responses.append("Opening Atlas.")
+        responses.append("Opening the map.")
     if "memo" in lower or "analysis" in lower:
         actions.append({"type": "set_view", "view": "Investment Memo"})
-        responses.append("Opening the Investment Memo.")
+        responses.append("Opening the investment memo.")
 
-    response = " ".join(responses) if responses else "Give me a focus: yield, value gap, momentum, or a city."
+    response = " ".join(responses) if responses else "Try: yield leaders, value gap, momentum, a city name, or open the map."
     return actions, response
 
 
 def _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error):
     if pipeline_error:
-        return "Pipeline telemetry is degraded. Want a refresh, or should we operate on cached signals?"
+        return "Pipeline status is unavailable. I can refresh to recover, or keep scouting on cached signals."
     if pipeline_needs_refresh:
-        return "Signals are drifting. Want me to refresh the pipeline or keep scouting with current intel?"
+        return "Signals are stale. Want me to refresh, or keep scouting with what we have?"
     if filtered_df.empty:
-        return "No matches in the current lens. Should I widen filters or switch cities?"
+        return "No matches under this lens. Want me to widen filters, lower the score floor, or switch cities?"
     return (
-        f"I found {len(filtered_df)} opportunities. Do you want yield leaders, undervalued deals, "
-        "or momentum plays?"
+        f"{len(filtered_df)} opportunities match this lens. Want yield leaders, undervalued deals, momentum, or the map?"
     )
 
 
@@ -238,11 +286,11 @@ def _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities):
     if pipeline_needs_refresh:
         suggestions.append(
             {
-                "title": "Refresh the pipeline",
-                "body": "Run preflight to sync indices, comps, and valuations.",
+                "title": "Refresh signals",
+                "body": "Sync listings, market data, indices, and valuations.",
                 "cta": "Run refresh",
                 "action": {"type": "preflight"},
-                "log": "Queued a pipeline refresh.",
+                "log": "Refreshing pipeline signals.",
             }
         )
 
@@ -250,18 +298,18 @@ def _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities):
         suggestions.extend(
             [
                 {
-                    "title": "Widen the lens",
+                    "title": "Broaden the lens",
                     "body": "Lower the minimum deal score to expand coverage.",
-                    "cta": "Loosen filters",
+                    "cta": "Lower score floor",
                     "action": {"type": "set_filters", "payload": {"min_score": 0.4}},
-                    "log": "Lowered the minimum deal score to broaden results.",
+                    "log": "Lowered the deal score floor.",
                 },
                 {
-                    "title": "Reset filters",
-                    "body": "Return to the default scouting mandate.",
-                    "cta": "Reset",
+                    "title": "Reset lens",
+                    "body": "Return to the default scout profile.",
+                    "cta": "Reset lens",
                     "action": {"type": "reset_filters"},
-                    "log": "Reset filters to the default mandate.",
+                    "log": "Reset to the default lens.",
                 },
             ]
         )
@@ -277,32 +325,32 @@ def _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities):
     suggestions.extend(
         [
             {
-                "title": "Yield leaders",
-                "body": "Sort by income strength with a 4%+ yield floor.",
+                "title": "Lead with yield",
+                "body": "Sort by income yield with a 4%+ floor.",
                 "cta": "Show yields",
                 "action": {"type": "set_filters", "payload": {"sort_by": "Yield %", "min_yield": max(st.session_state.min_yield, 4.0)}},
-                "log": "Surfacing yield leaders.",
+                "log": "Sorting by yield leaders.",
             },
             {
-                "title": "Undervalued focus",
-                "body": "Sort by deepest value gaps versus ask.",
-                "cta": "Find mispricing",
+                "title": "Find mispricing",
+                "body": "Sort by value gap to surface undervalued deals.",
+                "cta": "Find value gaps",
                 "action": {"type": "set_filters", "payload": {"sort_by": "Value Delta %", "sort_order": "Asc"}},
-                "log": "Hunting undervalued listings.",
+                "log": "Sorting by value gap.",
             },
             {
-                "title": "Momentum sweep",
-                "body": "Rank by market momentum to spot rising zones.",
+                "title": "Momentum scan",
+                "body": "Rank by market momentum to spot rising areas.",
                 "cta": "Show momentum",
                 "action": {"type": "set_filters", "payload": {"sort_by": "Momentum %"}},
-                "log": "Prioritizing momentum-driven zones.",
+                "log": "Ranking by momentum.",
             },
             {
-                "title": "Atlas view",
-                "body": "Explore geospatial distribution of the short list.",
+                "title": "Map the shortlist",
+                "body": "See where the strongest deals cluster.",
                 "cta": "Open map",
                 "action": {"type": "set_view", "view": "Atlas"},
-                "log": "Opening Atlas view.",
+                "log": "Opening the map.",
             },
         ]
     )
@@ -310,21 +358,21 @@ def _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities):
     if top_city:
         suggestions.append(
             {
-                "title": f"Lock on {top_city}",
-                "body": "Filter to the city with the densest opportunity set.",
+                "title": f"Focus on {top_city}",
+                "body": "Filter to the city with the most matches.",
                 "cta": "Focus city",
                 "action": {"type": "set_filters", "payload": {"selected_city": top_city}},
-                "log": f"Locking on {top_city}.",
+                "log": f"Filtering to {top_city}.",
             }
         )
     if top_pick_title:
         suggestions.append(
             {
-                "title": "Open investment memo",
-                "body": "Jump to the most promising listing.",
+                "title": "Open top memo",
+                "body": "Jump to the highest-ranked listing.",
                 "cta": "View memo",
                 "action": {"type": "select_listing", "title": top_pick_title},
-                "log": "Opening the top investment memo.",
+                "log": "Opening the top memo.",
             }
         )
 
@@ -340,13 +388,14 @@ pipeline_needs_refresh = bool(pipeline_status.get("needs_refresh"))
 pipeline_error = pipeline_status.get("error")
 pipeline_reasons = pipeline_status.get("reasons") or []
 if pipeline_error:
-    pipeline_state_text = "Status Error"
-    pipeline_reason_text = f"{pipeline_error}"
+    pipeline_state_text = "Degraded"
+    pipeline_reason_text = f"Status unavailable: {pipeline_error}"
     pipeline_badge = "Error"
     pipeline_badge_class = "pipeline-badge pipeline-badge--stale"
 else:
-    pipeline_state_text = "Stale" if pipeline_needs_refresh else "Fresh"
-    pipeline_reason_text = ", ".join(pipeline_reasons) if pipeline_reasons else "All systems aligned"
+    pipeline_state_text = "Refresh due" if pipeline_needs_refresh else "Live"
+    reason_parts = [_humanize_reason(reason) for reason in pipeline_reasons if reason]
+    pipeline_reason_text = ", ".join(reason_parts) if reason_parts else "Signals are current"
     pipeline_badge = "Refresh" if pipeline_needs_refresh else "Live"
     pipeline_badge_class = "pipeline-badge pipeline-badge--fresh" if not pipeline_needs_refresh else "pipeline-badge pipeline-badge--stale"
 
@@ -356,48 +405,37 @@ pipeline_market_at = _format_ts(pipeline_status.get("market_data_at"))
 pipeline_index_at = _format_ts(pipeline_status.get("index_at"))
 pipeline_model_at = _format_ts(pipeline_status.get("model_at"))
 
-st.markdown(
-    f"""
-    <div class="app-bar">
-        <div class="app-brand">
-            <span>Property Scanner</span>
-            <small>Scout OS</small>
-        </div>
-        <div class="app-actions">
-            <span class="app-chip">{pipeline_state_text}</span>
-            <span class="app-chip">{st.session_state.active_view}</span>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
 # --- Sidebar Controls ---
 st.sidebar.markdown("<div class='sidebar-title'>Control Room</div>", unsafe_allow_html=True)
 
 with st.sidebar.expander("Lens", expanded=True):
-    selected_city = st.selectbox("Location", ["All"] + available_cities, key="selected_city")
-    selected_types = st.multiselect("Type", available_types, key="selected_types")
+    selected_city = st.selectbox("City", ["All"] + available_cities, key="selected_city")
+    selected_types = st.multiselect("Property type", available_types, key="selected_types")
     min_price, max_price = st.slider(
-        "Budget (EUR)", 0, 2000000, key="price_range", step=10000
+        "Budget range (EUR)", 0, 2000000, key="price_range", step=10000
     )
 
 with st.sidebar.expander("Performance", expanded=True):
-    min_score = st.slider("Conviction Score", 0.0, 1.0, key="min_score", step=0.05)
-    min_yield = st.slider("Income Yield (%)", 0.0, 12.0, key="min_yield", step=0.1)
+    min_score = st.slider("Minimum deal score", 0.0, 1.0, key="min_score", step=0.05)
+    min_yield = st.slider("Minimum yield (%)", 0.0, 12.0, key="min_yield", step=0.1)
 
 with st.sidebar.expander("Signals", expanded=False):
-    min_momentum = st.slider("Momentum Floor (Annual %)", -8.0, 12.0, key="min_momentum", step=0.5)
-    min_area_sentiment = st.slider("Area Sentiment Floor", 0.0, 1.0, key="min_area_sentiment", step=0.05)
+    min_momentum = st.slider("Momentum floor (annual %)", -8.0, 12.0, key="min_momentum", step=0.5)
+    min_area_sentiment = st.slider("Area sentiment floor", 0.0, 1.0, key="min_area_sentiment", step=0.05)
 
 with st.sidebar.expander("Results", expanded=False):
-    max_listings = st.slider("Max Results", 50, 1500, key="max_listings", step=50)
+    max_listings = st.slider("Max listings", 50, 1500, key="max_listings", step=50)
     sort_by = st.selectbox(
-        "Rank By",
+        "Sort by",
         ["Deal Score", "Yield %", "Value Delta %", "Fair Value", "Momentum %"],
         key="sort_by",
     )
-    ascending = st.radio("Order", ["Desc", "Asc"], key="sort_order", horizontal=True) == "Asc"
+    ascending = st.radio("Sort order", ["Desc", "Asc"], key="sort_order", horizontal=True) == "Asc"
+
+st.sidebar.markdown("---")
+if st.sidebar.button("Reset Lens", use_container_width=True, key="reset_lens_sidebar"):
+    _reset_filters(available_cities, available_types)
+    st.rerun()
 
 # --- Load Data ---
 session = storage.get_session()
@@ -412,7 +450,7 @@ try:
     listings_db = query.limit(max_listings).all()
 
     if listings_db:
-        progress_bar = st.progress(0, text="Synthesizing intelligence...")
+        progress_bar = st.progress(0, text="Scoring listings and signals...")
 
     persister = None
     try:
@@ -555,13 +593,13 @@ finally:
     session.close()
 
 if failed_valuations:
-    st.warning(f"{failed_valuations} listings failed valuation and were skipped.")
+    st.warning(f"{failed_valuations} listings could not be valued and were skipped.")
 
 df = pd.DataFrame(raw_rows)
 
 if df.empty:
     st.markdown(
-        "<div class='empty-state'><h2>No listings found</h2><p>Run the harvest or backfill workflows first.</p></div>",
+        "<div class='empty-state'><h2>No listings yet</h2><p>Run harvest or backfill to load listings.</p></div>",
         unsafe_allow_html=True,
     )
     st.stop()
@@ -597,287 +635,144 @@ if not filtered_df.empty:
 else:
     st.session_state.selected_title = None
 
-# --- Orchestrator Console ---
-orchestrator_prompt = _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error)
-suggestions = _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities)
+# --- Header & Metrics ---
+col_brand, col_kpi = st.columns([1.5, 3])
 
-st.markdown(
-    f"""
-    <div class="orchestrator-panel">
-        <div class="orchestrator-header">
-            <div>
-                <div class="orchestrator-label">LLM Orchestrator</div>
-                <div class="orchestrator-title">Scout Dialogue</div>
-            </div>
-            <div class="orchestrator-status">{pipeline_state_text}</div>
-        </div>
-        <div class="orchestrator-prompt">{orchestrator_prompt}</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-with st.form("orchestrator_form", clear_on_submit=True):
-    prompt = st.text_input(
-        "Ask the Scout",
-        placeholder="e.g. show undervalued apartments in Alicante, open the map",
-        key="orchestrator_input",
-        label_visibility="collapsed",
-    )
-    submitted = st.form_submit_button("Send")
-
-if submitted and prompt:
-    _log_orchestrator("user", prompt)
-    actions, response = _parse_prompt(prompt, available_cities, available_types)
-    _log_orchestrator("assistant", response)
-    for action in actions:
-        _apply_action(action, available_cities, available_types)
-    st.rerun()
-
-if suggestions:
-    st.markdown("<div class='section-title'>Suggested Responses</div>", unsafe_allow_html=True)
-    cols = st.columns(3)
-    for idx, suggestion in enumerate(suggestions):
-        col = cols[idx % 3]
-        with col:
-            st.markdown(
-                f"""
-                <div class="answer-banner">
-                    <div class="answer-title">{suggestion['title']}</div>
-                    <div class="answer-body">{suggestion['body']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button(suggestion["cta"], key=f"suggestion_{idx}"):
-                log = suggestion.get("log")
-                if log:
-                    _log_orchestrator("assistant", log)
-                _apply_action(suggestion["action"], available_cities, available_types)
-                st.rerun()
-
-st.markdown("<div class='section-title'>Navigator</div>", unsafe_allow_html=True)
-st.radio("", VIEW_OPTIONS, key="active_view", horizontal=True, label_visibility="collapsed")
-
-with st.expander("Dialogue Log"):
-    if st.session_state.orchestrator_log:
-        for msg in st.session_state.orchestrator_log[-6:]:
-            st.markdown(
-                f"<div class='orchestrator-log orchestrator-log--{msg['role']}'>{msg['text']}</div>",
-                unsafe_allow_html=True,
-            )
-    else:
-        st.caption("No dialogue yet. Ask the Scout above.")
-
-# --- Lens Summary ---
-type_label = "All types"
-if selected_types:
-    type_label = ", ".join(selected_types[:2])
-    if len(selected_types) > 2:
-        type_label = f"{type_label} +{len(selected_types) - 2}"
-
-lens_tags = [
-    f"Location: {selected_city}",
-    f"Type: {type_label}",
-    f"Budget: €{min_price:,.0f}–€{max_price:,.0f}",
-    f"Score ≥ {min_score:.2f}",
-    f"Yield ≥ {min_yield:.1f}%",
-]
-
-lens_cols = st.columns([4, 1])
-with lens_cols[0]:
+with col_brand:
     st.markdown(
-        f"""
-        <div class="lens-card">
-            <div class="lens-title">Active Lens</div>
-            <div class="lens-tags">
-                {"".join([f"<span class='lens-tag'>{tag}</span>" for tag in lens_tags])}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with lens_cols[1]:
-    if st.button("Reset Lens"):
-        _reset_filters(available_cities, available_types)
-        st.rerun()
-
-# --- Hero ---
-avg_price = filtered_df["Price"].mean() if not filtered_df.empty else 0
-avg_price = float(avg_price) if pd.notna(avg_price) else 0
-avg_yield = filtered_df["Yield %"].mean() if not filtered_df.empty else 0
-avg_yield = float(avg_yield) if pd.notna(avg_yield) else 0
-median_delta = filtered_df["Value Delta %"].median() if not filtered_df.empty else 0
-median_delta = float(median_delta) if pd.notna(median_delta) else 0
-avg_momentum = filtered_df["Momentum %"].mean() if not filtered_df.empty else 0
-avg_momentum = float(avg_momentum) if pd.notna(avg_momentum) else 0
-avg_liquidity = filtered_df["Liquidity"].mean() if not filtered_df.empty else 0.5
-avg_liquidity = float(avg_liquidity) if pd.notna(avg_liquidity) else 0.5
-avg_area = filtered_df["Area Sentiment"].mean() if not filtered_df.empty else 0.5
-avg_area = float(avg_area) if pd.notna(avg_area) else 0.5
-
-momentum_score = np.tanh((avg_momentum or 0) / 4.0)
-liquidity_score = (avg_liquidity or 0.5) - 0.5
-area_score = (avg_area or 0.5) - 0.5
-market_heat_index = int(np.clip(50 + 30 * momentum_score + 25 * liquidity_score + 20 * area_score, 0, 100))
-
-st.markdown(
-    f"""
-    <div class="lux-hero">
-        <div>
-            <div class="lux-brand">Scout OS</div>
-            <h1 class="lux-title">Property Scanner</h1>
-            <p class="lux-subtitle">A private-market command layer for valuation, rental strength, and neighborhood momentum.</p>
-            <div class="lux-tags">
-                <span class="pill">Comp-Fusion Valuation</span>
-                <span class="pill">Income-Adjusted Yield</span>
-                <span class="pill">Area Intelligence</span>
-            </div>
-        </div>
-        <div class="hero-metric">
-            <div class="hero-metric-label">Signal Pulse</div>
-            <div class="hero-metric-value">{market_heat_index}</div>
-            <div class="hero-metric-sub">Momentum-driven composite</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# --- System Health ---
-with st.expander("System Health", expanded=False):
-    st.markdown(
-        f"""
-        <div class="system-card">
-            <div class="pipeline-head">
-                <div>
-                    <div class="pipeline-label">Pipeline Health</div>
-                    <div class="pipeline-title">{pipeline_state_text}</div>
-                    <div class="pipeline-reason">{pipeline_reason_text}</div>
-                </div>
-                <div class="{pipeline_badge_class}">{pipeline_badge}</div>
-            </div>
-            <div class="pipeline-grid">
-                <div><span>Listings</span><strong>{pipeline_listings}</strong></div>
-                <div><span>Listings Last Seen</span><strong>{pipeline_listings_at}</strong></div>
-                <div><span>Market Data</span><strong>{pipeline_market_at}</strong></div>
-                <div><span>Index</span><strong>{pipeline_index_at}</strong></div>
-                <div><span>Model</span><strong>{pipeline_model_at}</strong></div>
+        """
+        <div style="padding-top: 0.5rem;">
+            <div class="app-brand">
+                <span>Property Scanner</span>
+                <small>Scout OS</small>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-# --- Highlights ---
-kpi_label = "Highlights"
-kpi_note = "A curated pulse from your active lens."
-st.markdown(
-    f"""
-    <div class="section-intro">
-        <div class="section-title">{kpi_label}</div>
-        <div class="section-subtitle">{kpi_note}</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-kpi_cols = st.columns(4)
+with col_kpi:
+    # Calculate Metrics
+    avg_price = filtered_df["Price"].mean() if not filtered_df.empty else 0
+    avg_price = float(avg_price) if pd.notna(avg_price) else 0
+    avg_yield = filtered_df["Yield %"].mean() if not filtered_df.empty else 0
+    avg_yield = float(avg_yield) if pd.notna(avg_yield) else 0
+    median_delta = filtered_df["Value Delta %"].median() if not filtered_df.empty else 0
+    median_delta = float(median_delta) if pd.notna(median_delta) else 0
+    avg_momentum = filtered_df["Momentum %"].mean() if not filtered_df.empty else 0
+    avg_momentum = float(avg_momentum) if pd.notna(avg_momentum) else 0
+    avg_liquidity = filtered_df["Liquidity"].mean() if not filtered_df.empty else 0.5
+    avg_liquidity = float(avg_liquidity) if pd.notna(avg_liquidity) else 0.5
+    avg_area = filtered_df["Area Sentiment"].mean() if not filtered_df.empty else 0.5
+    avg_area = float(avg_area) if pd.notna(avg_area) else 0.5
 
-kpi_data = [
-    ("Opportunities", f"{len(filtered_df)}", "Curated to your filters"),
-    ("Median Value Gap", f"{median_delta * 100:+.1f}%", "Fair value vs ask"),
-    ("Average Yield", f"{avg_yield:.2f}%", "Income profile"),
-    ("Avg. Ask Price", f"{avg_price:,.0f} EUR", "Prime band"),
-]
+    momentum_score = np.tanh((avg_momentum or 0) / 4.0)
+    liquidity_score = (avg_liquidity or 0.5) - 0.5
+    area_score = (avg_area or 0.5) - 0.5
+    market_heat_index = int(np.clip(50 + 30 * momentum_score + 25 * liquidity_score + 20 * area_score, 0, 100))
+    
+    # Compact Metrics Row
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Signal Pulse", market_heat_index, help="Momentum-driven composite index")
+    m2.metric("Opps", len(filtered_df))
+    m3.metric("Avg Yield", f"{avg_yield:.2f}%")
+    m4.metric("Value Gap", f"{median_delta * 100:+.1f}%")
+    m5.metric("Avg Price", f"{avg_price/1000:.0f}k")
 
-for col, (label, value, note) in zip(kpi_cols, kpi_data):
-    with col:
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">{label}</div>
-                <div class="kpi-value">{value}</div>
-                <div class="kpi-note">{note}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+st.divider()
 
-# --- Signal Strip ---
-strip_cols = st.columns(5)
-signal_blocks = [
-    ("Momentum", f"{avg_momentum:+.1f}%"),
-    ("Liquidity", f"{avg_liquidity:.2f}"),
-    ("Area Sentiment", f"{avg_area:.2f}"),
-    ("Yield Premium", f"{avg_yield - (filtered_df['Market Yield %'].mean() or 0):+.2f} pp"),
-    ("Intelligence", "Live")
-]
-
-for col, (label, value) in zip(strip_cols, signal_blocks):
-    with col:
-        st.markdown(
-            f"""
-            <div class="signal-pill">
-                <span>{label}</span>
-                <strong>{value}</strong>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-# --- Featured Selection ---
-if not filtered_df.empty:
-    st.markdown("<div class='section-title'>Featured Selection</div>", unsafe_allow_html=True)
-    top_picks = filtered_df.head(3)
-    pick_cols = st.columns(len(top_picks))
-    for col, (_, row) in zip(pick_cols, top_picks.iterrows()):
-        image_html = (
-            f"<img src='{row['Image']}' class='deal-image'/>"
-            if row["Image"]
-            else "<div class='image-placeholder'>No Image</div>"
-        )
-        with col:
-            st.markdown(
-                f"""
-                <div class="deal-card">
-                    {image_html}
-                    <div class="deal-title">{row['Title']}</div>
-                    <div class="deal-meta">{row['City']} · {row['Sqm'] or 0:.0f} m² · {row['Bedrooms'] or 0} bed</div>
-                    <div class="deal-metrics">
-                        <span>Score <strong>{row['Deal Score']:.2f}</strong></span>
-                        <span>Yield <strong>{row['Yield %']:.2f}%</strong></span>
-                    </div>
-                    <div class="deal-price">{row['Price']:,.0f} EUR</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+# --- Sidebar: Orchestrator & System ---
+with st.sidebar:
+    st.markdown("---")
+    
+    # Orchestrator
+    with st.expander("Scout Assistant", expanded=True):
+        st.caption("Ask questions about the market or refined properties.")
+        # Orchestrator Console logic
+        orchestrator_prompt = _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error)
+        st.info(orchestrator_prompt, icon="🤖")
+        
+        with st.form("orchestrator_form", clear_on_submit=True):
+            prompt = st.text_input(
+                "Query",
+                placeholder="e.g. 'high yield in Madrid'",
+                key="orchestrator_input",
+                label_visibility="collapsed",
             )
+            submitted = st.form_submit_button("Ask Scout")
 
-# --- Intel Views ---
-active_view = st.session_state.active_view
+        if submitted and prompt:
+            _log_orchestrator("user", prompt)
+            actions, response = _parse_prompt(prompt, available_cities, available_types)
+            _log_orchestrator("assistant", response)
+            for action in actions:
+                _apply_action(action, available_cities, available_types)
+            st.rerun()
 
-if active_view == "Atlas":
+        if st.session_state.orchestrator_log:
+            with st.container(height=200):
+                for msg in st.session_state.orchestrator_log[-6:]:
+                    role_icon = "👤" if msg['role'] == "user" else "🤖"
+                    st.markdown(f"**{role_icon}**: {msg['text']}")
+
+    # Suggestions / Quick Actions
+    suggestions = _build_suggestions(filtered_df, pipeline_needs_refresh, available_cities)
+    if suggestions:
+         with st.expander("Quick Actions", expanded=False):
+            for idx, suggestion in enumerate(suggestions):
+                if st.button(f"✨ {suggestion['cta']}", key=f"sidebar_sugg_{idx}", use_container_width=True, help=suggestion['body']):
+                     log = suggestion.get("log")
+                     if log:
+                         _log_orchestrator("assistant", log)
+                     _apply_action(suggestion["action"], available_cities, available_types)
+                     st.rerun()
+
+    # System Health
+    with st.expander("System Health", expanded=False):
+        st.markdown(f"**Status**: {pipeline_state_text}")
+        st.caption(pipeline_reason_text)
+        st.text(f"Listings: {pipeline_listings}")
+        st.text(f"Last update: {pipeline_listings_at}")
+
+# --- Main Navigation (Tabs) ---
+# Order: Atlas (Map) -> Deal Flow (Table) -> Analysis -> Lab
+tab_atlas, tab_flow, tab_memo, tab_lab = st.tabs(["🗺️ Atlas", "📋 Deal Flow", "📑 Memo", "🧪 Signal Lab"])
+
+# --- TAB: ATLAS ---
+with tab_atlas:
     map_data = filtered_df.dropna(subset=["lat", "lon"]).copy()
     if not map_data.empty:
+        import pydeck as pdk
+        
+        # Color scale logic
         def score_color(score):
             score = max(0.0, min(score, 1.0))
+            # Green to Gold gradient
+            # Low score: Dark Blue/Grey (40, 44, 56)
+            # High score: Gold/Amber (205, 165, 92)
             base = np.array([40, 44, 56])
             peak = np.array([205, 165, 92])
             color = base + (peak - base) * score
-            return [int(c) for c in color] + [190]
+            return [int(c) for c in color] + [200]
 
         map_data["color"] = map_data["Deal Score"].apply(score_color)
-
-        import pydeck as pdk
+        
+        # Map Style
+        deck_style = "mapbox://styles/mapbox/light-v11"
+        try:
+            if st.get_option("theme.base") == "dark":
+                deck_style = "mapbox://styles/mapbox/dark-v11"
+        except Exception:
+            pass
 
         st.pydeck_chart(
             pdk.Deck(
-                map_style="mapbox://styles/mapbox/light-v11",
+                map_style=deck_style,
                 initial_view_state=pdk.ViewState(
                     latitude=map_data["lat"].mean(),
                     longitude=map_data["lon"].mean(),
                     zoom=12,
-                    pitch=40,
+                    pitch=45,
                 ),
                 layers=[
                     pdk.Layer(
@@ -885,182 +780,162 @@ if active_view == "Atlas":
                         data=map_data,
                         get_position="[lon, lat]",
                         get_fill_color="color",
-                        get_radius=120,
+                        get_radius=150,
                         pickable=True,
                         auto_highlight=True,
                         stroked=True,
                         get_line_color=[255, 255, 255],
                         line_width_min_pixels=1,
+                        opacity=0.8,
                     )
                 ],
                 tooltip={
-                    "html": "<div class='map-tip'><strong>{Title}</strong><br/>{City}<br/>{Price:,.0f} EUR<br/>Yield {Yield %:.2f}%</div>"
+                    "html": "<div style='background: white; color: black; padding: 8px; border-radius: 4px; font-family: sans-serif;'>"
+                            "<b>{Title}</b><br/>"
+                            "{City}<br/>"
+                            "Price: {Price} EUR<br/>"
+                            "Yield: {Yield %}%</div>"
                 },
-            )
+            ),
+            use_container_width=True
         )
     else:
-        st.info("No geocoded listings available for the current filters.")
+        st.info("No geocoded listings found for this lens.")
 
-elif active_view == "Deal Flow":
+# --- TAB: DEAL FLOW ---
+with tab_flow:
+    # Top 3 Cards
+    if not filtered_df.empty:
+        st.markdown("**Top Picks**")
+        top_picks = filtered_df.head(3)
+        pick_cols = st.columns(len(top_picks))
+        for col, (_, row) in zip(pick_cols, top_picks.iterrows()):
+             with col:
+                # Mini Deal Card
+                img_url = row.get("Image")
+                if img_url and isinstance(img_url, str):
+                    st.image(img_url, use_container_width=True)
+                else:
+                    st.markdown("<div style='height: 120px; background: #eee; display:flex; align-items:center; justify-content:center; color:#888;'>No Image</div>", unsafe_allow_html=True)
+                
+                st.markdown(f"**{row['Title']}**")
+                st.caption(f"{row['City']} • {row['Price']:,.0f} €")
+                st.markdown(f"Yield: **{row['Yield %']:.2f}%** | Score: **{row['Deal Score']:.2f}**")
+                if st.button("View Memo", key=f"btn_view_{row['ID']}"):
+                     st.session_state.selected_title = row['Title']
+                     st.session_state.active_view = "Investment Memo" # Fallback if we were using radio, but now we might need to verify tab switching logic.
+                     # Since tabs are stateless in selection, we can't force switch tab easily without rerunning and some hacks.
+                     # For now, we will just set the title so if they go to Memo tab it's there.
+                     st.toast(f"Selected {row['Title']}. Switch to 'Memo' tab to view details.")
+
+    st.markdown("---")
+    
     display_cols = [
-        "Title",
-        "Price",
-        "Yield %",
-        "Deal Score",
-        "Value Delta %",
-        "Momentum %",
-        "City",
-        "URL",
+        "Title", "Price", "Yield %", "Deal Score", 
+        "Value Delta %", "Momentum %", "City", "URL"
     ]
-    table_df = filtered_df[display_cols].copy()
     st.dataframe(
-        table_df.style.format(
-            {
-                "Price": "{:,.0f} EUR",
-                "Yield %": "{:.2f}%",
-                "Deal Score": "{:.2f}",
-                "Value Delta %": "{:+.1f}%",
-                "Momentum %": "{:+.1f}%",
-            }
-        ),
+        filtered_df[display_cols].style.format({
+            "Price": "{:,.0f} EUR",
+            "Yield %": "{:.2f}%",
+            "Deal Score": "{:.2f}",
+            "Value Delta %": "{:+.1f}%",
+            "Momentum %": "{:+.1f}%",
+        }),
         use_container_width=True,
-        height=420,
+        height=500,
+        column_config={
+            "URL": st.column_config.LinkColumn("Listing", display_text="Open"),
+        },
     )
 
-elif active_view == "Signal Lab":
-    left, right = st.columns(2)
-    with left:
-        st.markdown("### Yield vs Value Gap")
-        scatter_df = filtered_df[["Yield %", "Value Delta %", "Deal Score"]].dropna()
-        if not scatter_df.empty:
-            st.scatter_chart(scatter_df, x="Yield %", y="Value Delta %")
-        else:
-            st.caption("Not enough data for scatter view.")
-
-    with right:
-        st.markdown("### Deal Score Distribution")
-        if not filtered_df.empty:
-            hist, edges = np.histogram(filtered_df["Deal Score"].fillna(0), bins=10, range=(0, 1))
-            hist_df = pd.DataFrame({"Score": edges[:-1], "Count": hist})
-            st.bar_chart(hist_df, x="Score", y="Count")
-        else:
-            st.caption("No deal scores available.")
-
-# --- Investment Memo ---
-if active_view == "Investment Memo":
-    st.markdown("<div class='section-title'>Investment Memo</div>", unsafe_allow_html=True)
-
+# --- TAB: MEMO ---
+with tab_memo:
     if not filtered_df.empty:
+        # Resolve selection
+        current_titles = list(filtered_df["Title"].unique())
+        if st.session_state.selected_title not in current_titles:
+            st.session_state.selected_title = current_titles[0]
+            
         selected_title = st.selectbox(
-            "Select Opportunity",
-            filtered_df["Title"].unique(),
-            key="selected_title",
+            "Select Property",
+            current_titles,
+            index=current_titles.index(st.session_state.selected_title),
+            key="selected_title_box"
         )
-        if selected_title:
-            item = filtered_df[filtered_df["Title"] == selected_title].iloc[0]
-
-        header_left, header_right = st.columns([3, 1])
-        with header_left:
-            st.markdown(f"### {item['Title']}")
-            st.caption(f"{item['City']} · {item['Sqm'] or 0:.0f} m² · {item['Bedrooms'] or 0} bed")
-        with header_right:
-            st.markdown(
-                f"""
-                <div class="score-block">
-                    <div class="score-value">{item['Deal Score']:.2f}</div>
-                    <div class="score-label">Deal Score</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        col_media, col_fin = st.columns([1.2, 1])
-
-        with col_media:
-            if item["Images"]:
-                st.image(str(item["Images"][0]), use_container_width=True)
-                with st.expander(f"View {len(item['Images'])} images"):
-                    img_cols = st.columns(3)
-                    for idx, img in enumerate(item["Images"]):
-                        img_cols[idx % 3].image(str(img), use_container_width=True)
+        # Sync selection back to state
+        st.session_state.selected_title = selected_title
+        
+        item = filtered_df[filtered_df["Title"] == selected_title].iloc[0]
+        
+        # Memo Layout
+        m_col1, m_col2 = st.columns([1, 1])
+        
+        with m_col1:
+            # Images & Desc
+            images = _safe_list(item.get("Images"))
+            if images:
+                st.image(str(images[0]), use_container_width=True)
+                with st.expander(f"Gallery ({len(images)})"):
+                     st.image(images[:5], use_container_width=True)
             else:
-                st.info("No imagery available for this asset.")
+                st.info("No images.")
+            
+            st.markdown("### Analyst Notes")
+            st.info(item.get("VLM Desc") or "No AI vision summary available.")
+            st.text_area("Description", item.get("Desc") or "No description.", height=150)
 
-            st.markdown("#### Intelligence Notes")
-            tab_vis, tab_txt = st.tabs(["Vision", "Listing"])
-            with tab_vis:
-                if item["VLM Desc"]:
-                    st.success(item["VLM Desc"])
-                else:
-                    st.caption("Vision model has not processed this listing yet.")
-            with tab_txt:
-                st.text_area("Original Description", item.get("Desc", "No description."), height=160, disabled=True)
-
-        with col_fin:
-            st.markdown(
-                f"""
-                <div class="glass-card">
-                    <h3>Financial Outline</h3>
-                    <div class="stat-row"><span>Asking Price</span><strong>{item['Price']:,.0f} EUR</strong></div>
-                    <div class="stat-row"><span>Fair Value</span><strong>{item['Fair Value']:,.0f} EUR</strong></div>
-                    <div class="stat-row"><span>Value Gap</span><strong>{item['Value Delta %'] * 100:+.1f}%</strong></div>
-                    <div class="stat-row"><span>Rent Estimate</span><strong>{item['Rent Est'] or 0:,.0f} EUR/mo</strong></div>
-                    <div class="stat-row"><span>Gross Yield</span><strong>{item['Yield %']:.2f}%</strong></div>
-                    <div class="stat-row"><span>Market Yield</span><strong>{item['Market Yield %'] or 0:.2f}%</strong></div>
-                    <div class="divider"></div>
-                    <div class="thesis-block">{item['Thesis']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("#### Signal Stack")
-            signal_rows = st.columns(2)
-            signal_rows[0].metric("Momentum", f"{item['Momentum %'] or 0:+.1f}%")
-            signal_rows[1].metric("Liquidity", f"{item['Liquidity'] or 0:.2f}")
-            signal_rows = st.columns(2)
-            signal_rows[0].metric("Area Sentiment", f"{item['Area Sentiment'] or 0:.2f}")
-            signal_rows[1].metric("Area Development", f"{item['Area Development'] or 0:.2f}")
-
-            st.markdown("#### Performance Horizon")
-            if item["Projections"]:
-                proj_df = pd.DataFrame(
-                    [{"Month": p.months_future, "Value": p.predicted_value} for p in item["Projections"]]
-                )
-                st.area_chart(proj_df.set_index("Month"), color="#c9a16a")
+        with m_col2:
+            st.markdown(f"## {item.get('Title')}")
+            st.caption(f"{item.get('City')} | {item.get('Property Type')}")
+            
+            # Financial Grid
+            f1, f2, f3 = st.columns(3)
+            f1.metric("Ask Price", f"{item.get('Price'):,.0f} €")
+            f2.metric("Fair Value", f"{item.get('Fair Value'):,.0f} €", delta=f"{item.get('Value Delta %')*100:+.1f}%")
+            f3.metric("Deal Score", f"{item.get('Deal Score'):.2f}")
+            
+            f4, f5, f6 = st.columns(3)
+            f4.metric("Est. Rent", f"{item.get('Rent Est'):,.0f} €")
+            f5.metric("Gross Yield", f"{item.get('Yield %'):.2f}%")
+            f6.metric("Market Yield", f"{item.get('Market Yield %'):.2f}%")
+            
+            st.markdown("### Thesis")
+            st.warning(item.get("Thesis") or "Analysis pending.")
+            
+            # Projections
+            st.markdown("### Projections")
+            projections = _safe_list(item.get("Projections"))
+            if projections:
+                proj_df = pd.DataFrame([{"Month": p.months_future, "Euro": p.predicted_value} for p in projections])
+                st.line_chart(proj_df.set_index("Month"), height=200)
+            
+            # Comps
+            st.markdown("### Comps")
+            comps = _safe_list(item.get("Comps"))
+            if comps:
+                c_data = []
+                for c in comps[:3]:
+                    c_data.append({
+                        "Price": c.price,
+                        "Sqm": c.features.get("sqm") if c.features else 0,
+                        "Similarity": c.similarity_score
+                    })
+                st.dataframe(c_data, use_container_width=True)
             else:
-                st.warning("No valuation projections available.")
+                st.caption("No comps found.")
 
-            if item["Yield Projections"]:
-                yield_df = pd.DataFrame(
-                    [
-                        {"Month": p.months_future, "Yield": p.predicted_value}
-                        for p in item["Yield Projections"]
-                    ]
-                )
-                st.line_chart(yield_df.set_index("Month"), color="#6f8f82")
-
-        st.markdown("#### Comparable Evidence")
-        if item["Comps"]:
-            comp_rows = []
-            for comp in item["Comps"][:5]:
-                sqm = comp.features.get("sqm") if comp.features else None
-                comp_rows.append(
-                    {
-                        "Price": comp.price,
-                        "Sqm": sqm,
-                        "Similarity": comp.similarity_score,
-                        "ID": comp.id,
-                    }
-                )
-            comps_df = pd.DataFrame(comp_rows)
-            st.dataframe(
-                comps_df.style.format(
-                    {"Price": "{:,.0f} EUR", "Similarity": "{:.2f}", "Sqm": "{:.0f}"}
-                ),
-                use_container_width=True,
-            )
-        else:
-            st.caption("No direct comparables available for this asset.")
     else:
-        st.caption("No listings match the current filters.")
+        st.info("No listings match your lens. Adjust filters in the sidebar.")
+
+# --- TAB: SIGNAL LAB ---
+with tab_lab:
+    l_col1, l_col2 = st.columns(2)
+    with l_col1:
+         st.markdown("#### Yield vs Value")
+         if not filtered_df.empty:
+             st.scatter_chart(filtered_df, x="Yield %", y="Value Delta %", color="Deal Score", height=350)
+    with l_col2:
+         st.markdown("#### Momentum Distribution")
+         if not filtered_df.empty:
+             st.bar_chart(filtered_df["Momentum %"], height=350)
