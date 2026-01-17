@@ -8,7 +8,6 @@ Fetches "ground truth" market data from official Spanish government sources:
 These sources provide the authoritative "macro" signal to anchor our "micro" listing observations.
 """
 
-import requests
 import pandas as pd
 import structlog
 from datetime import datetime
@@ -17,16 +16,14 @@ from src.platform.config import DEFAULT_DB_PATH
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
+from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
 
 class OfficialSourcesAgent:
     def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "PropertyScanner/1.0 (Research; contact@example.com)"
-        })
+        self.session = create_session("PropertyScanner/1.0 (Research; contact@example.com)")
         self.ine_repo = IneIpvRepository(db_path=db_path)
         self.eri_repo = ERIMetricsRepository(db_path=db_path)
         self.canonicalizer = RegistryCanonicalizer()
@@ -60,7 +57,7 @@ class OfficialSourcesAgent:
         url = f"https://servicios.ine.es/wstempus/js/es/DATOS_TABLA/{table_id}?nult=20" # Last 20 periods
         logger.info("fetching_ine_ipv", url=url)
         
-        resp = self.session.get(url, timeout=30)
+        resp = request_get(self.session, url, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         

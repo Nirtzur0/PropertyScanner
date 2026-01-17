@@ -19,6 +19,10 @@ _PATH_PREFIXES: Dict[str, List[str]] = {
         "/venta-obra-nueva",
         "/alquiler-obra-nueva",
     ],
+    "idealista_it": [
+        "/vendita-case",
+        "/affitto-case",
+    ],
     "pisos": ["/venta/", "/alquiler/", "/comprar/"],
     "rightmove_uk": ["/property-for-sale", "/property-to-rent", "/properties/"],
     "zoopla_uk": ["/for-sale", "/to-rent", "/details/"],
@@ -91,6 +95,8 @@ class SourceRouter:
         # Domain aliases that do not appear in config base_url values.
         self.domain_map.setdefault("idealista.es", "idealista")
         self.domain_map.setdefault("www.idealista.es", "idealista")
+        self.domain_map.setdefault("idealista.it", "idealista_it")
+        self.domain_map.setdefault("www.idealista.it", "idealista_it")
         self.domain_map.setdefault("rightmove.co.uk", "rightmove_uk")
         self.domain_map.setdefault("zoopla.co.uk", "zoopla_uk")
         self.domain_map.setdefault("immobiliare.it", "immobiliare_it")

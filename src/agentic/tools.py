@@ -98,7 +98,7 @@ def crawl_listings(search_path: str, source_id: str = "idealista") -> Dict[str, 
     Crawl property listings from a specified source.
     
     Use this tool when you need to fetch new property listings from real estate websites.
-    Supports idealista, pisos, rightmove_uk, zoopla_uk, and immobiliare_it sources.
+    Supports idealista, idealista_it, pisos, rightmove_uk, zoopla_uk, and immobiliare_it sources.
     
     Returns a dict with 'status', 'data' (list of raw listings), and 'errors'.
     """

@@ -1,4 +1,3 @@
-import requests
 from datetime import datetime
 from typing import Dict, Any, Optional
 import structlog
@@ -7,6 +6,7 @@ import re
 from src.platform.config import DEFAULT_DB_PATH
 from src.platform.db.base import resolve_db_url
 from src.market.repositories.macro_indicators import MacroIndicatorsRepository
+from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
 
@@ -20,10 +20,9 @@ class MacroDataService:
     def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.repo = MacroIndicatorsRepository(db_url=self.db_url)
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
+        self.session = create_session(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
 
     def fetch_all(self):
         """Orchestrate data collection"""
@@ -53,7 +52,7 @@ class MacroDataService:
         # Strategy: Scrape a table from a clean financial site
         rates = {}
         try:
-            resp = self.session.get("https://www.euribor-rates.eu/en/ecb-refinancing-rate/")
+            resp = request_get(self.session, "https://www.euribor-rates.eu/en/ecb-refinancing-rate/")
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 # Find the latest rate in the table
@@ -86,7 +85,10 @@ class MacroDataService:
             # For MVP, let's inject known recent values if scrape fails, 
             # but try to scrape the current monthly summary
             
-            resp = self.session.get("https://www.euribor-rates.eu/en/current-euribor-rates/2/euribor-rate-12-months/")
+            resp = request_get(
+                self.session,
+                "https://www.euribor-rates.eu/en/current-euribor-rates/2/euribor-rate-12-months/",
+            )
             soup = BeautifulSoup(resp.text, "html.parser")
             table = soup.find("table")
             if table:

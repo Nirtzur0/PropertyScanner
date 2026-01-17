@@ -16,7 +16,6 @@ References:
 """
 
 import json
-import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import structlog
@@ -24,6 +23,7 @@ from src.platform.config import DEFAULT_DB_PATH
 from bs4 import BeautifulSoup
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.market.repositories.macro_scenarios import MacroScenariosRepository
+from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
 
@@ -104,10 +104,7 @@ class MacroEvidenceAgent(BaseAgent):
     def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         super().__init__(name="MacroEvidence")
         self.db_path = db_path
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "PropertyScanner/1.0 (Research; contact@example.com)"
-        })
+        self.session = create_session("PropertyScanner/1.0 (Research; contact@example.com)")
         self.scenario_repo = MacroScenariosRepository(db_path=db_path)
     
     def run(self, input_payload: dict) -> AgentResponse:
@@ -171,7 +168,7 @@ class MacroEvidenceAgent(BaseAgent):
         try:
             # ECB SPF results page
             url = "https://www.ecb.europa.eu/stats/ecb_surveys/survey_of_professional_forecasters/html/table_1.en.html"
-            resp = self.session.get(url, timeout=15)
+            resp = request_get(self.session, url, timeout=15)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')

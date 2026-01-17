@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+from src.platform.utils.stealth_requests import create_session, request_get
 import hashlib
 import structlog
 
@@ -35,7 +35,11 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         self.base_url = config.get("base_url", "https://www.immobiliare.it")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 3))
-        self.session = requests.Session()
+        self.user_agent = config.get(
+            "user_agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        self.session = create_session(self.user_agent)
 
     def _fetch_with_playwright(self, url: str) -> Optional[str]:
         if not sync_playwright:
@@ -69,10 +73,11 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                 return html
 
         try:
-            resp = self.session.get(
+            resp = request_get(
+                self.session,
                 url,
                 impersonate="chrome124",
-                timeout=30
+                timeout=30,
             )
             
             if resp.status_code == 200:

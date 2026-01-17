@@ -1,7 +1,7 @@
 import time
 from typing import Any, Dict, List, Optional
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+from src.platform.utils.stealth_requests import create_session, request_get
 import hashlib
 import structlog
 from datetime import datetime
@@ -23,7 +23,11 @@ class IdealistaCrawlerAgent(BaseAgent):
         self.compliance = compliance
         self.base_url = config.get("base_url", "https://www.idealista.com")
         self.snapshot_service = SnapshotService()
-        self.session = requests.Session()
+        self.user_agent = config.get(
+            "user_agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        self.session = create_session(self.user_agent)
         # Idealista is very sensitive
         self.rate_limit_seconds = float(config.get("period_seconds", 10))
 
@@ -37,10 +41,11 @@ class IdealistaCrawlerAgent(BaseAgent):
 
         try:
             # Impersonate chrome
-            resp = self.session.get(
+            resp = request_get(
+                self.session,
                 url,
                 impersonate="chrome124",
-                timeout=30
+                timeout=30,
             )
             
             if resp.status_code == 200:

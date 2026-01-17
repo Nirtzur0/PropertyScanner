@@ -11,6 +11,7 @@ class AgentFactory:
     _CRAWLERS: Dict[str, Tuple[str, str]] = {
         "idealista": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
         "idealista_es": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
+        "idealista_it": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
         "idealista_local_test": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
         "pisos_es": ("src.listings.agents.crawlers.pisos", "PisosCrawlerAgent"),
         "pisos": ("src.listings.agents.crawlers.pisos", "PisosCrawlerAgent"),
@@ -25,6 +26,7 @@ class AgentFactory:
     _NORMALIZERS: Dict[str, Tuple[str, str]] = {
         "idealista": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "idealista_es": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
+        "idealista_it": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "idealista_local_test": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "pisos_es": ("src.listings.agents.processors.pisos", "PisosNormalizerAgent"),
         "pisos": ("src.listings.agents.processors.pisos", "PisosNormalizerAgent"),

@@ -6,7 +6,7 @@ from urllib.parse import urljoin, parse_qs, urlsplit, urlencode, urlunsplit
 
 import structlog
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+from src.platform.utils.stealth_requests import create_session, request_get
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
@@ -30,8 +30,7 @@ class ZooplaCrawlerAgent(BaseAgent):
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
         self.user_agent = config.get("user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        # Session not always needed with curl_cffi requests.get but useful for cookies
-        self.session = requests.Session()
+        self.session = create_session(self.user_agent)
 
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
@@ -44,11 +43,11 @@ class ZooplaCrawlerAgent(BaseAgent):
         for attempt in range(retries):
             try:
                 # Use impersonation
-                resp = self.session.get(
-                    url, 
-                    impersonate="chrome124", 
-                    timeout=timeout_s
-                    # headers={"User-Agent": self.user_agent} # Do not override UA
+                resp = request_get(
+                    self.session,
+                    url,
+                    impersonate="chrome124",
+                    timeout=timeout_s,
                 )
                 
                 if resp.status_code == 200:

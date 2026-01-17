@@ -9,7 +9,6 @@ from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
-import requests
 
 from src.platform.domain.schema import RawListing, CanonicalListing
 from src.listings.agents.processors.pisos import PisosNormalizerAgent
@@ -23,6 +22,7 @@ from src.listings.utils.seen_url_store import SeenUrlStore
 from src.platform.db.base import resolve_db_url
 from src.listings.repositories.listings import ListingsRepository
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.stealth_requests import create_session, request_get
 from src.listings.utils.harvest_state import (
     HarvestState,
     HarvestAreaState,
@@ -53,6 +53,9 @@ LEGACY_DEFAULT_START_URLS_RENT = [
 ]
 
 PISOS_MAPAWEB_BASE = "https://www.pisos.com/mapaweb"
+PISOS_SESSION = create_session(
+    "Mozilla/5.0 (PropertyScanner/1.0; +https://example.invalid)"
+)
 
 
 def _extract_mapaweb_slugs(html: str, prefix: str) -> List[str]:
@@ -78,11 +81,7 @@ def _extract_mapaweb_slugs(html: str, prefix: str) -> List[str]:
 
 def _fetch_mapaweb_slugs(path: str, *, timeout_s: float = 30.0) -> List[str]:
     url = f"{PISOS_MAPAWEB_BASE}/{path.strip('/')}/"
-    resp = requests.get(
-        url,
-        timeout=timeout_s,
-        headers={"User-Agent": "Mozilla/5.0 (PropertyScanner/1.0; +https://example.invalid)"},
-    )
+    resp = request_get(PISOS_SESSION, url, timeout=timeout_s)
     resp.raise_for_status()
     prefix = f"/mapaweb/{path.strip('/')}-"
     return _extract_mapaweb_slugs(resp.text, prefix)

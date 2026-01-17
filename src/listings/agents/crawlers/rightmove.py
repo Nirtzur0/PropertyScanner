@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
-import requests
 import structlog
 from bs4 import BeautifulSoup
 
@@ -12,6 +11,7 @@ from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
+from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
 
@@ -28,10 +28,8 @@ class RightmoveCrawlerAgent(BaseAgent):
         self.base_url = config.get("base_url", "https://www.rightmove.co.uk")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
-        self.session = requests.Session()
-        self.session.headers.update(
-            {"User-Agent": config.get("user_agent", "PropertyScanner/1.0")}
-        )
+        user_agent = config.get("user_agent", "PropertyScanner/1.0")
+        self.session = create_session(user_agent)
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
         if not self.compliance_manager.check_and_wait(url, rate_limit_seconds=self.rate_limit_seconds):
@@ -40,7 +38,7 @@ class RightmoveCrawlerAgent(BaseAgent):
 
         for attempt in range(retries):
             try:
-                resp = self.session.get(url, timeout=timeout_s)
+                resp = request_get(self.session, url, timeout=timeout_s)
                 if resp.status_code == 200:
                     return resp.text
                 if resp.status_code in {401, 403, 429}:

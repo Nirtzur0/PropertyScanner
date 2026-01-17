@@ -19,6 +19,18 @@ class IdealistaNormalizerAgent(BaseAgent):
         cleaned = re.sub(r'[^\d]', '', text)
         return float(cleaned) if cleaned else 0.0
 
+    def _infer_country(self, raw: RawListing) -> str:
+        source_id = (raw.source_id or "").lower()
+        url = str(raw.url or "").lower()
+        if (
+            "idealista.it" in url
+            or source_id.endswith("_it")
+            or "italy" in source_id
+            or "italia" in source_id
+        ):
+            return "IT"
+        return "ES"
+
     def _parse_item(self, raw: RawListing) -> Optional[CanonicalListing]:
         html = raw.raw_data.get("html_snippet", "")
         if not html:
@@ -84,9 +96,12 @@ class IdealistaNormalizerAgent(BaseAgent):
             # Fallback to search card parsing
             feature_texts = [s.get_text(strip=True).lower() for s in soup.select("span.item-detail")]
             
+        bedroom_tokens = ("hab", "bedroom", "camera", "camere", "stanza", "stanze", "locali")
+        bathroom_tokens = ("baño", "bano", "bath", "bagno", "bagni")
+
         for txt in feature_texts:
             # Sqm
-            if "m²" in txt:
+            if "m²" in txt or "m2" in txt or "mq" in txt:
                  sqm_match = re.search(r'(\d+)', txt.replace('.', ''))
                  if sqm_match: sqm = float(sqm_match.group(1))
             elif "construido" in txt and "año" not in txt and "19" not in txt and "20" not in txt:
@@ -96,39 +111,45 @@ class IdealistaNormalizerAgent(BaseAgent):
                     sqm = float(sqm_match.group(1))
             
             # Bedrooms
-            elif "hab" in txt or "bedroom" in txt:
+            elif any(token in txt for token in bedroom_tokens):
                  bed_match = re.search(r'(\d+)', txt)
                  if bed_match: bedrooms = int(bed_match.group(1))
             
             # Bathrooms
-            elif "baño" in txt or "bath" in txt:
+            elif any(token in txt for token in bathroom_tokens):
                  bath_match = re.search(r'(\d+)', txt)
                  if bath_match: bathrooms = int(bath_match.group(1))
 
             # Floor
-            elif "planta" in txt or "bajo" in txt:
+            elif "planta" in txt or "bajo" in txt or "piano" in txt:
                 # "Planta 3ª exterior" -> 3
                 # "Bajo exterior" -> 0
-                if "bajo" in txt:
+                if "bajo" in txt or "piano terra" in txt or "piano rialzato" in txt:
                     floor = 0
                 else:
-                    floor_match = re.search(r'planta (\d+)', txt)
+                    floor_match = re.search(r'(?:planta|piano)\s*(\d+)', txt)
                     if floor_match: floor = int(floor_match.group(1))
             
             # Elevator
-            if "ascensor" in txt:
-                if "sin" in txt: has_elevator = False
-                elif "con" in txt: has_elevator = True
+            if "ascens" in txt:
+                if "sin" in txt or "senza" in txt:
+                    has_elevator = False
+                elif "con" in txt:
+                    has_elevator = True
+                else:
+                    has_elevator = True
             
             # Energy Rating
-            if "certifi" in txt or "energé" in txt:
-                # "Certificación energética: E"
-                # "Certificado energético: en trámite"
-                if "trámite" in txt:
+            if "certifi" in txt or "energ" in txt or "energet" in txt:
+                # "Certificacion energetica: E" / "Classe energetica: E"
+                if "tramite" in txt or "trámite" in txt or "in corso" in txt or "pending" in txt:
                     energy_rating = "pending"
                 else:
-                    # Find single uppercase letter
-                    rating_match = re.search(r':\s*([A-G])', txt, re.IGNORECASE)
+                    rating_match = re.search(
+                        r'(?:classe|certificaz|energetic|energia)[^A-G]*([A-G])',
+                        txt,
+                        re.IGNORECASE,
+                    )
                     if rating_match:
                         energy_rating = rating_match.group(1).upper()
 
@@ -192,6 +213,8 @@ class IdealistaNormalizerAgent(BaseAgent):
             if coords:
                 lat, lon = coords
 
+        country_code = self._infer_country(raw)
+
         canonical = CanonicalListing(
             id=unique_hash,
             source_id=raw.source_id,
@@ -215,7 +238,7 @@ class IdealistaNormalizerAgent(BaseAgent):
                 lon=lon,
                 address_full=title,
                 city=city,
-                country="ES"
+                country=country_code
             )
         )
 

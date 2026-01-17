@@ -6,7 +6,10 @@ from playwright.sync_api import sync_playwright, Page
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
-from playwright_stealth import Stealth
+try:
+    from playwright_stealth import Stealth
+except Exception:  # pragma: no cover - optional dependency
+    Stealth = None
 
 def _run_pisos_crawl(config: Dict, input_payload: Dict) -> List[RawListing]:
     """Process-isolated crawl function."""
@@ -20,8 +23,12 @@ def _run_pisos_crawl(config: Dict, input_payload: Dict) -> List[RawListing]:
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
-        stealth = Stealth()
-        stealth.apply_stealth_sync(page)
+        if Stealth:
+            try:
+                stealth = Stealth()
+                stealth.apply_stealth_sync(page)
+            except Exception:
+                pass
 
         listing_urls = []
         

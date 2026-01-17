@@ -31,6 +31,21 @@ sources:
         allowed_paths: ["/venta-viviendas/"]
         disallowed_paths: ["/login", "/pro"]
 
+    - id: "idealista_it"
+      name: "Idealista Italy"
+      base_url: "https://www.idealista.it"
+      type: "html_browser"
+      enabled: true
+      countries: ["IT"]
+      search_path_template: "/vendita-case/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 10
+      compliance:
+        robots_txt_url: "https://www.idealista.it/robots.txt"
+        allowed_paths: ["/vendita-case/", "/affitto-case/"]
+        disallowed_paths: ["/login", "/pro"]
+
     - id: "pisos"
       name: "Pisos.com"
       base_url: "https://www.pisos.com"
