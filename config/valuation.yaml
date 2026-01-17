@@ -12,6 +12,8 @@ valuation:
   rent_radius_km: 2.0
   retriever_model_name: "all-MiniLM-L6-v2"
   retriever_vlm_policy: "gated"
+  retriever_index_path: ${paths.vector_index_path}
+  retriever_metadata_path: ${paths.vector_metadata_path}
 
   eri_lag_days: 45
   eri_disagreement_threshold: 0.08
@@ -21,9 +23,11 @@ valuation:
 
   forecast_mode: "analytic"
   forecast_index_source: "market"
+  tft_model_path: ${paths.tft_model_path}
 
   conformal_alpha: 0.1
   conformal_window: 50
+  calibration_path: ${paths.calibration_path}
 
   income_value_weight_max: 0.35
   income_value_weight_min: 0.0

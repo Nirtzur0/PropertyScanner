@@ -1,12 +1,13 @@
 from pathlib import Path
 
-from src.agents.crawlers.rightmove import RightmoveCrawlerAgent
-from src.agents.crawlers.zoopla import ZooplaCrawlerAgent
-from src.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
-from src.agents.processors.rightmove import RightmoveNormalizerAgent
-from src.agents.processors.zoopla import ZooplaNormalizerAgent
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
-from src.services.storage import StorageService
+from src.listings.agents.crawlers.rightmove import RightmoveCrawlerAgent
+from src.listings.agents.crawlers.zoopla import ZooplaCrawlerAgent
+from src.listings.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
+from src.listings.agents.processors.rightmove import RightmoveNormalizerAgent
+from src.listings.agents.processors.zoopla import ZooplaNormalizerAgent
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.listings.repositories.listings import ListingsRepository
+from src.listings.services.listing_persistence import ListingPersistenceService
 
 
 class DummyCompliance:
@@ -20,9 +21,11 @@ class FakeResponse:
         self.text = text
 
 
-def _storage_for(tmp_path):
+def _listing_store(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'listings.db'}"
-    return StorageService(db_url=db_url)
+    listings_repo = ListingsRepository(db_url=db_url)
+    persistence = ListingPersistenceService(listings_repo)
+    return listings_repo, persistence
 
 
 def test_rightmove_crawler_normalizer_storage(tmp_path):
@@ -65,10 +68,10 @@ def test_rightmove_crawler_normalizer_storage(tmp_path):
     assert canonical.price == 850000.0
     assert canonical.location is not None
 
-    storage = _storage_for(tmp_path)
-    saved = storage.save_listings(normalized.data)
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
     assert saved == 1
-    db_item = storage.get_listing(canonical.id)
+    db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
     assert db_item.price == canonical.price
     assert db_item.city.lower() == "london"
@@ -114,10 +117,10 @@ def test_zoopla_crawler_normalizer_storage(tmp_path):
     assert canonical.price == 450000.0
     assert canonical.location is not None
 
-    storage = _storage_for(tmp_path)
-    saved = storage.save_listings(normalized.data)
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
     assert saved == 1
-    db_item = storage.get_listing(canonical.id)
+    db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
     assert db_item.price == canonical.price
     assert db_item.city.lower() == "manchester"
@@ -205,7 +208,7 @@ def test_immobiliare_crawler_normalizer_storage(tmp_path, monkeypatch):
         def apply_stealth_sync(self, page):
             return None
 
-    import src.agents.crawlers.immobiliare as immobiliare_module
+    import src.listings.agents.crawlers.immobiliare as immobiliare_module
 
     monkeypatch.setattr(
         immobiliare_module,
@@ -240,9 +243,9 @@ def test_immobiliare_crawler_normalizer_storage(tmp_path, monkeypatch):
     assert canonical.price == 620000.0
     assert canonical.location is not None
 
-    storage = _storage_for(tmp_path)
-    saved = storage.save_listings(normalized.data)
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
     assert saved == 1
-    db_item = storage.get_listing(canonical.id)
+    db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
     assert db_item.price == canonical.price

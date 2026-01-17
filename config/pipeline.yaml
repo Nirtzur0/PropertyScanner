@@ -1,4 +1,8 @@
 # pipeline.yaml
 # Pipeline defaults (paths inherit from core defaults).
 
-pipeline: {}
+pipeline:
+  db_path: ${paths.default_db_path}
+  db_url: ${paths.default_db_url}
+  index_path: ${paths.vector_index_path}
+  metadata_path: ${paths.vector_metadata_path}

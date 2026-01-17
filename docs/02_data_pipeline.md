@@ -8,8 +8,8 @@ Preflight is the recommended way to run the pipeline. It checks freshness and ru
 
 ```mermaid
 flowchart LR
-    UI["src/cli.py dashboard"] --> Preflight["src/workflows/preflight.py"]
-    Scheduler["src/workflows/scheduler.py"] --> Preflight
+    UI["src/interfaces/cli.py dashboard"] --> Preflight["src/platform/workflows/preflight.py"]
+    Scheduler["src/platform/workflows/scheduler.py"] --> Preflight
     Preflight --> Harvest
     Preflight --> Transactions
     Preflight --> MarketData
@@ -18,8 +18,8 @@ flowchart LR
     Preflight --> Runs[("pipeline_runs")]
 ```
 
-- `python3 -m src.cli dashboard` triggers preflight unless `--skip-preflight` is passed.
-- `python3 -m src.cli schedule` runs preflight on an interval or cron schedule (canonical automation entry point).
+- `python3 -m src.interfaces.cli dashboard` triggers preflight unless `--skip-preflight` is passed.
+- `python3 -m src.interfaces.cli schedule` runs preflight on an interval or cron schedule (canonical automation entry point).
 - Preflight uses `PipelineStateService` to compare listing freshness against market data, index files, and model artifacts.
 - If `--transactions-path` is provided, preflight ingests sold transactions before market data and training.
 
@@ -27,7 +27,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Portal["Web portals"] --> HB["src/workflows/harvest.py"]
+    Portal["Web portals"] --> HB["src/listings/workflows/harvest.py"]
     HB --> Seen[("harvest_seen_urls.sqlite3")]
     HB --> State["harvest_state_*.json"]
     HB --> Gate["ListingQualityGate"]
@@ -45,10 +45,10 @@ flowchart LR
 ## 1.5 Transactions (Sold/Registry Ingestion)
 
 ```
-python3 -m src.cli transactions -- --path data/transactions.csv
+python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
 ```
 
-- `src/workflows/transactions.py` ingests sold price and sold date updates.
+- `src/market/workflows/transactions.py` ingests sold price and sold date updates.
 - Records are matched by `listing_id`, `(source_id, external_id)`, or `url`.
 - `status`, `sold_price`, and `sold_at` are updated so downstream training and valuation use ground-truth sales.
 
@@ -56,22 +56,22 @@ python3 -m src.cli transactions -- --path data/transactions.csv
 
 ```mermaid
 flowchart LR
-    Listings[("listings")] --> BuildMarket["src/workflows/market_data.py"]
+    Listings[("listings")] --> BuildMarket["src/market/workflows/market_data.py"]
     BuildMarket --> MI["market_indices"]
     BuildMarket --> HI["hedonic_indices"]
     BuildMarket --> Macro["macro_indicators"]
     BuildMarket --> Area["area_intelligence"]
 
-    Listings --> BuildIndex["src/workflows/indexing.py"]
+    Listings --> BuildIndex["src/valuation/workflows/indexing.py"]
     BuildIndex --> VI["vector_index.faiss + vector_metadata.json"]
 
     Gov["OfficialSourcesAgent"] --> ERI["eri_metrics"]
     Gov --> IPV["ine_ipv"]
 
-    Listings --> Backfill["src/workflows/backfill.py"]
+    Listings --> Backfill["src/valuation/workflows/backfill.py"]
     Backfill --> Val["valuations"]
 
-    CalibSamples["calibration_samples.jsonl"] --> CalibUpdate["src/workflows/calibration.py"]
+    CalibSamples["calibration_samples.jsonl"] --> CalibUpdate["src/valuation/workflows/calibration.py"]
     CalibUpdate --> Calib["models/calibration_registry.json"]
 ```
 
@@ -95,18 +95,18 @@ Recommended order (manual path):
 | Artifact | Purpose | Produced by | Notes |
 | --- | --- | --- | --- |
 | `data/listings.db` (listings) | Primary dataset | `StorageService` | System of record |
-| `data/listings.db` (market/hedonic) | Derived indices | `market_data.py` | Market + hedonic indices |
+| `data/listings.db` (market/hedonic) | Derived indices | `src/market/workflows/market_data.py` | Market + hedonic indices |
 | `data/listings.db` (ine_ipv) | Official stats | `OfficialSourcesAgent` | Benchmark anchors |
 | `data/listings.db` (eri_metrics) | Registral stats | `OfficialSourcesAgent` | Liquidity signals |
 | `data/listings.db` (pipeline_runs) | Operational logs | `PipelineRunTracker` | Run metadata |
-| `data/vector_index.faiss` | Dense comp index | `indexing.py` | Required for comps |
-| `data/vector_metadata.json` | Comp metadata | `indexing.py` | Encoder + policy lock |
+| `data/vector_index.faiss` | Dense comp index | `src/valuation/workflows/indexing.py` | Required for comps |
+| `data/vector_metadata.json` | Comp metadata | `src/valuation/workflows/indexing.py` | Encoder + policy lock |
 | `data/harvest_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |
 | `data/harvest_state_*.json` | Resume state | `HarvestState` | Safe to delete to restart |
 | `data/harvest_urls_*.json` | URL checkpoint | Harvester | Optional safety net |
-| `models/fusion_model.pt` | Trained fusion model | `src/training/train.py` | Required for valuation |
-| `models/fusion_config.json` | Fusion model config | `src/training/train.py` | Required for valuation |
-| `models/calibration_registry.json` | Conformal calibrators | `src/workflows/calibration.py` | Optional |
+| `models/fusion_model.pt` | Trained fusion model | `src/ml/training/train.py` | Required for valuation |
+| `models/fusion_config.json` | Fusion model config | `src/ml/training/train.py` | Required for valuation |
+| `models/calibration_registry.json` | Conformal calibrators | `src/valuation/workflows/calibration.py` | Optional |
 
 ## 5. Multimodal Training (Short View)
 

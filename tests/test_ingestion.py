@@ -1,8 +1,8 @@
 import pytest
 import os
 from datetime import datetime
-from src.core.domain.schema import RawListing
-from src.agents.processors.idealista import IdealistaNormalizerAgent
+from src.platform.domain.schema import RawListing
+from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
 
 def test_idealista_normalization(real_data_dir):
     """

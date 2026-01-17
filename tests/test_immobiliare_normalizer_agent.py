@@ -1,8 +1,8 @@
 import unittest
 from pathlib import Path
 
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
-from src.core.domain.schema import RawListing
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.platform.domain.schema import RawListing
 
 
 class TestImmobiliareNormalizerAgent(unittest.TestCase):

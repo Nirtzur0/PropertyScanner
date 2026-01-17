@@ -1,10 +1,12 @@
 import pytest
 from datetime import datetime, timedelta
-from src.core.domain.schema import CanonicalListing, GeoLocation, ListingStatus, PropertyType
-from src.services.valuation import ValuationService
-from src.services.storage import StorageService
+from src.platform.domain.schema import CanonicalListing, GeoLocation, ListingStatus, PropertyType
+from src.listings.repositories.listings import ListingsRepository
+from src.listings.services.listing_persistence import ListingPersistenceService
+from src.valuation.services.valuation import ValuationService
+from src.platform.storage import StorageService
 
-def create_comps(storage, city="madrid"):
+def create_comps(persistence, city="madrid"):
     """Create comparable listings for valuation."""
     listings = []
     # Create 5 comps
@@ -25,7 +27,7 @@ def create_comps(storage, city="madrid"):
             status=ListingStatus.ACTIVE
         )
         listings.append(l)
-    storage.save_listings(listings)
+    persistence.save_listings(listings)
 
 def test_valuation_service(test_db_path):
     """
@@ -33,11 +35,13 @@ def test_valuation_service(test_db_path):
     """
     db_url = f"sqlite:///{test_db_path}"
     storage = StorageService(db_url=db_url)
-    create_comps(storage, city="madrid")
+    listings_repo = ListingsRepository(db_url=db_url)
+    persistence = ListingPersistenceService(listings_repo)
+    create_comps(persistence, city="madrid")
     
     # Init Valuation Service
     # Note: ValuationService likely needs StorageService in init, based on typical DI
-    # Checking src/services/valuation.py signature:
+    # Checking src/valuation/services/valuation.py signature:
     # def __init__(self, storage: StorageService, config: ValuationConfig = None):
     # I should verify this signature.
     
@@ -45,9 +49,9 @@ def test_valuation_service(test_db_path):
     
     # Patch the DEFAULT_DB_PATH used inside ValuationService init
     # Patch heavy dependencies to avoid loading models
-    with patch("src.services.valuation.DEFAULT_DB_PATH", str(test_db_path)), \
-         patch("src.services.fusion_model.TORCH_AVAILABLE", False), \
-         patch("src.services.retrieval.faiss", MagicMock()): # Mock faiss module
+    with patch("src.valuation.services.valuation.DEFAULT_DB_PATH", str(test_db_path)), \
+         patch("src.ml.services.fusion_model.TORCH_AVAILABLE", False), \
+         patch("src.valuation.services.retrieval.faiss", MagicMock()): # Mock faiss module
         
             
             service = ValuationService(storage=storage)

@@ -1,8 +1,8 @@
 import unittest
 from pathlib import Path
 
-from src.agents.processors.rightmove import RightmoveNormalizerAgent
-from src.core.domain.schema import RawListing
+from src.listings.agents.processors.rightmove import RightmoveNormalizerAgent
+from src.platform.domain.schema import RawListing
 
 
 class TestRightmoveNormalizerAgent(unittest.TestCase):

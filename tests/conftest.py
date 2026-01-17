@@ -4,8 +4,8 @@ import shutil
 import tempfile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from src.core.domain.models import Base
-from src.core.config import DEFAULT_DB_URL
+from src.platform.domain.models import Base
+from src.platform.config import DEFAULT_DB_URL
 
 @pytest.fixture(scope="session")
 def test_db_path():

@@ -7,9 +7,9 @@ import json
 # Add src to path
 sys.path.append(os.getcwd())
 
-from src.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
-from src.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.platform.utils.compliance import ComplianceManager
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)

@@ -1,13 +1,11 @@
-import pytest
-import os
 from datetime import datetime, timedelta
-from src.core.domain.schema import CanonicalListing, GeoLocation, ListingStatus, PropertyType
-from src.core.domain.models import DBListing
-from src.services.market_analytics import MarketAnalyticsService
-from src.services.storage import StorageService
+from src.platform.domain.schema import CanonicalListing, GeoLocation, ListingStatus, PropertyType
+from src.market.services.market_analytics import MarketAnalyticsService
+from src.listings.repositories.listings import ListingsRepository
+from src.listings.services.listing_persistence import ListingPersistenceService
 
-def create_seed_data(storage, count=50):
-    """Refactored helper using StorageService to assist with DB seeding."""
+def create_seed_data(persistence, count=50):
+    """Seed data using ListingPersistenceService."""
     listings = []
     base_price = 300000.0
     base_sqm = 100.0
@@ -41,22 +39,23 @@ def create_seed_data(storage, count=50):
         )
         listings.append(l)
     
-    storage.save_listings(listings)
+    persistence.save_listings(listings)
 
 def test_market_analytics_momentum(test_db_path, db_session):
     """
     Test that MarketAnalyticsService correctly identifies a positive price trend.
     """
     db_url = f"sqlite:///{test_db_path}"
-    storage = StorageService(db_url=db_url)
-    create_seed_data(storage, count=50)
+    listings_repo = ListingsRepository(db_url=db_url)
+    persistence = ListingPersistenceService(listings_repo)
+    create_seed_data(persistence, count=50)
     
     # Init Analytics Service (it uses db_path, NOT db_url usually, check definition)
     # MarketAnalyticsService(db_path: str = "data/listings.db")
     analytics = MarketAnalyticsService(db_path=test_db_path)
     
     # Retrieve one listing to analyze
-    target = storage.get_listing("listing_49")
+    target = listings_repo.get_listing_by_id("listing_49")
     
     # Manual conversion since storage._db_to_canonical is not available publicly
     l_input = CanonicalListing(

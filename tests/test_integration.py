@@ -9,11 +9,11 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.services.market_indices import MarketIndexService
-from src.services.hedonic_index import HedonicIndexService
-from src.services.forecasting import ForecastingService
-from src.agents.crawlers.macro_intel import MacroIntelligenceAgent
-from src.core.domain.schema import CanonicalListing
+from src.market.services.market_indices import MarketIndexService
+from src.market.services.hedonic_index import HedonicIndexService
+from src.valuation.services.forecasting import ForecastingService
+from src.listings.agents.crawlers.macro_intel import MacroIntelligenceAgent
+from src.platform.domain.schema import CanonicalListing
 
 class TestFullPipeline(unittest.TestCase):
     

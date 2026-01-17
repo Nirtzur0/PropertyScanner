@@ -9,9 +9,9 @@ from typing import List
 
 sys.path.append(os.getcwd())
 
-from src.core.config import DEFAULT_DB_PATH
-from src.repositories.listings import ListingsRepository
-from src.services.vlm import VLMImageDescriber
+from src.platform.config import DEFAULT_DB_PATH
+from src.listings.repositories.listings import ListingsRepository
+from src.listings.services.vlm import VLMImageDescriber
 
 
 def _parse_image_urls(raw) -> List[str]:

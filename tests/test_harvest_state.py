@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from src.utils.harvest_state import HarvestAreaState, load_harvest_state, save_harvest_state
+from src.listings.utils.harvest_state import HarvestAreaState, load_harvest_state, save_harvest_state
 
 
 class TestHarvestState(unittest.TestCase):

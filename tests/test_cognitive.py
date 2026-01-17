@@ -7,9 +7,9 @@ import pytest
 from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.cognitive.state import AgentState
-from src.cognitive.graph import create_cognitive_graph, create_initial_state, get_llm
-from src.cognitive.orchestrator import CognitiveOrchestrator
+from src.agentic.state import AgentState
+from src.agentic.graph import create_cognitive_graph, create_initial_state, get_llm
+from src.agentic.orchestrator import CognitiveOrchestrator
 
 
 class TestAgentState:
@@ -36,12 +36,12 @@ class TestAgentState:
 class TestTools:
     """Tests for LangChain tool wrappers."""
 
-    @patch("src.agents.factory.AgentFactory.create_crawler")
-    @patch("src.utils.config.ConfigLoader")
+    @patch("src.listings.agents.factory.AgentFactory.create_crawler")
+    @patch("src.platform.utils.config.ConfigLoader")
     def test_crawl_listings_tool(self, mock_config, mock_create_crawler):
         """Test crawl_listings tool wrapper."""
-        from src.cognitive.tools import crawl_listings
-        from src.agents.base import AgentResponse
+        from src.agentic.tools import crawl_listings
+        from src.platform.agents.base import AgentResponse
         
         # Mock crawler response
         mock_crawler = MagicMock()
@@ -59,11 +59,11 @@ class TestTools:
         assert result["count"] == 1
         assert result["data"][0]["external_id"] == "123"
 
-    @patch("src.agents.factory.AgentFactory.create_normalizer")
+    @patch("src.listings.agents.factory.AgentFactory.create_normalizer")
     def test_normalize_listings_tool(self, mock_create_normalizer):
         """Test normalize_listings tool wrapper."""
-        from src.cognitive.tools import normalize_listings
-        from src.agents.base import AgentResponse
+        from src.agentic.tools import normalize_listings
+        from src.platform.agents.base import AgentResponse
         
         # Mock normalizer response
         mock_norm = MagicMock()
@@ -89,10 +89,10 @@ class TestTools:
         assert result["status"] == "success"
         assert result["data"][0]["id"] == "abc"
 
-    @patch("src.cognitive.tools.evaluate_listing")
+    @patch("src.agentic.tools.evaluate_listing")
     def test_evaluate_listing_tool(self, mock_eval_tool):
         """Test evaluate_listing tool wrapper."""
-        from src.cognitive.tools import evaluate_listing
+        from src.agentic.tools import evaluate_listing
         
         # Mock tool invoke instead of the agent class to avoid Pydantic issues
         mock_eval_tool.invoke.return_value = {
@@ -111,10 +111,10 @@ class TestTools:
 class TestGraphNodes:
     """Tests for individual LangGraph nodes."""
 
-    @patch("src.cognitive.graph.get_llm")
+    @patch("src.agentic.graph.get_llm")
     def test_planner_node_logic(self, mock_get_llm):
         """Test planner node plan creation."""
-        from src.cognitive.graph import planner_node
+        from src.agentic.graph import planner_node
 
         plan_payload = {
             "objective": "Find deals",
@@ -138,10 +138,10 @@ class TestGraphNodes:
         assert result["plan_step_index"] == 0
         assert result["plan"]["steps"][0]["action"] == "crawl"
 
-    @patch("src.cognitive.graph.crawl_listings")
+    @patch("src.agentic.graph.crawl_listings")
     def test_crawl_node_execution(self, mock_crawl_tool):
         """Test crawl node execution logic."""
-        from src.cognitive.graph import crawl_node
+        from src.agentic.graph import crawl_node
         
         mock_crawl_tool.invoke.return_value = {
             "status": "success",
@@ -170,7 +170,7 @@ class TestOrchestrator:
         assert graph is not None
         assert orchestrator._graph is not None
 
-    @patch("src.cognitive.orchestrator.create_cognitive_graph")
+    @patch("src.agentic.orchestrator.create_cognitive_graph")
     def test_orchestrator_run_batch(self, mock_create_graph):
         """Test orchestrator run method."""
         mock_graph = MagicMock()
@@ -189,11 +189,11 @@ class TestOrchestrator:
 class TestIntegration:
     """Semi-integration tests with full graph compilation and mocked LLM."""
 
-    @patch("src.services.pipeline_state.PipelineStateService.snapshot")
-    @patch("src.cognitive.graph.get_llm")
-    @patch("src.cognitive.graph.crawl_listings")
-    @patch("src.cognitive.graph.normalize_listings")
-    @patch("src.cognitive.graph.evaluate_listing")
+    @patch("src.platform.pipeline.state.PipelineStateService.snapshot")
+    @patch("src.agentic.graph.get_llm")
+    @patch("src.agentic.graph.crawl_listings")
+    @patch("src.agentic.graph.normalize_listings")
+    @patch("src.agentic.graph.evaluate_listing")
     def test_full_workflow_path(self, mock_eval, mock_norm, mock_crawl, mock_get_llm, mock_snapshot):
         """Test a full successful path through the graph."""
         mock_snapshot.return_value = MagicMock(to_dict=lambda: {"needs_refresh": False})

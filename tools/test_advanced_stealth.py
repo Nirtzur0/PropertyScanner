@@ -3,11 +3,13 @@ import sys
 import random
 import time
 import math
+import pytest
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
 # Fix for M1 OpenMP conflicts if any ML libraries are loaded (good practice)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+LIVE_CRAWL = os.getenv("PROPERTY_SCANNER_LIVE_CRAWL") == "1"
 
 def human_sleep(min_seconds=0.5, max_seconds=2.0):
     time.sleep(random.uniform(min_seconds, max_seconds))
@@ -28,6 +30,7 @@ def human_mouse_move(page, start_x, start_y, end_x, end_y, steps=20):
         page.mouse.move(x + jitter, y + jitter)
         time.sleep(random.uniform(0.01, 0.05))
 
+@pytest.mark.skipif(not LIVE_CRAWL, reason="Live crawl requires PROPERTY_SCANNER_LIVE_CRAWL=1")
 def test_live_crawl_advanced():
     url = "https://www.idealista.com/venta-viviendas/madrid/centro/"
     

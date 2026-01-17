@@ -7,9 +7,9 @@ import json
 # Add src to path
 sys.path.append(os.getcwd())
 
-from src.agents.crawlers.rightmove import RightmoveCrawlerAgent
-from src.agents.processors.rightmove import RightmoveNormalizerAgent
-from src.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.rightmove import RightmoveCrawlerAgent
+from src.listings.agents.processors.rightmove import RightmoveNormalizerAgent
+from src.platform.utils.compliance import ComplianceManager
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)

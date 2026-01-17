@@ -6,12 +6,12 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.core.domain.schema import RawListing
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
-from src.agents.analysts.enricher import EnrichmentAgent
-from src.utils.compliance import ComplianceManager
-from src.core.domain.schema import GeoLocation
+from src.platform.domain.schema import RawListing
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.agentic.agents.enricher import EnrichmentAgent
+from src.platform.utils.compliance import ComplianceManager
+from src.platform.domain.schema import GeoLocation
 
 def test_pisos_pipeline():
     print("\n--- Testing Pisos Pipeline ---")

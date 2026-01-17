@@ -1,0 +1,27 @@
+# paths.yaml
+# Centralized paths for the Property Scanner configuration (Hydra-managed).
+
+paths:
+  data_dir: ${oc.env:PROPERTY_SCANNER_DATA_DIR, ${hydra:runtime.cwd}/data}
+  models_dir: ${oc.env:PROPERTY_SCANNER_MODELS_DIR, ${hydra:runtime.cwd}/models}
+  config_dir: ${oc.env:PROPERTY_SCANNER_CONFIG_DIR, ${hydra:runtime.cwd}/config}
+  snapshots_dir: ${oc.env:PROPERTY_SCANNER_SNAPSHOTS_DIR, ${paths.data_dir}/snapshots}
+
+  default_db_path: ${oc.env:PROPERTY_SCANNER_DB_PATH, ${paths.data_dir}/listings.db}
+  default_db_url: ${oc.env:PROPERTY_SCANNER_DB_URL, sqlite:///${paths.default_db_path}}
+
+  vector_index_path: ${oc.env:PROPERTY_SCANNER_VECTOR_INDEX_PATH, ${paths.data_dir}/vector_index.faiss}
+  vector_metadata_path: ${oc.env:PROPERTY_SCANNER_VECTOR_METADATA_PATH, ${paths.data_dir}/vector_metadata.json}
+
+  fusion_model_path: ${oc.env:PROPERTY_SCANNER_FUSION_MODEL_PATH, ${paths.models_dir}/fusion_model.pt}
+  fusion_config_path: ${oc.env:PROPERTY_SCANNER_FUSION_CONFIG_PATH, ${paths.models_dir}/fusion_config.json}
+  calibration_path: ${oc.env:PROPERTY_SCANNER_CALIBRATION_PATH, ${paths.models_dir}/calibration_registry.json}
+  tft_model_path: ${oc.env:PROPERTY_SCANNER_TFT_MODEL_PATH, ${paths.models_dir}/tft_forecaster.pt}
+
+  harvest_seen_urls_db: ${oc.env:PROPERTY_SCANNER_HARVEST_SEEN_DB, ${paths.data_dir}/harvest_seen_urls.sqlite3}
+  harvest_urls_sale: ${oc.env:PROPERTY_SCANNER_HARVEST_URLS_SALE, ${paths.data_dir}/harvest_urls_sale.json}
+  harvest_urls_rent: ${oc.env:PROPERTY_SCANNER_HARVEST_URLS_RENT, ${paths.data_dir}/harvest_urls_rent.json}
+  harvest_state_sale: ${oc.env:PROPERTY_SCANNER_HARVEST_STATE_SALE, ${paths.data_dir}/harvest_state_sale.json}
+  harvest_state_rent: ${oc.env:PROPERTY_SCANNER_HARVEST_STATE_RENT, ${paths.data_dir}/harvest_state_rent.json}
+
+  transactions_path: ${oc.env:PROPERTY_SCANNER_TRANSACTIONS_PATH, ${paths.data_dir}/transactions.csv}

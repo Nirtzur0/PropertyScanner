@@ -1,7 +1,7 @@
 import unittest
 
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.core.domain.schema import RawListing
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.platform.domain.schema import RawListing
 
 
 class TestPisosNormalizerAgent(unittest.TestCase):

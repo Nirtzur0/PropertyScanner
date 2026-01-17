@@ -7,9 +7,9 @@ import json
 # Add src to path
 sys.path.append(os.getcwd())
 
-from src.agents.crawlers.pisos import PisosCrawlerAgent
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.pisos import PisosCrawlerAgent
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.platform.utils.compliance import ComplianceManager
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)

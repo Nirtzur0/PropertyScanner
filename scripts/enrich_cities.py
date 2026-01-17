@@ -5,8 +5,8 @@ import os
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.services.storage import StorageService
-from src.core.domain.models import DBListing
+from src.platform.storage import StorageService
+from src.platform.domain.models import DBListing
 from sqlalchemy import or_
 
 def enrich_existing():

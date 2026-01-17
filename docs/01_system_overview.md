@@ -7,7 +7,7 @@ Property Scanner is a local-first pipeline that harvests listings, enriches them
 ```mermaid
 flowchart LR
     subgraph Acquisition
-        Harvest["src/workflows/harvest.py"]
+        Harvest["src/listings/workflows/harvest.py"]
         Agent["LangGraph agent"]
         Gov["OfficialSourcesAgent (INE/ERI)"]
     end
@@ -17,10 +17,10 @@ flowchart LR
         Fusion["FeatureFusionService (VLM + sentiment)"]
         Aug["ListingAugmentor (rent + city fixes)"]
         Store["StorageService (persistence only)"]
-        BuildIndex["src/workflows/indexing.py"]
-        BuildMarket["src/workflows/market_data.py"]
-        Transactions["src/workflows/transactions.py"]
-        Preflight["src/workflows/preflight.py"]
+        BuildIndex["src/valuation/workflows/indexing.py"]
+        BuildMarket["src/market/workflows/market_data.py"]
+        Transactions["src/market/workflows/transactions.py"]
+        Preflight["src/platform/workflows/preflight.py"]
     end
 
     subgraph Data
@@ -45,9 +45,9 @@ flowchart LR
     end
 
     subgraph Interface
-        CLI["src/cli.py"]
+        CLI["src/interfaces/cli.py"]
         Dash["Scout Intelligence (Streamlit)"]
-        Scheduler["src/workflows/scheduler.py"]
+        Scheduler["src/platform/workflows/scheduler.py"]
     end
 
     Harvest --> Seen
@@ -79,7 +79,7 @@ flowchart LR
 ```
 
 ## Components in One Line Each
-- Acquisition: `src/workflows/harvest.py`, plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
+- Acquisition: `src/listings/workflows/harvest.py`, plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
 - Processing: normalize, fuse VLM signals, ingest sold transactions, then persist via StorageService.
 - Data: SQLite is the system of record; `pipeline_runs` records operational health.
 - Intelligence: time-safe comps, hedonic indices, income-aware valuation, and area intelligence.
@@ -87,11 +87,11 @@ flowchart LR
 - Automation: scheduled preflight keeps data and artifacts fresh without manual runs.
 
 ## Module Boundaries (Contract)
-- `src/agents/**`: crawling and normalization from raw sources to `CanonicalListing`.
-- `src/workflows/**`: batch orchestration (harvest, market data, indexing, preflight).
-- `src/repositories/**`: centralized data access; services do not execute raw SQL.
-- `src/services/**`: valuation, retrieval, forecasting, and data augmentation.
-- `src/api/**`: public pipeline + valuation API used by CLI/agent/dashboard.
-- `src/cognitive/**`: LangGraph agent tools and orchestrator.
-- `src/scripts/**`: thin wrappers for legacy entry points.
-- `src/dashboard/**`: Streamlit UI.
+- `src/interfaces/**`: CLI, API, and dashboard entry points.
+- `src/agentic/**`: LangGraph tools, cognitive orchestrator, and analyst agents.
+- `src/listings/**`: crawl/normalize/enrich listings, listing repos, harvest workflows.
+- `src/market/**`: macro/indices/registry signals, market repos, market workflows.
+- `src/valuation/**`: retrieval + valuation services, calibration/backfill/indexing workflows.
+- `src/ml/**`: models/encoders and training pipelines.
+- `src/platform/**`: config/settings, storage + migrations, pipeline state/runs.
+- `scripts/workflows/**`: thin wrappers for workflow entry points.

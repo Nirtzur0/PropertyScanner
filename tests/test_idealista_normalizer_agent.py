@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from src.agents.processors.idealista import IdealistaNormalizerAgent
-from src.core.domain.schema import RawListing
+from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
+from src.platform.domain.schema import RawListing
 
 class TestIdealistaNormalizerAgent(unittest.TestCase):
 
-    @patch('src.agents.processors.idealista.GeocodingService')
+    @patch('src.listings.agents.processors.idealista.GeocodingService')
     def test_parse_item_with_geocoding(self, MockGeocodingService):
         # Arrange
         mock_geocoding_service = MockGeocodingService.return_value

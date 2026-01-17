@@ -16,13 +16,13 @@ import tempfile
 import os
 
 # Import modules under test
-from src.services.hedonic_index import HedonicIndexService, IndexResult
-from src.services.conformal_calibrator import (
+from src.market.services.hedonic_index import HedonicIndexService, IndexResult
+from src.valuation.services.conformal_calibrator import (
     ConformalCalibrator, 
     HorizonCalibratorRegistry,
     enforce_monotonicity
 )
-from src.core.domain.schema import (
+from src.platform.domain.schema import (
     CanonicalListing, CompEvidence, EvidencePack, 
     GeoLocation, PropertyType, Currency, ListingStatus
 )

@@ -55,12 +55,12 @@ pip install -r requirements.txt
 
 ### 2) Launch the dashboard (runs preflight by default)
 ```bash
-python3 -m src.cli dashboard
+python3 -m src.interfaces.cli dashboard
 ```
 
 If you want UI only:
 ```bash
-python3 -m src.cli dashboard -- --skip-preflight
+python3 -m src.interfaces.cli dashboard -- --skip-preflight
 ```
 
 ---
@@ -69,17 +69,17 @@ python3 -m src.cli dashboard -- --skip-preflight
 All commands run from the project root.
 
 ```bash
-python3 -m src.cli preflight                 # Refresh stale data and artifacts
-python3 -m src.cli schedule                  # Scheduled preflight refreshes
-python3 -m src.cli harvest -- --mode sale     # Harvest listings
-python3 -m src.cli transactions -- --path data/transactions.csv
-python3 -m src.cli build-market               # Macro + market + hedonic data
-python3 -m src.cli build-index                # Build vector index for comps
-python3 -m src.cli train -- --listing-type sale
-python3 -m src.cli backfill                   # Backfill cached valuations
-python3 -m src.cli calibrators -- --input <samples.jsonl>
-python3 -m src.cli dashboard                  # Streamlit UI
-python3 -m src.cli agent "Find deals" <areas>
+python3 -m src.interfaces.cli preflight                 # Refresh stale data and artifacts
+python3 -m src.interfaces.cli schedule                  # Scheduled preflight refreshes
+python3 -m src.interfaces.cli harvest -- --mode sale     # Harvest listings
+python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
+python3 -m src.interfaces.cli build-market               # Macro + market + hedonic data
+python3 -m src.interfaces.cli build-index                # Build vector index for comps
+python3 -m src.interfaces.cli train -- --listing-type sale
+python3 -m src.interfaces.cli backfill                   # Backfill cached valuations
+python3 -m src.interfaces.cli calibrators -- --input <samples.jsonl>
+python3 -m src.interfaces.cli dashboard                  # Streamlit UI
+python3 -m src.interfaces.cli agent "Find deals" <areas>
 ```
 
 ## Additional Sources (UK + Italy)
@@ -102,8 +102,8 @@ python3 scripts/source_harness.py --source immobiliare_it --search-url "<IMMOBIL
 Preflight is the canonical automation entry point. Run the scheduler to keep the pipeline fresh:
 
 ```bash
-python3 -m src.cli schedule --interval-minutes 360
-python3 -m src.cli schedule --cron "0 3 * * *"
+python3 -m src.interfaces.cli schedule --interval-minutes 360
+python3 -m src.interfaces.cli schedule --cron "0 3 * * *"
 ```
 
 The scheduler uses the same preflight checks, so only stale steps run.
@@ -114,7 +114,7 @@ The scheduler uses the same preflight checks, so only stale steps run.
 The CLI, agent, and dashboard are thin wrappers over a shared API you can call directly:
 
 ```python
-from src.api import PipelineAPI
+from src.interfaces.api import PipelineAPI
 
 api = PipelineAPI()
 api.preflight()
@@ -128,11 +128,13 @@ analysis = api.evaluate_listing_id("listing-id", persist=True)
 ---
 
 ## Core Components
-- **Agents**: Crawlers and normalizers in `src/agents/`.
-- **Workflows**: Batch entry points in `src/workflows/` (harvest, market data, indexing, preflight).
-- **Repositories**: Centralized data access in `src/repositories/` (no service-level raw SQL).
-- **Services**: Valuation, forecasting, retrieval, and augmentation in `src/services/`.
-- **Dashboard**: Premium UI in `src/dashboard/`.
+- **Interfaces**: CLI, API, and dashboard entry points in `src/interfaces/`.
+- **Agentic**: LangGraph tools, orchestrator, and analyst agents in `src/agentic/`.
+- **Listings**: Crawlers, normalizers, listing services, and harvest workflows in `src/listings/`.
+- **Market**: Macro/indices/registry signals in `src/market/`.
+- **Valuation**: Retrieval + valuation services/workflows in `src/valuation/`.
+- **ML**: Models/encoders and training pipelines in `src/ml/`.
+- **Platform**: Config, storage, migrations, pipeline state/runs in `src/platform/`.
 
 ---
 

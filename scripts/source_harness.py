@@ -6,10 +6,11 @@ from typing import Any, Dict, List
 
 sys.path.append(os.getcwd())
 
-from src.agents.factory import AgentFactory
-from src.core.domain.schema import RawListing
-from src.utils.compliance import ComplianceManager
-from src.utils.config import ConfigLoader
+from src.listings.agents.factory import AgentFactory
+from src.platform.settings import SourceConfig
+from src.platform.domain.schema import RawListing
+from src.platform.utils.compliance import ComplianceManager
+from src.platform.utils.config import ConfigLoader
 
 
 def _serialize(obj: Any) -> Any:
@@ -43,10 +44,10 @@ def main(argv: List[str] = None) -> int:
     args = parser.parse_args(argv)
 
     config_loader = ConfigLoader()
-    sources = config_loader.sources.get("sources", [])
-    source_conf = next((s for s in sources if s.get("id") == args.source), {"id": args.source})
+    sources = config_loader.sources.sources
+    source_conf = next((s for s in sources if s.id == args.source), SourceConfig(id=args.source))
 
-    user_agent = config_loader.agents.get("defaults", {}).get("uastring", "PropertyScanner/1.0")
+    user_agent = config_loader.agents.defaults.uastring
     compliance = ComplianceManager(user_agent)
 
     crawler = AgentFactory.create_crawler(args.source, source_conf, compliance)

@@ -1,4 +1,4 @@
-from src.workflows.full_pipeline import main
+from src.platform.workflows.full_pipeline import main
 
 
 if __name__ == "__main__":

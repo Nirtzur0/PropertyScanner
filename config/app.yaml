@@ -2,6 +2,7 @@
 # Hydra composition for the Property Scanner config.
 
 defaults:
+  - paths
   - sources
   - agents
   - scoring

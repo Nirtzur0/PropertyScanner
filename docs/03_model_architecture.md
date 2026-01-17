@@ -102,7 +102,7 @@ flowchart LR
 - Evidence is recorded in `external_signals` for transparency.
 
 ## Hyperparameters (Current Configuration)
-Defined in `src/services/fusion_model.py`.
+Defined in `src/ml/services/fusion_model.py`.
 
 | Parameter | Value | Description |
 | --- | --- | --- |

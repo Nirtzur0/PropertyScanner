@@ -1,8 +1,10 @@
 import pytest
 from datetime import datetime
-from src.core.domain.schema import CanonicalListing, GeoLocation, ListingStatus
-from src.core.domain.models import DBListing
-from src.services.storage import StorageService
+from src.platform.domain.schema import CanonicalListing, GeoLocation, ListingStatus
+from src.platform.domain.models import DBListing
+from src.listings.repositories.listings import ListingsRepository
+from src.listings.services.listing_persistence import ListingPersistenceService
+from src.platform.storage import StorageService
 
 def test_storage_service_init(test_db_path):
     """Test that StorageService initializes correctly with a file path."""
@@ -13,12 +15,12 @@ def test_storage_service_init(test_db_path):
 def test_save_and_retrieve_listing(db_session, test_db_path):
     """
     Test saving a CanonicalListing to the real DB and retrieving it.
-    Uses the db_session fixture for isolation, but StorageService creates its own session,
+    Uses the db_session fixture for isolation, but the repository owns its session,
     so we need to be careful with transaction locking if using SQLite on disk.
-    For this test, we'll let StorageService manage the write, and allow the fixture to manage the cleanup.
     """
     db_url = f"sqlite:///{test_db_path}"
-    service = StorageService(db_url=db_url)
+    listings_repo = ListingsRepository(db_url=db_url)
+    persistence = ListingPersistenceService(listings_repo)
     
     # Create a real listing object
     listing = CanonicalListing(
@@ -45,11 +47,11 @@ def test_save_and_retrieve_listing(db_session, test_db_path):
     )
     
     # Save
-    count = service.save_listings([listing])
+    count = persistence.save_listings([listing])
     assert count == 1
     
     # Retrieve via Service
-    retrieved = service.get_listing("test_listing_001")
+    retrieved = listings_repo.get_listing_by_id("test_listing_001")
     assert retrieved is not None
     assert retrieved.id == "test_listing_001"
     assert retrieved.city == "madrid"
@@ -63,7 +65,8 @@ def test_save_and_retrieve_listing(db_session, test_db_path):
 def test_update_existing_listing(test_db_path):
     """Test that re-saving an existing listing updates it correctly."""
     db_url = f"sqlite:///{test_db_path}"
-    service = StorageService(db_url=db_url)
+    listings_repo = ListingsRepository(db_url=db_url)
+    persistence = ListingPersistenceService(listings_repo)
     
     listing_v1 = CanonicalListing(
         id="test_listing_002",
@@ -77,7 +80,7 @@ def test_update_existing_listing(test_db_path):
         property_type="apartment",
         status=ListingStatus.ACTIVE
     )
-    service.save_listings([listing_v1])
+    persistence.save_listings([listing_v1])
     
     listing_v2 = CanonicalListing(
         id="test_listing_002",
@@ -91,8 +94,8 @@ def test_update_existing_listing(test_db_path):
         property_type="apartment",
         status=ListingStatus.ACTIVE
     )
-    service.save_listings([listing_v2])
+    persistence.save_listings([listing_v2])
     
-    retrieved = service.get_listing("test_listing_002")
+    retrieved = listings_repo.get_listing_by_id("test_listing_002")
     assert retrieved.title == "New Title"
     assert retrieved.price == 95000.0

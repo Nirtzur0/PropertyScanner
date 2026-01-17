@@ -4,7 +4,7 @@ This document explains the autonomous agent system that powers data collection a
 
 ## Agent Architecture
 
-The system uses a **LangGraph** workflow (`src/cognitive/graph.py`) to orchestrate the actions of specialized agents. The Supervisor LLM decides the next action based on the current state; no rule-based fallback is used.
+The system uses a **LangGraph** workflow (`src/agentic/graph.py`) to orchestrate the actions of specialized agents. The Supervisor LLM decides the next action based on the current state; no rule-based fallback is used.
 
 ```mermaid
 graph TD

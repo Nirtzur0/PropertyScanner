@@ -1,8 +1,8 @@
 import unittest
 from pathlib import Path
 
-from src.agents.processors.zoopla import ZooplaNormalizerAgent
-from src.core.domain.schema import RawListing
+from src.listings.agents.processors.zoopla import ZooplaNormalizerAgent
+from src.platform.domain.schema import RawListing
 
 
 class TestZooplaNormalizerAgent(unittest.TestCase):

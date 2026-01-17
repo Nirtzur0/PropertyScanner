@@ -8,10 +8,10 @@ from typing import List
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.agents.crawlers.pisos import PisosCrawlerAgent
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.services.storage import StorageService
-from src.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.pisos import PisosCrawlerAgent
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.platform.storage import StorageService
+from src.platform.utils.compliance import ComplianceManager
 
 def run_batch_crawl():
     # Configuration

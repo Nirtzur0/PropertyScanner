@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.agents.analysts.evaluation_agent import EvaluationAgent, EvaluationRequest, PRESET_STRATEGIES
-from src.core.domain.schema import CanonicalListing, GeoLocation, PropertyType
+from src.agentic.agents.evaluation_agent import EvaluationAgent, EvaluationRequest, PRESET_STRATEGIES
+from src.platform.domain.schema import CanonicalListing, GeoLocation, PropertyType
 
 def test_strategies():
     # Mocking external services to avoid actual retrieval/inference

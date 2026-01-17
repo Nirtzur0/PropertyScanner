@@ -8,8 +8,8 @@ import os
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.services.retrieval import CompRetriever, IndexedListing
-from src.core.domain.schema import CanonicalListing, GeoLocation
+from src.valuation.services.retrieval import CompRetriever, IndexedListing
+from src.platform.domain.schema import CanonicalListing, GeoLocation
 
 class TestCompRetrieverLogic(unittest.TestCase):
     def setUp(self):

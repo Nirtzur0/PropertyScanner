@@ -8,12 +8,12 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.core.domain.schema import RawListing
-from src.core.config import SNAPSHOTS_DIR
-from src.services.storage import StorageService
-from src.agents.processors.idealista import IdealistaNormalizerAgent
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.platform.domain.schema import RawListing
+from src.platform.config import SNAPSHOTS_DIR
+from src.platform.storage import StorageService
+from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
 
 def backfill_data():
     storage = StorageService()

@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from src.utils.seen_url_store import SeenUrlStore
+from src.listings.utils.seen_url_store import SeenUrlStore
 
 
 class TestSeenUrlStore(unittest.TestCase):

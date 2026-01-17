@@ -8,16 +8,16 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.core.config import DEFAULT_DB_PATH
-from src.services.storage import StorageService
-from src.agents.crawlers.idealista import IdealistaCrawlerAgent
-from src.agents.crawlers.pisos import PisosCrawlerAgent
-from src.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
-from src.agents.processors.idealista import IdealistaNormalizerAgent
-from src.agents.processors.pisos import PisosNormalizerAgent
-from src.agents.processors.immobiliare import ImmobiliareNormalizerAgent
-from src.agents.analysts.enricher import EnrichmentAgent
-from src.utils.compliance import ComplianceManager
+from src.platform.config import DEFAULT_DB_PATH
+from src.platform.storage import StorageService
+from src.listings.agents.crawlers.idealista import IdealistaCrawlerAgent
+from src.listings.agents.crawlers.pisos import PisosCrawlerAgent
+from src.listings.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
+from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
+from src.listings.agents.processors.pisos import PisosNormalizerAgent
+from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
+from src.agentic.agents.enricher import EnrichmentAgent
+from src.platform.utils.compliance import ComplianceManager
 
 def chunks(lst, n):
     """Yield successive n-sized chunks from lst."""

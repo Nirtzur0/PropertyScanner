@@ -7,9 +7,9 @@ import json
 # Add src to path
 sys.path.append(os.getcwd())
 
-from src.agents.crawlers.idealista import IdealistaCrawlerAgent
-from src.agents.processors.idealista import IdealistaNormalizerAgent
-from src.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.idealista import IdealistaCrawlerAgent
+from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
+from src.platform.utils.compliance import ComplianceManager
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)

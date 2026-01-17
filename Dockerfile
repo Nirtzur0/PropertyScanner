@@ -25,4 +25,4 @@ RUN poetry install --no-interaction --no-ansi --no-root
 COPY . .
 
 # Default command
-CMD ["python", "-m", "src.main"]
+CMD ["python", "-m", "src.interfaces.agent"]
