@@ -4,6 +4,7 @@
 defaults:
   - paths
   - sources
+  - registry
   - agents
   - scoring
   - valuation

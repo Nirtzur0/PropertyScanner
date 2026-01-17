@@ -201,7 +201,39 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_eri_region_date ON eri_metrics (region_id, period_date)")
 
-    # 6b. INE IPV (Housing Price Index)
+    # 6a. UK Land Registry Metrics
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS uk_registry_metrics (
+            id TEXT PRIMARY KEY, -- "region_id|period_date"
+            region_id TEXT,
+            period_date DATE,
+            txn_count INT,
+            mortgage_count INT,
+            price_sqm FLOAT,
+            price_sqm_yoy FLOAT,
+            price_sqm_qoq FLOAT,
+            updated_at DATETIME
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_uk_registry_region_date ON uk_registry_metrics (region_id, period_date)")
+
+    # 6b. Italy OMI Registry Metrics
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS it_registry_metrics (
+            id TEXT PRIMARY KEY, -- "region_id|period_date"
+            region_id TEXT,
+            period_date DATE,
+            txn_count INT,
+            mortgage_count INT,
+            price_sqm FLOAT,
+            price_sqm_yoy FLOAT,
+            price_sqm_qoq FLOAT,
+            updated_at DATETIME
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_it_registry_region_date ON it_registry_metrics (region_id, period_date)")
+
+    # 6c. INE IPV (Housing Price Index)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ine_ipv (
             period TEXT,

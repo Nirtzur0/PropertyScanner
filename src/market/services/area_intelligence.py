@@ -11,6 +11,9 @@ from src.platform.db.base import resolve_db_url
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
 from src.market.services.eri_signals import ERISignalsService
+from src.market.services.registry_canonical import RegistryCanonicalizer
+from src.platform.settings import AppConfig
+from src.platform.utils.config import load_app_config_safe
 
 logger = logging.getLogger(__name__)
 
@@ -18,30 +21,41 @@ logger = logging.getLogger(__name__)
 class AreaIntelligenceService:
     """
     Service to fetch and manage external intelligence for areas (cities/neighborhoods).
-    Uses official datasets (ERI, INE IPV) and tracks freshness + credibility.
+    Uses official registry datasets (ERI and equivalents) plus INE IPV for Spain.
     """
 
-    def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None):
+    def __init__(
+        self,
+        db_path: str = str(DEFAULT_DB_PATH),
+        db_url: Optional[str] = None,
+        app_config: Optional[AppConfig] = None,
+    ):
+        self.app_config = app_config or load_app_config_safe()
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.repo = AreaIntelligenceRepository(db_url=self.db_url)
-        self.eri_service = ERISignalsService(db_url=self.db_url)
+        self.eri_service = ERISignalsService(db_url=self.db_url, app_config=self.app_config)
         self.eri_repo = ERIMetricsRepository(db_url=self.db_url)
         self.ine_repo = IneIpvRepository(db_url=self.db_url)
+        self.canonicalizer = RegistryCanonicalizer(app_config=self.app_config)
         self.repo.ensure_table()
 
-    def get_area_indicators(self, area_id: str) -> Dict[str, Any]:
+    def get_area_indicators(self, area_id: str, country_code: Optional[str] = None) -> Dict[str, Any]:
         """
         Retrieve stored intelligence for an area.
         If data is stale or missing, attempts to refresh it.
         """
-        area_id = area_id.lower().strip()
-        data = self.repo.fetch_area(area_id)
+        area_key = self._area_key(area_id, country_code)
+        data = self.repo.fetch_area(area_key)
+        if not data:
+            legacy_key = area_id.lower().strip()
+            if legacy_key != area_key:
+                data = self.repo.fetch_area(legacy_key)
 
         if not data or self._is_stale(data):
-            self.refresh_area_data(area_id)
-            data = self.repo.fetch_area(area_id)
+            self.refresh_area_data(area_id, country_code=country_code, area_key=area_key)
+            data = self.repo.fetch_area(area_key)
 
-        payload = dict(data or self._default_profile(area_id))
+        payload = dict(data or self._default_profile(area_key))
         sentiment_as_of = self._parse_dt(payload.get("sentiment_as_of"))
         development_as_of = self._parse_dt(payload.get("development_as_of"))
         sentiment_freshness = self._freshness_days(sentiment_as_of)
@@ -56,16 +70,29 @@ class AreaIntelligenceService:
         )
         return payload
 
-    def refresh_area_data(self, area_id: str) -> None:
+    def refresh_area_data(
+        self,
+        area_id: str,
+        *,
+        country_code: Optional[str] = None,
+        area_key: Optional[str] = None,
+    ) -> None:
         """
         Fetches fresh data derived from official datasets (ERI + INE IPV).
         """
         try:
-            area_id = area_id.lower().strip()
+            area_key = area_key or self._area_key(area_id, country_code)
             now = datetime.utcnow()
 
-            eri_signals = self.eri_service.get_signals(area_id, now, allow_proxy=False)
-            eri_period = self.eri_repo.fetch_latest_period_date(area_id)
+            eri_signals = self.eri_service.get_signals(
+                area_key,
+                now,
+                allow_proxy=False,
+                country_code=country_code,
+            )
+            eri_period = None
+            if self._allow_ine(country_code):
+                eri_period = self.eri_repo.fetch_latest_period_date(area_key)
             eri_as_of = self._parse_dt(eri_period) or self._parse_dt(
                 eri_signals.get("effective_date") if eri_signals else None
             )
@@ -76,6 +103,12 @@ class AreaIntelligenceService:
             sources = set()
             summary_parts = []
 
+            registry_provider = eri_signals.get("registry_provider") if eri_signals else None
+            registry_label = "ERI" if registry_provider == "eri_es" else "Registry"
+            registry_source = "official:eri_metrics" if registry_provider == "eri_es" else "official:registry"
+            if registry_provider and registry_provider != "eri_es":
+                registry_source = f"official:registry:{registry_provider}"
+
             txn_z = self._coerce_float(eri_signals.get("txn_volume_z") if eri_signals else None)
             mortgage_share = self._coerce_float(eri_signals.get("mortgage_share") if eri_signals else None)
 
@@ -83,7 +116,7 @@ class AreaIntelligenceService:
                 sentiment_score = self._score_from_z(txn_z)
                 sentiment_credibility = 0.75
                 sentiment_as_of = eri_as_of
-                sources.add("official:eri_metrics")
+                sources.add(registry_source)
                 if mortgage_share is not None:
                     sentiment_score = self._clip(sentiment_score + (mortgage_share - 0.5) * 0.1, 0.0, 1.0)
                     sentiment_credibility = min(0.85, sentiment_credibility + 0.05)
@@ -91,10 +124,10 @@ class AreaIntelligenceService:
                 sentiment_score = self._clip(0.5 + (mortgage_share - 0.5) * 0.2, 0.0, 1.0)
                 sentiment_credibility = 0.6
                 sentiment_as_of = eri_as_of
-                sources.add("official:eri_metrics")
+                sources.add(registry_source)
 
             if sentiment_as_of:
-                summary_parts.append(f"ERI liquidity as of {sentiment_as_of.date().isoformat()}")
+                summary_parts.append(f"{registry_label} liquidity as of {sentiment_as_of.date().isoformat()}")
 
             development_score = 0.5
             development_credibility = 0.2
@@ -107,22 +140,24 @@ class AreaIntelligenceService:
             )
             if registral_change is not None:
                 growth_values.append(registral_change)
-                dev_sources.add("official:eri_metrics")
+                dev_sources.add(registry_source)
                 development_as_of = eri_as_of
                 development_credibility = 0.75
 
-            ine_value, ine_period, ine_region = self._fetch_ine_yoy(area_id)
-            if ine_value is not None:
-                growth_values.append(ine_value)
-                if ine_region:
-                    dev_sources.add(f"official:ine_ipv:{ine_region}")
-                else:
-                    dev_sources.add("official:ine_ipv")
-                ine_dt = self._ine_period_to_date(ine_period) if ine_period else None
-                if ine_dt and (development_as_of is None or ine_dt > development_as_of):
-                    development_as_of = ine_dt
-                base_cred = 0.7 if ine_region == area_id else 0.6
-                development_credibility = max(development_credibility, base_cred)
+            if self._allow_ine(country_code):
+                ine_area_id = self._strip_country_prefix(area_key)
+                ine_value, ine_period, ine_region = self._fetch_ine_yoy(ine_area_id)
+                if ine_value is not None:
+                    growth_values.append(ine_value)
+                    if ine_region:
+                        dev_sources.add(f"official:ine_ipv:{ine_region}")
+                    else:
+                        dev_sources.add("official:ine_ipv")
+                    ine_dt = self._ine_period_to_date(ine_period) if ine_period else None
+                    if ine_dt and (development_as_of is None or ine_dt > development_as_of):
+                        development_as_of = ine_dt
+                    base_cred = 0.7 if ine_region == ine_area_id else 0.6
+                    development_credibility = max(development_credibility, base_cred)
 
             if growth_values:
                 development_score = self._score_from_growth(sum(growth_values) / len(growth_values))
@@ -132,14 +167,14 @@ class AreaIntelligenceService:
             sources.update(dev_sources)
 
             if development_as_of:
-                if "official:eri_metrics" in dev_sources and any(
+                if registry_provider == "eri_es" and any(
                     s.startswith("official:ine_ipv") for s in dev_sources
                 ):
                     label = "ERI + INE momentum"
-                elif "official:eri_metrics" in dev_sources:
+                elif registry_provider == "eri_es":
                     label = "ERI price momentum"
                 else:
-                    label = "INE IPV momentum"
+                    label = "Registry price momentum"
                 summary_parts.append(f"{label} as of {development_as_of.date().isoformat()}")
 
             if summary_parts:
@@ -150,8 +185,10 @@ class AreaIntelligenceService:
             keywords = []
             if sources:
                 keywords.append("official")
-            if any("eri" in s for s in sources):
+            if registry_provider == "eri_es":
                 keywords.extend(["eri", "registral", "liquidity"])
+            elif registry_provider:
+                keywords.extend(["registry", "liquidity"])
             if any("ine_ipv" in s for s in sources):
                 keywords.extend(["ine", "ipv"])
             keywords = sorted(set(keywords))
@@ -167,7 +204,7 @@ class AreaIntelligenceService:
                 "top_keywords": keywords,
                 "source_urls": sorted(sources),
             }
-            self.repo.save_area(area_id, data)
+            self.repo.save_area(area_key, data)
         except Exception as e:
             logger.error("area_intel_refresh_failed", area_id=area_id, error=str(e))
 
@@ -193,6 +230,18 @@ class AreaIntelligenceService:
             "source_urls": [],
         }
 
+    def _area_key(self, area_id: str, country_code: Optional[str]) -> str:
+        area_key = self.canonicalizer.canonicalize(area_id, country_code=country_code)
+        if not area_key:
+            area_key = area_id.lower().strip()
+        return area_key
+
+    @staticmethod
+    def _allow_ine(country_code: Optional[str]) -> bool:
+        if not country_code:
+            return True
+        return str(country_code).upper().strip() == "ES"
+
     def _fetch_ine_yoy(self, area_id: str) -> Tuple[Optional[float], Optional[str], Optional[str]]:
         candidates = [area_id, "national", "total nacional"]
         for region in candidates:
@@ -201,6 +250,12 @@ class AreaIntelligenceService:
                 period, value = record
                 return value, period, region
         return None, None, None
+
+    @staticmethod
+    def _strip_country_prefix(area_id: str) -> str:
+        if ":" in area_id:
+            return area_id.split(":", 1)[1]
+        return area_id
 
     def _parse_dt(self, value: Any) -> Optional[datetime]:
         if value is None:

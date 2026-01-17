@@ -443,7 +443,7 @@ class TransactionsIngestService:
         except Exception:
             change = None
 
-        if change is None:
+        if change is None and (country_code is None or str(country_code).upper().strip() == "ES"):
             for region in (region_key, "national", "total nacional"):
                 record = self.ine_repo.fetch_latest_metric(region, housing_type="general", metric="yoy")
                 if record:

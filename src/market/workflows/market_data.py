@@ -58,6 +58,13 @@ def build_market_data(
     except Exception as e:
         logger.warning("official_sources_ingest_failed", error=str(e))
 
+    # 2c. Registry datasets (UK/IT and other providers configured via registry.yaml)
+    try:
+        from src.market.services.registry_ingest import RegistryIngestService
+        RegistryIngestService(db_path=db_path, app_config=app_config).run()
+    except Exception as e:
+        logger.warning("registry_sources_ingest_failed", error=str(e))
+
 
     if not skip_hedonic:
         try:

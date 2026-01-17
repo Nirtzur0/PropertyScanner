@@ -2,60 +2,63 @@
 
 This document explains the autonomous agent system that powers data collection and valuation.
 
-## Agent Architecture
+## How the agents run
 
-The system uses a **LangGraph** workflow (`src/agentic/graph.py`) to orchestrate the actions of specialized agents. The Supervisor LLM decides the next action based on the current state; no rule-based fallback is used.
+The system uses a **LangGraph** plan-executor workflow. A planner (LLM or fallback) produces a deterministic run plan with tool budgets. The executor then runs each tool step in order.
 
 ```mermaid
-graph TD
-    Supervisor["Supervisor (LLM)"]
-    
-    subgraph "Worker Nodes"
-        Crawl["Crawl Node"]
-        Norm["Normalize Node"]
-        Enrich["Enrich Node"]
-        Filter["Filter Node"]
-        Eval["Evaluate Node"]
+flowchart LR
+    Planner["Planner (LLM or default plan)"]
+    Execute["Executor (budgeted steps)"]
+
+    subgraph "Agent tool stack"
+        Preflight["Preflight workflow"]
+        Harvest["Harvest workflow"]
+        Market["Market data workflow"]
+        Index["Vector index workflow"]
+        Train["Training workflow"]
+        Crawl["Crawl"]
+        Norm["Normalize"]
+        Enrich["Enrich"]
+        Filter["Filter"]
+        Eval["Evaluate"]
+        Report["Report"]
     end
 
-    Report["Report Node"]
-
-    Supervisor -->|Decision| Crawl
-    Supervisor -->|Decision| Norm
-    Supervisor -->|Decision| Enrich
-    Supervisor -->|Decision| Filter
-    Supervisor -->|Decision| Eval
-    Supervisor -->|Decision| Report
-    
-    Crawl --> Supervisor
-    Norm --> Supervisor
-    Enrich --> Supervisor
-    Filter --> Supervisor
-    Eval --> Supervisor
-    
-    Report --> END
+    Planner --> Execute
+    Execute --> Preflight
+    Execute --> Harvest
+    Execute --> Market
+    Execute --> Index
+    Execute --> Train
+    Execute --> Crawl
+    Execute --> Norm
+    Execute --> Enrich
+    Execute --> Filter
+    Execute --> Eval
+    Execute --> Report
 ```
 
-### The Supervisor Pattern
-Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `AgentState` (e.g., "Have we crawled data? Is it normalized?") and dynamically routes execution to the appropriate worker node.
+### Planner + executor pattern
+Rather than a free-form supervisor loop, the planner builds an explicit plan with budgets. If the LLM fails, the system falls back to a deterministic default plan. The executor tracks tool usage and stops when the plan is complete.
 
-**Typical Flow**: `Crawl -> Normalize -> Enrich -> Filter -> Evaluate -> Report`
+**Typical flow**: `preflight (if needed) -> crawl -> normalize -> enrich -> filter -> evaluate -> report`
 
-## Operational Requirements
-- Provide `areas` as search URLs, search paths, or plain location strings. The source router maps them to the correct site using `config/sources.yaml`.
-- Provide at least one LLM provider (Ollama, Gemini, or OpenAI) for Supervisor + Report.
-- Provide a strategy in state (default: `balanced`) if running the graph directly.
+## What the agents need
+- Provide `areas` as search URLs, search paths, or plain location strings. The source router maps them using `config/sources.yaml`.
+- Provide at least one LLM provider (Ollama, Gemini, or OpenAI) for planning and report generation.
+- You can pass an explicit plan or allow the planner to build one; a default plan is used if the LLM fails.
 - Evaluation is delegated to `ValuationService` and requires comps, indices, model artifacts, and a retriever metadata match (encoder + VLM policy).
 - Calibration registry (`models/calibration_registry.json`) is optional but improves interval reliability.
 
-## Agent Examples
+## Example agents
 
 ### 1. `PisosCrawlerAgent`
 - **Goal**: Navigate pagination and listing pages on *pisos.com*.
 - **Strategy**: 
     - Respects `robots.txt` and rate limits.
     - Uses randomized User-Agents.
-    - extracting JSON-LD structured data when available, plus CSS selectors for robustness.
+    - Extracts JSON-LD structured data when available, plus CSS selectors for robustness.
 
 ### 2. `PisosNormalizerAgent`
 - **Goal**: Convert disparate field names into our `CanonicalListing` Pydantic model.
@@ -64,7 +67,7 @@ Instead of a rigid linear pipeline, the **Supervisor** (an LLM) inspects the `Ag
     - `"planta 4"` $\rightarrow$ `floor=4`
     - `"250.000 €"` $\rightarrow$ `price=250000.0`, `currency="EUR"`
 
-## Future Expansion
+## Adding new agents
 The architecture allows plugging in new agents easily:
 - `IdealistaCrawlerAgent`
 - `FotocasaCrawlerAgent`

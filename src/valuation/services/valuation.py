@@ -28,6 +28,7 @@ import numpy as np
 
 from src.platform.storage import StorageService
 from sqlalchemy import text, func
+import geolib.geohash
 from src.platform.domain.schema import (
     CanonicalListing,
     DealAnalysis,
@@ -107,8 +108,12 @@ class ValuationService:
         )
         self.analytics = MarketAnalyticsService(db_path=db_path)
         self.hedonic = HedonicIndexService(db_path=db_path)
-        self.eri = ERISignalsService(db_path=db_path, lag_days=self.config.eri_lag_days)
-        self.area_intel = AreaIntelligenceService(db_path=db_path)
+        self.eri = ERISignalsService(
+            db_path=db_path,
+            lag_days=self.config.eri_lag_days,
+            app_config=app_config,
+        )
+        self.area_intel = AreaIntelligenceService(db_path=db_path, app_config=app_config)
         if app_config is not None:
             self.fusion = FusionModelService(
                 model_path=str(app_config.paths.fusion_model_path),
@@ -516,33 +521,48 @@ class ValuationService:
             )
 
             # Apply conformal calibration to spot estimate
-            if evidence.model_used == "fusion" and self.calibrators.is_calibrated(bucket_key, 0):
-                if tracer:
-                    tracer.log("calibration_spot_before", {
-                        "q10": fair_value * (1 - uncertainty),
-                        "q50": fair_value,
-                        "q90": fair_value * (1 + uncertainty)
-                    })
-    
-                cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
-                    bucket_key,
-                    fair_value * (1 - uncertainty),
-                    fair_value,
-                    fair_value * (1 + uncertainty),
-                    horizon_months=0
-                )
-                
-                if tracer:
-                    tracer.log("calibration_spot_after", {
-                        "q10": cal_q10,
-                        "q50": cal_q50,
-                        "q90": cal_q90
-                    })
-    
-                # Recalculate uncertainty from calibrated interval
-                if cal_q50 > 0:
-                    uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
-                evidence.calibration_status = "calibrated"
+            if evidence.model_used == "fusion":
+                base_q10 = fair_value * (1 - uncertainty)
+                base_q90 = fair_value * (1 + uncertainty)
+                if self.calibrators.is_calibrated(bucket_key, 0):
+                    if tracer:
+                        tracer.log("calibration_spot_before", {
+                            "q10": base_q10,
+                            "q50": fair_value,
+                            "q90": base_q90
+                        })
+
+                    cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
+                        bucket_key,
+                        base_q10,
+                        fair_value,
+                        base_q90,
+                        horizon_months=0
+                    )
+
+                    if tracer:
+                        tracer.log("calibration_spot_after", {
+                            "q10": cal_q10,
+                            "q50": cal_q50,
+                            "q90": cal_q90
+                        })
+
+                    # Recalculate uncertainty from calibrated interval
+                    if cal_q50 > 0:
+                        uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
+                    evidence.calibration_status = "calibrated"
+                else:
+                    cal_q10, cal_q50, cal_q90 = self.calibrators.bootstrap_interval(
+                        bucket_key,
+                        base_q10,
+                        fair_value,
+                        base_q90,
+                        horizon_months=0,
+                        min_uncertainty_pct=self.config.bootstrap_min_uncertainty_pct,
+                    )
+                    if cal_q50 > 0:
+                        uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
+                    evidence.calibration_status = "bootstrap"
 
             if eri_disagree:
                 uncertainty *= self.config.eri_uncertainty_multiplier
@@ -625,7 +645,13 @@ class ValuationService:
             # =====================================================================
             
             try:
-                projections = self._compute_projections(fair_value, region_id, valuation_date, bucket_key)
+                projections = self._compute_projections(
+                    fair_value,
+                    region_id,
+                    valuation_date,
+                    bucket_key,
+                    country_code=country_code,
+                )
             except ValueError as exc:
                 logger.warning("projection_failed", error=str(exc), listing_id=listing.id)
                 projections = []
@@ -639,6 +665,7 @@ class ValuationService:
                 rent_projections = self.forecasting.forecast_rent(
                     region_id=region_id,
                     current_monthly_rent=rent_est,
+                    country_code=country_code,
                     horizons_months=self.config.horizons_months,
                 )
             except ValueError as exc:
@@ -803,6 +830,8 @@ class ValuationService:
                 continue
 
             raw_price = self._resolve_comp_price(comp)
+            if raw_price is None or raw_price <= 0:
+                continue
 
             try:
                 adj_price, adj_factor, meta = self.hedonic.adjust_comp_price(
@@ -1092,7 +1121,8 @@ class ValuationService:
         spot_value: float,
         region_id: str,
         valuation_date: datetime,
-        bucket_key: str
+        bucket_key: str,
+        country_code: Optional[str] = None,
     ) -> List[ValuationProjection]:
         """
         Compute future value projections.
@@ -1108,7 +1138,8 @@ class ValuationService:
         raw_projections = self.forecasting.forecast_property(
             region_id=region_id,
             current_value=spot_value,
-            horizons_months=self.config.horizons_months
+            country_code=country_code,
+            horizons_months=self.config.horizons_months,
         )
 
         # Apply conformal calibration per horizon
@@ -1136,6 +1167,22 @@ class ValuationService:
                     proj.confidence_score = max(0.1, 1.0 - spread)
 
                 proj.scenario_name = f"{proj.scenario_name}_calibrated"
+            else:
+                cal_q10, cal_q50, cal_q90 = self.calibrators.bootstrap_interval(
+                    bucket_key,
+                    proj.confidence_interval_low,
+                    proj.predicted_value,
+                    proj.confidence_interval_high,
+                    horizon_months=horizon,
+                    min_uncertainty_pct=self.config.bootstrap_min_uncertainty_pct,
+                )
+                proj.confidence_interval_low = cal_q10
+                proj.predicted_value = cal_q50
+                proj.confidence_interval_high = cal_q90
+                if cal_q50 > 0:
+                    spread = (cal_q90 - cal_q10) / cal_q50
+                    proj.confidence_score = max(0.1, 1.0 - spread)
+                proj.scenario_name = f"{proj.scenario_name}_bootstrap"
 
             projections.append(proj)
 
@@ -1501,17 +1548,189 @@ class ValuationService:
         return signals
     
     def _get_region_id(self, listing: CanonicalListing) -> str:
-        """Extract region identifier from listing"""
+        """Extract region identifier for index lookups with resilient fallbacks."""
+        city = None
         if listing.location and listing.location.city:
-            return listing.location.city.lower()
-        return "unknown"
+            city = self._normalize_region_text(listing.location.city)
+        if city:
+            return city
 
-    def _resolve_comp_price(self, comp: CanonicalListing) -> float:
+        resolved = self._resolve_region_from_storage(listing)
+        if resolved:
+            return resolved
+
+        logger.warning("region_id_fallback_all", listing_id=getattr(listing, "id", None))
+        return "all"
+
+    @staticmethod
+    def _normalize_region_text(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().lower()
+        if not text:
+            return None
+        text = re.sub(r"\s+", " ", text)
+        if text in {"unknown", "n/a", "none", "null", "nan"}:
+            return None
+        return text
+
+    def _resolve_region_from_storage(self, listing: CanonicalListing) -> Optional[str]:
+        listing_id = getattr(listing, "id", None)
+        stored = self._fetch_listing_location(listing_id) if listing_id else {}
+
+        city = self._normalize_region_text(stored.get("city"))
+        if city:
+            return city
+
+        zip_code = stored.get("zip_code")
+        if not zip_code and listing.location:
+            zip_code = getattr(listing.location, "zip_code", None)
+        if zip_code:
+            city = self._lookup_city_by_zip(zip_code)
+            if city:
+                return city
+
+        geohash = stored.get("geohash")
+        lat = stored.get("lat")
+        lon = stored.get("lon")
+        if (lat is None or lon is None) and listing.location:
+            lat = getattr(listing.location, "lat", None)
+            lon = getattr(listing.location, "lon", None)
+        if not geohash and lat is not None and lon is not None:
+            try:
+                geohash = geolib.geohash.encode(lat, lon, 6)
+            except Exception:
+                geohash = None
+        if geohash:
+            city = self._lookup_city_by_geohash(geohash)
+            if city:
+                return city
+
+        if lat is not None and lon is not None:
+            city = self._lookup_city_by_latlon(lat, lon)
+            if city:
+                return city
+
+        return None
+
+    def _fetch_listing_location(self, listing_id: str) -> Dict[str, Optional[object]]:
+        query = text(
+            """
+            SELECT city, zip_code, geohash, lat, lon
+            FROM listings
+            WHERE id = :listing_id
+            LIMIT 1
+            """
+        )
+        try:
+            with self.storage.engine.connect() as conn:
+                row = conn.execute(query, {"listing_id": listing_id}).fetchone()
+            if not row:
+                return {}
+            return {
+                "city": row[0],
+                "zip_code": row[1],
+                "geohash": row[2],
+                "lat": row[3],
+                "lon": row[4],
+            }
+        except Exception:
+            return {}
+
+    def _lookup_city_by_zip(self, zip_code: str) -> Optional[str]:
+        zip_norm = str(zip_code).strip().lower()
+        if not zip_norm:
+            return None
+        query = text(
+            """
+            SELECT city
+            FROM listings
+            WHERE LOWER(zip_code) = :zip
+              AND city IS NOT NULL
+              AND city != ''
+            LIMIT 1
+            """
+        )
+        try:
+            with self.storage.engine.connect() as conn:
+                row = conn.execute(query, {"zip": zip_norm}).fetchone()
+            return self._normalize_region_text(row[0]) if row else None
+        except Exception:
+            return None
+
+    def _lookup_city_by_geohash(self, geohash: str) -> Optional[str]:
+        geohash = str(geohash).strip().lower()
+        if not geohash:
+            return None
+        prefixes = [geohash[:6], geohash[:5], geohash[:4]]
+        query = text(
+            """
+            SELECT city
+            FROM listings
+            WHERE geohash LIKE :prefix
+              AND city IS NOT NULL
+              AND city != ''
+            LIMIT 1
+            """
+        )
+        for prefix in prefixes:
+            if len(prefix) < 4:
+                continue
+            try:
+                with self.storage.engine.connect() as conn:
+                    row = conn.execute(query, {"prefix": f"{prefix}%"}).fetchone()
+                if row and row[0]:
+                    city = self._normalize_region_text(row[0])
+                    if city:
+                        return city
+            except Exception:
+                return None
+        return None
+
+    def _lookup_city_by_latlon(self, lat: float, lon: float) -> Optional[str]:
+        deltas = [0.01, 0.03, 0.08]
+        query = text(
+            """
+            SELECT city
+            FROM listings
+            WHERE lat BETWEEN :min_lat AND :max_lat
+              AND lon BETWEEN :min_lon AND :max_lon
+              AND city IS NOT NULL
+              AND city != ''
+            LIMIT 1
+            """
+        )
+        for delta in deltas:
+            try:
+                with self.storage.engine.connect() as conn:
+                    row = conn.execute(
+                        query,
+                        {
+                            "min_lat": lat - delta,
+                            "max_lat": lat + delta,
+                            "min_lon": lon - delta,
+                            "max_lon": lon + delta,
+                        },
+                    ).fetchone()
+                if row and row[0]:
+                    city = self._normalize_region_text(row[0])
+                    if city:
+                        return city
+            except Exception:
+                return None
+        return None
+
+    def _resolve_comp_price(self, comp: CanonicalListing) -> Optional[float]:
         if comp.listing_type == "sale":
             sold_price = getattr(comp, "sold_price", None)
             if sold_price is not None and sold_price > 0:
                 return float(sold_price)
-        return float(comp.price)
+        if comp.price is None:
+            return None
+        try:
+            return float(comp.price)
+        except (TypeError, ValueError):
+            return None
 
     def _get_market_index_value(self, region_id: str, month_key: str, column: str) -> float:
         allowed = {"price_index_sqm", "rent_index_sqm"}
@@ -1721,7 +1940,10 @@ class ValuationService:
         market_yield = yield_stats.get("yield_p50")
         if not market_yield:
             market_yield = self._get_market_yield(region_id, valuation_date)
-        area_data = self.area_intel.get_area_indicators(region_id)
+        area_data = self.area_intel.get_area_indicators(
+            region_id,
+            country_code=listing.location.country if listing.location else None,
+        )
 
         signals = {
             "momentum": profile.momentum_score,

@@ -11,6 +11,9 @@ from src.market.repositories.it_registry_metrics import ItalyRegistryMetricsRepo
 from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
 from src.market.repositories.registry_metrics import RegistryMetricsRepository
 from src.market.repositories.market_indices import MarketIndicesRepository
+from src.market.services.registry_canonical import RegistryCanonicalizer
+from src.platform.settings import AppConfig
+from src.platform.utils.config import load_app_config_safe
 
 logger = structlog.get_logger(__name__)
 
@@ -37,11 +40,14 @@ class ERISignalsService:
         lag_days: int = 45,
         trailing_years: int = 3,
         default_provider_id: str = "eri_es",
+        app_config: Optional[AppConfig] = None,
     ):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.lag_days = int(lag_days)
         self.trailing_years = int(trailing_years)
         self.market_repo = MarketIndicesRepository(db_url=self.db_url)
+        self.app_config = app_config or load_app_config_safe()
+        self.canonicalizer = RegistryCanonicalizer(app_config=self.app_config)
         self.providers = self._build_providers()
         if default_provider_id not in self.providers:
             default_provider_id = "eri_es"
@@ -79,7 +85,13 @@ class ERISignalsService:
                     return provider
         return self.providers[self.default_provider_id]
 
-    def _load_series(self, region_id: str, allow_proxy: bool, provider: RegistryProvider) -> pd.DataFrame:
+    def _load_series(
+        self,
+        region_id: str,
+        allow_proxy: bool,
+        provider: RegistryProvider,
+        proxy_region_id: Optional[str] = None,
+    ) -> pd.DataFrame:
         # Priority 1: Official registry data
         try:
             provider.repository.ensure_schema()
@@ -95,7 +107,8 @@ class ERISignalsService:
         if df.empty and allow_proxy:
             # Fallback to internal proxy
             try:
-                proxy = self.market_repo.fetch_series(region_id)
+                proxy_key = proxy_region_id or region_id
+                proxy = self.market_repo.fetch_series(proxy_key)
                 if not proxy.empty:
                     df = proxy.rename(
                         columns={
@@ -155,7 +168,17 @@ class ERISignalsService:
         provider_id: Optional[str] = None,
     ) -> Dict[str, float]:
         provider = self._select_provider(provider_id=provider_id, country_code=country_code)
-        df = self._load_series(region_id, allow_proxy=allow_proxy, provider=provider)
+        region_key = self.canonicalizer.canonicalize(
+            region_id,
+            country_code=country_code,
+            provider_id=provider.provider_id,
+        ) or str(region_id).strip().lower()
+        df = self._load_series(
+            region_key,
+            allow_proxy=allow_proxy,
+            provider=provider,
+            proxy_region_id=region_id,
+        )
         if df.empty:
             return {}
 

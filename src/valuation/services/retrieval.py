@@ -68,7 +68,11 @@ class CompRetriever:
         self.vlm_policy = vlm_policy
 
         # Load embedding model
-        self.model = SentenceTransformer(model_name)
+        device = os.environ.get("PROPERTY_SCANNER_TEXT_DEVICE")
+        if device:
+            self.model = SentenceTransformer(model_name, device=device)
+        else:
+            self.model = SentenceTransformer(model_name)
         self.dimension = self.model.get_sentence_embedding_dimension()
         
         # Initialize or Load FAISS Index

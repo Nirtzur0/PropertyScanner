@@ -27,8 +27,25 @@
   box-sizing: border-box;
 }
 
+.stApp > header {
+  display: none !important;
+}
+
+[data-testid="stToolbar"] {
+  display: none !important;
+}
+
+[data-testid="stStatusWidget"] {
+  display: none !important;
+}
+
 .stApp {
-  background: radial-gradient(120% 140% at 0% 0%, #f0e7db 0%, #f5f1eb 50%, #eef3f6 100%);
+  background: radial-gradient(
+    120% 140% at 0% 0%,
+    #f0e7db 0%,
+    #f5f1eb 50%,
+    #eef3f6 100%
+  );
   color: var(--ink);
   font-family: "Sora", sans-serif;
   position: relative;
@@ -41,7 +58,12 @@
   left: -10%;
   width: 60vw;
   height: 60vw;
-  background: radial-gradient(circle, rgba(181, 138, 82, 0.18) 0%, rgba(181, 138, 82, 0.02) 60%, transparent 70%);
+  background: radial-gradient(
+    circle,
+    rgba(181, 138, 82, 0.18) 0%,
+    rgba(181, 138, 82, 0.02) 60%,
+    transparent 70%
+  );
   filter: blur(10px);
   z-index: 0;
   pointer-events: none;
@@ -54,7 +76,12 @@
   right: -15%;
   width: 70vw;
   height: 70vw;
-  background: radial-gradient(circle, rgba(47, 111, 98, 0.18) 0%, rgba(47, 111, 98, 0.02) 60%, transparent 70%);
+  background: radial-gradient(
+    circle,
+    rgba(47, 111, 98, 0.18) 0%,
+    rgba(47, 111, 98, 0.02) 60%,
+    transparent 70%
+  );
   filter: blur(12px);
   z-index: 0;
   pointer-events: none;
@@ -70,13 +97,18 @@
   max-width: 1400px;
 }
 
-h1, h2, h3, h4 {
+h1,
+h2,
+h3,
+h4 {
   font-family: "Fraunces", serif;
   color: var(--ink-strong) !important;
   letter-spacing: -0.02em;
 }
 
-p, span, div {
+p,
+span,
+div {
   color: var(--ink);
 }
 
@@ -203,7 +235,12 @@ a:hover {
 .orchestrator-panel {
   padding: 2rem 2.2rem;
   border-radius: var(--radius-xl);
-  background: linear-gradient(130deg, rgba(255, 255, 255, 0.96) 0%, rgba(244, 236, 225, 0.9) 50%, rgba(230, 242, 241, 0.9) 100%);
+  background: linear-gradient(
+    130deg,
+    rgba(255, 255, 255, 0.96) 0%,
+    rgba(244, 236, 225, 0.9) 50%,
+    rgba(230, 242, 241, 0.9) 100%
+  );
   border: 1px solid rgba(21, 19, 16, 0.12);
   box-shadow: var(--shadow-soft);
   margin-bottom: 1.4rem;
@@ -219,7 +256,11 @@ a:hover {
   right: -15%;
   width: 260px;
   height: 260px;
-  background: radial-gradient(circle, rgba(181, 138, 82, 0.24) 0%, rgba(181, 138, 82, 0) 70%);
+  background: radial-gradient(
+    circle,
+    rgba(181, 138, 82, 0.24) 0%,
+    rgba(181, 138, 82, 0) 70%
+  );
   opacity: 0.6;
 }
 
@@ -269,7 +310,9 @@ a:hover {
   border: 1px solid rgba(21, 19, 16, 0.12);
   box-shadow: 0 12px 26px rgba(22, 18, 14, 0.1);
   margin-bottom: 0.8rem;
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
 }
 
 .answer-banner:hover {
@@ -319,7 +362,11 @@ a:hover {
 .stButton > button {
   border-radius: 999px;
   border: 1px solid rgba(21, 19, 16, 0.1);
-  background: linear-gradient(120deg, rgba(193, 147, 91, 0.9), rgba(208, 123, 82, 0.92));
+  background: linear-gradient(
+    120deg,
+    rgba(193, 147, 91, 0.9),
+    rgba(208, 123, 82, 0.92)
+  );
   color: #fff;
   padding: 0.5rem 1.4rem;
   font-size: 0.82rem;
@@ -361,7 +408,12 @@ a:hover {
   gap: 2.2rem;
   padding: 2.6rem;
   border-radius: var(--radius-xl);
-  background: linear-gradient(120deg, rgba(255, 255, 255, 0.95) 0%, rgba(244, 236, 225, 0.9) 50%, rgba(226, 238, 243, 0.9) 100%);
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(244, 236, 225, 0.9) 50%,
+    rgba(226, 238, 243, 0.9) 100%
+  );
   border: 1px solid rgba(21, 19, 16, 0.1);
   box-shadow: var(--shadow-strong);
   margin-bottom: 1.6rem;
@@ -377,7 +429,11 @@ a:hover {
   right: -10%;
   width: 340px;
   height: 340px;
-  background: radial-gradient(circle, rgba(55, 80, 107, 0.22) 0%, rgba(55, 80, 107, 0) 70%);
+  background: radial-gradient(
+    circle,
+    rgba(55, 80, 107, 0.22) 0%,
+    rgba(55, 80, 107, 0) 70%
+  );
   opacity: 0.9;
 }
 
@@ -555,7 +611,11 @@ a:hover {
   right: -30px;
   width: 90px;
   height: 90px;
-  background: radial-gradient(circle, rgba(181, 138, 82, 0.25), transparent 70%);
+  background: radial-gradient(
+    circle,
+    rgba(181, 138, 82, 0.25),
+    transparent 70%
+  );
 }
 
 .kpi-label {
@@ -582,7 +642,11 @@ a:hover {
   align-items: center;
   padding: 0.85rem 1.1rem;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(236, 242, 240, 0.8));
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(236, 242, 240, 0.8)
+  );
   border: 1px solid rgba(21, 19, 16, 0.1);
   box-shadow: var(--shadow-soft);
   font-size: 0.85rem;
@@ -628,7 +692,11 @@ a:hover {
 .image-placeholder {
   height: 180px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(15, 33, 54, 0.08), rgba(15, 33, 54, 0.02));
+  background: linear-gradient(
+    135deg,
+    rgba(15, 33, 54, 0.08),
+    rgba(15, 33, 54, 0.02)
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -873,16 +941,31 @@ footer {
   }
 
   .stApp {
-    background: radial-gradient(120% 140% at 0% 0%, #141b25 0%, #0f141b 55%, #101925 100%);
+    background: radial-gradient(
+      120% 140% at 0% 0%,
+      #141b25 0%,
+      #0f141b 55%,
+      #101925 100%
+    );
     color: var(--ink);
   }
 
   .stApp::before {
-    background: radial-gradient(circle, rgba(210, 162, 108, 0.18) 0%, rgba(210, 162, 108, 0.02) 60%, transparent 70%);
+    background: radial-gradient(
+      circle,
+      rgba(210, 162, 108, 0.18) 0%,
+      rgba(210, 162, 108, 0.02) 60%,
+      transparent 70%
+    );
   }
 
   .stApp::after {
-    background: radial-gradient(circle, rgba(109, 179, 159, 0.18) 0%, rgba(109, 179, 159, 0.03) 60%, transparent 70%);
+    background: radial-gradient(
+      circle,
+      rgba(109, 179, 159, 0.18) 0%,
+      rgba(109, 179, 159, 0.03) 60%,
+      transparent 70%
+    );
   }
 
   [data-testid="stSidebar"] {
@@ -913,12 +996,20 @@ footer {
   }
 
   .signal-pill {
-    background: linear-gradient(135deg, rgba(24, 30, 38, 0.95), rgba(20, 29, 33, 0.9));
+    background: linear-gradient(
+      135deg,
+      rgba(24, 30, 38, 0.95),
+      rgba(20, 29, 33, 0.9)
+    );
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .image-placeholder {
-    background: linear-gradient(135deg, rgba(243, 237, 228, 0.08), rgba(243, 237, 228, 0.02));
+    background: linear-gradient(
+      135deg,
+      rgba(243, 237, 228, 0.08),
+      rgba(243, 237, 228, 0.02)
+    );
   }
 
   .hero-metric {

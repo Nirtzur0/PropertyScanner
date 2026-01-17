@@ -1,0 +1,41 @@
+# registry.yaml
+# Official registry data sources (ERI, UK Land Registry, Italy OMI, etc).
+
+registry:
+  include_country_prefix: false
+
+  # Optional aliases to harmonize region naming between registries and listings.
+  # region_aliases:
+  #   GB:
+  #     "greater london": "london"
+  #   IT:
+  #     "roma": "roma"
+  region_aliases: {}
+
+  # Provider-specific overrides take precedence over region_aliases.
+  # provider_region_aliases:
+  #   uk_land_registry:
+  #     "greater london": "london"
+  provider_region_aliases: {}
+
+  # Registry sources to ingest into the canonical schema.
+  # Example:
+  # sources:
+  #   - provider_id: "uk_land_registry"
+  #     country_code: "GB"
+  #     enabled: false
+  #     kind: "csv"
+  #     csv_paths:
+  #       - "data/registry/uk_land_registry.csv"
+  #     csv_urls: []
+  #     delimiter: ","
+  #     encoding: "utf-8"
+  #     date_format: null
+  #     region_column: "region"
+  #     date_column: "period_date"
+  #     txn_column: "txn_count"
+  #     mortgage_column: "mortgage_count"
+  #     price_column: "price_sqm"
+  #     price_yoy_column: null
+  #     price_qoq_column: null
+  sources: []

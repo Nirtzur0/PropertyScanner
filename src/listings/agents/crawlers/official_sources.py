@@ -16,6 +16,7 @@ from typing import Optional, List, Dict
 from src.platform.config import DEFAULT_DB_PATH
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
+from src.market.services.registry_canonical import RegistryCanonicalizer
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +29,7 @@ class OfficialSourcesAgent:
         })
         self.ine_repo = IneIpvRepository(db_path=db_path)
         self.eri_repo = ERIMetricsRepository(db_path=db_path)
+        self.canonicalizer = RegistryCanonicalizer()
 
     def run(self):
         """Main execution flow."""
@@ -144,6 +146,11 @@ class OfficialSourcesAgent:
         for _, row in df.iterrows():
             # Map region
             region_raw = str(row.get("territorio", "unknown"))
+            region_id = self.canonicalizer.canonicalize(
+                region_raw,
+                country_code="ES",
+                provider_id="eri_es",
+            ) or region_raw
             # Skip totals or headers if mixed
             
             # Extract metrics
@@ -153,7 +160,7 @@ class OfficialSourcesAgent:
             
             if txn > 0 or price > 0:
                 records.append({
-                    "region_id": region_raw,
+                    "region_id": region_id,
                     "period_date": period_date,
                     "txn_count": int(txn),
                     "mortgage_count": int(mortgages),

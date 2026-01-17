@@ -17,6 +17,7 @@ References:
 
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
+from statistics import NormalDist
 from collections import deque
 from dataclasses import dataclass, field
 import structlog
@@ -150,8 +151,8 @@ class ConformalCalibrator:
         # Enforce monotonicity
         return self._enforce_monotonicity(calibrated_q10, pred_q50, calibrated_q90)
     
+    @staticmethod
     def _enforce_monotonicity(
-        self,
         q10: float,
         q50: float,
         q90: float
@@ -370,6 +371,7 @@ class StratifiedCalibratorRegistry:
         self.window_size = window_size
         self.price_tiers = price_tiers or [150000, 300000, 600000, 1000000]
         self._registries: Dict[str, HorizonCalibratorRegistry] = {}
+        self._bootstrap_scale = self._compute_bootstrap_scale()
 
     def _price_tier(self, price: float) -> str:
         for limit in self.price_tiers:
@@ -418,6 +420,39 @@ class StratifiedCalibratorRegistry:
     def is_calibrated(self, key: str, horizon_months: int = 0, min_samples: int = 20) -> bool:
         registry = self._get_registry(key)
         return registry.is_calibrated(horizon_months=horizon_months, min_samples=min_samples)
+
+    def bootstrap_interval(
+        self,
+        key: str,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float,
+        horizon_months: int,
+        *,
+        min_uncertainty_pct: float = 0.08,
+    ) -> Tuple[float, float, float]:
+        _ = self._get_registry(key)
+        if pred_q50 <= 0:
+            return ConformalCalibrator._enforce_monotonicity(pred_q10, pred_q50, pred_q90)
+
+        half_range = (pred_q90 - pred_q10) / 2
+        min_half = abs(pred_q50) * max(0.0, float(min_uncertainty_pct))
+        half_range = max(half_range, min_half)
+        half_range *= self._bootstrap_scale
+
+        cal_q10 = pred_q50 - half_range
+        cal_q90 = pred_q50 + half_range
+        return ConformalCalibrator._enforce_monotonicity(cal_q10, pred_q50, cal_q90)
+
+    def _compute_bootstrap_scale(self) -> float:
+        try:
+            base_z = NormalDist().inv_cdf(0.9)
+            target_z = NormalDist().inv_cdf(1 - self.alpha / 2)
+            if base_z <= 0:
+                return 1.0
+            return max(1.0, target_z / base_z)
+        except Exception:
+            return 1.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -24,5 +24,6 @@ RUN poetry install --no-interaction --no-ansi --no-root
 # Copy source code
 COPY . .
 
-# Default command
-CMD ["python", "-m", "src.interfaces.agent"]
+# Streamlit dashboard
+EXPOSE 8505
+CMD ["streamlit", "run", "src/interfaces/dashboard/app.py", "--server.port=8505", "--server.address=0.0.0.0"]

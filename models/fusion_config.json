@@ -1,7 +1,27 @@
 {
+  "comp_cache_mode": "auto",
+  "comp_cache_path": null,
+  "geo_split_key": "city",
   "hidden_dim": 64,
   "image_dim": 512,
+  "label_source": "auto",
+  "listing_type": "sale",
+  "normalize_to": "none",
   "num_heads": 2,
+  "retriever": {
+    "index_fingerprint": null,
+    "index_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_index.faiss",
+    "metadata_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_metadata.json",
+    "model_name": "all-MiniLM-L6-v2",
+    "vlm_policy": "gated"
+  },
+  "split_seed": 42,
+  "split_strategy": "random",
   "tabular_dim": 11,
-  "text_dim": 384
+  "target_mode": "log_residual",
+  "test_split": 0.1,
+  "text_dim": 384,
+  "text_model": "all-MiniLM-L6-v2",
+  "time_safe_comps": true,
+  "val_split": 0.1
 }

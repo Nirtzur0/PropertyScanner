@@ -12,14 +12,17 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 - **Investment Memo** with comps, projections, and thesis.
 - **Signal Lab** for momentum, yield, and area sentiment.
 - **Pipeline Freshness** so you always know what is stale and what is live.
+- **Mission Control** lets you ask for what you need; the AI picks the best deals and explains why.
+- **User controls are minimal**: country, city, budget, property type. Ranking and lens logic are AI-managed.
 
 ---
 
 ## What Makes It Different
-- **Multimodal fusion model** (PropertyFusionModel) predicts log-residuals over a robust comp baseline.
-- **Income-aware valuation** blends rent estimates with market yield to reward higher rental alpha.
-- **Area intelligence** adds sentiment and development signals from market indices.
-- **Sold-price training labels** prefer transaction prices for sales and keep rent labels aligned to rent indices.
+- **Multimodal fusion model** predicts log-residuals over a robust comp baseline.
+- **Time-safe comps** with retriever metadata enforcement (model + VLM policy).
+- **Income-aware valuation** blends rent estimates with local yield distributions and comp coverage weighting.
+- **Area intelligence** adds sentiment/development signals with credibility and freshness scaling.
+- **Sold-price training labels** prefer transaction prices; rent labels normalize to rent indices.
 - **Preflight orchestration** is the canonical entry point; it checks freshness and runs only what is stale.
 - **Quality gates** stop bad harvests before they pollute the lake, with run logs in `pipeline_runs`.
 
@@ -30,14 +33,14 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 2) **Transactions**: ingest sold/registry data to ground truth sales labels.
 3) **Market data**: build macro, market indices, hedonic indices, and area intelligence.
 4) **Vector index**: build FAISS for time-safe comps.
-5) **Training**: train the fusion model and optional calibrators.
-6) **Valuation**: comps + model + income blend + area adjustments.
+5) **Training**: train the fusion model (time+geo splits available) and optional calibrators.
+6) **Valuation**: time-adjusted comps + fusion residuals + income blend + area adjustments.
 
 ---
 
 ## Quick Start
 
-### 0) Start Ollama (required for local LLM/VLM)
+### 0) Start Ollama (required for local LLM/VLM features)
 ```bash
 ollama serve
 ```
@@ -81,6 +84,19 @@ python3 -m src.interfaces.cli calibrators -- --input <samples.jsonl>
 python3 -m src.interfaces.cli dashboard                  # Streamlit UI
 python3 -m src.interfaces.cli agent "Find deals" <areas>
 ```
+
+## Crawler Status (Quick View)
+Status reflects current parsing tests and known live-crawl behavior. Live crawling can vary with rate limits and anti-bot defenses.
+
+| Source id | Region | Status | Notes |
+| --- | --- | --- | --- |
+| idealista | ES | flaky live | Parsing tests pass; live crawling is often blocked by anti-bot defenses. |
+| pisos | ES | works | Parsing tests pass; live crawling is rate limited. |
+| rightmove_uk | UK | works | HTML/JSON-LD; pagination limit (42 pages). |
+| zoopla_uk | UK | works | HTML/JSON-LD; no public API. |
+| immobiliare_it | IT | works | HTML snapshots; Insights API optional. |
+
+---
 
 ## Additional Sources (UK + Italy)
 The agent crawler/normalizer stack now includes:
@@ -127,14 +143,15 @@ analysis = api.evaluate_listing_id("listing-id", persist=True)
 
 ---
 
-## Core Components
-- **Interfaces**: CLI, API, and dashboard entry points in `src/interfaces/`.
-- **Agentic**: LangGraph tools, orchestrator, and analyst agents in `src/agentic/`.
-- **Listings**: Crawlers, normalizers, listing services, and harvest workflows in `src/listings/`.
-- **Market**: Macro/indices/registry signals in `src/market/`.
-- **Valuation**: Retrieval + valuation services/workflows in `src/valuation/`.
-- **ML**: Models/encoders and training pipelines in `src/ml/`.
-- **Platform**: Config, storage, migrations, pipeline state/runs in `src/platform/`.
+## System components
+- **Interfaces**: CLI, API, and dashboard entry points live in `src/interfaces/`.
+- **Agents**: LangGraph tools, the orchestrator, and analyst agents live in `src/agentic/`.
+- **Listings**: Crawlers, normalizers, listing services, and harvest workflows live in `src/listings/`.
+- **Market**: Macro/indices/registry signals live in `src/market/`.
+- **Valuation**: Retrieval + valuation services/workflows live in `src/valuation/`.
+- **ML**: Models/encoders and training pipelines live in `src/ml/`.
+- **Platform**: Config, storage, migrations, pipeline state/runs live in `src/platform/`.
+- **Scripts**: Workflow wrappers and debug tooling live in `scripts/`.
 
 ---
 
@@ -142,3 +159,5 @@ analysis = api.evaluate_listing_id("listing-id", persist=True)
 - `docs/01_system_overview.md`
 - `docs/02_data_pipeline.md`
 - `docs/03_model_architecture.md`
+- `docs/04_agent_workflow.md`
+- `docs/05_path_to_production.md`

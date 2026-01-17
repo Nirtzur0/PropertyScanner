@@ -61,7 +61,13 @@ class ForecastingService:
             except Exception as e:
                 raise RuntimeError("tft_unavailable") from e
 
-    def _load_time_series(self, region_id: str) -> pd.DataFrame:
+    def _load_time_series(
+        self,
+        region_id: str,
+        country_code: Optional[str],
+        *,
+        area_region_id: Optional[str] = None,
+    ) -> pd.DataFrame:
         """Load price index history joined with macro indicators and area intelligence."""
         df = self.market_repo.load_price_series(region_id, index_source=self.index_source)
 
@@ -78,7 +84,8 @@ class ForecastingService:
         df["ecb_deposit_rate"] = pd.to_numeric(df.get("ecb_deposit_rate"), errors="coerce").ffill().fillna(3.5)
         df["inventory_count"] = pd.to_numeric(df.get("inventory_count"), errors="coerce").fillna(0)
 
-        area_data = self.area_intelligence.get_area_indicators(region_id)
+        area_target = area_region_id or region_id
+        area_data = self.area_intelligence.get_area_indicators(area_target, country_code=country_code)
         df["area_sentiment"] = area_data.get("sentiment_score", 0.5)
         df["area_development"] = area_data.get("future_development_score", 0.5)
         area_confidence = area_data.get("area_confidence")
@@ -88,7 +95,13 @@ class ForecastingService:
 
         return df
 
-    def _load_rent_time_series(self, region_id: str) -> pd.DataFrame:
+    def _load_rent_time_series(
+        self,
+        region_id: str,
+        country_code: Optional[str],
+        *,
+        area_region_id: Optional[str] = None,
+    ) -> pd.DataFrame:
         """Load rent index history joined with macro indicators and area intelligence."""
         df = self.market_repo.load_rent_series(region_id)
 
@@ -105,7 +118,8 @@ class ForecastingService:
         df["ecb_deposit_rate"] = pd.to_numeric(df.get("ecb_deposit_rate"), errors="coerce").ffill().fillna(3.5)
         df["inventory_count"] = pd.to_numeric(df.get("inventory_count"), errors="coerce").fillna(0)
 
-        area_data = self.area_intelligence.get_area_indicators(region_id)
+        area_target = area_region_id or region_id
+        area_data = self.area_intelligence.get_area_indicators(area_target, country_code=country_code)
         df["area_sentiment"] = area_data.get("sentiment_score", 0.5)
         df["area_development"] = area_data.get("future_development_score", 0.5)
         area_confidence = area_data.get("area_confidence")
@@ -200,6 +214,7 @@ class ForecastingService:
         self,
         region_id: str,
         current_value: float,
+        country_code: Optional[str] = None,
         horizons_months: List[int] = [12, 36, 60],
     ) -> List[ValuationProjection]:
         if self.forecast_mode == "tft":
@@ -208,7 +223,17 @@ class ForecastingService:
             results = self.tft.predict(region_id=region_id, current_value=current_value)
             return self._tft_to_projections(results, horizons_months, metric="price", scenario_name="tft")
 
-        df = self._load_time_series(region_id)
+        df = self._load_time_series(region_id, country_code)
+        scenario_name = f"{self.index_source}_drift"
+        if df.empty and region_id != "all":
+            df = self._load_time_series("all", country_code, area_region_id=region_id)
+            if not df.empty:
+                scenario_name = f"{scenario_name}_fallback_all"
+                logger.warning(
+                    "forecast_index_fallback_all",
+                    region_id=region_id,
+                    index_source=self.index_source,
+                )
         if df.empty:
             raise ValueError("missing_price_index")
         drift, vol = self._compute_regime(df)
@@ -218,30 +243,36 @@ class ForecastingService:
             vol=vol,
             horizons_months=horizons_months,
             metric="price",
-            scenario_name=f"{self.index_source}_drift",
+            scenario_name=scenario_name,
         )
 
     def forecast_rent(
         self,
         region_id: str,
         current_monthly_rent: float,
+        country_code: Optional[str] = None,
         horizons_months: List[int] = [12, 36, 60],
     ) -> List[ValuationProjection]:
         if self.forecast_mode == "tft":
             raise ValueError("tft_rent_not_supported")
-        df = self._load_rent_time_series(region_id)
+        df = self._load_rent_time_series(region_id, country_code)
+        scenario = "rent_drift"
+        if df.empty and region_id != "all":
+            df = self._load_rent_time_series("all", country_code, area_region_id=region_id)
+            if not df.empty:
+                scenario = "rent_drift_fallback_all"
+                logger.warning("rent_index_fallback_all", region_id=region_id)
         if df.empty:
             raise ValueError("missing_rent_index")
         try:
             drift, vol = self._compute_regime(df)
-            scenario = "rent_drift"
         except ValueError as exc:
             if not self.allow_short_history:
                 raise
             logger.warning("rent_forecast_fallback", error=str(exc), available=len(df))
             drift = 0.0
             vol = 0.01
-            scenario = "rent_drift_fallback"
+            scenario = f"{scenario}_fallback"
         return self._project(
             current_value=current_monthly_rent,
             drift=drift,

@@ -1,5 +1,5 @@
 import argparse
-from typing import Optional
+from typing import Optional, List
 
 import structlog
 
@@ -68,7 +68,16 @@ def backfill_valuations(
                 continue
 
             listing = db_listing_to_canonical(db_item)
-            analysis = valuation.evaluate_deal(listing, comps=None)
+            try:
+                analysis = valuation.evaluate_deal(listing, comps=None)
+            except Exception as exc:
+                skipped += 1
+                logger.warning(
+                    "backfill_failed",
+                    listing_id=db_item.id,
+                    error=str(exc),
+                )
+                continue
             persister.save_valuation(db_item.id, analysis)
 
             processed += 1

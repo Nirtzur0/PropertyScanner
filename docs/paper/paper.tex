@@ -10,7 +10,7 @@
 \newcommand{\softmax}{\mathrm{softmax}}
 \newcommand{\diag}{\mathrm{diag}}
 
-\title{PropertyScanner: Cross-Attention Comp Fusion for Market Valuation}
+\title{PropertyScanner: Retrieval-Augmented Log-Residual Valuation with Cross-Attention}
 \author{}
 \date{}
 
@@ -19,172 +19,235 @@
 
 \begin{abstract}
 This note documents the valuation model and evaluation protocol used in
-PropertyScanner. I focus on the mathematics that connects market reasoning with
-modern representation learning: comparable retrieval, time-adjusted anchors,
-cross-attention fusion, quantile regression, and conformal calibration. The
-goal is not only prediction but a defensible interval around fair value.
-Throughout, I adopt notation that keeps the economics visible, because in my
-experience in financial modeling, a model without an anchor to market structure
-is a model that drifts.
+PropertyScanner as of the current system. The pipeline is local-first and
+market-anchored: we retrieve time-safe comparables, adjust them with hedonic
+and rent indices, build a robust comp baseline, and predict log-residual
+quantiles via a cross-attention fusion model. The model outputs are then
+blended with income signals and area intelligence, and optionally calibrated
+with asymmetric conformal prediction. The goal is to produce a defensible
+interval around fair value, not just a point estimate.
 \end{abstract}
 
 \section{Setup and Notation}
-Each listing $i$ has observed price $y_i > 0$ and three modalities:
-tabular features $x_i \in \R^{d_x}$, text embedding $t_i \in \R^{d_t}$, and
-optional image embedding $v_i \in \R^{d_v}$.
-In the current implementation, $d_x = 11$, $d_t = 384$, $d_v = 512$.
+Each listing $i$ has an observed price $y_i > 0$, a listing type
+$\ell_i \in \{\text{sale}, \text{rent}\}$, and a timestamp $\tau_i$ (monthly).
+Features include tabular attributes $x_i \in \R^{d_x}$, text embeddings
+$t_i \in \R^{d_t}$, and optional image embeddings $v_i \in \R^{d_v}$.
+In the deployed model, $d_x = 11$, $d_t = 384$, and $d_v = 512$.
 The tabular vector includes location, size, floor, sentiment, and a
 price-per-sqm proxy; text includes title, description, and optionally
-vision-language descriptions.
+vision-language summaries.
 
-Given a target listing $0$, we retrieve $K$ comparables
+For a target listing $0$, we retrieve $K$ comparables
 $\mathcal{C} = \{1,\ldots,K\}$ with prices $y_j$ and features
-$(x_j,t_j,v_j)$.
-Let $r$ denote the region (city) of the target and let $m(i)$ denote the month
-of listing $i$.
-The overall pipeline is:
+$(x_j, t_j, v_j)$. Let $r$ denote the region (city) of the target.
+The high-level pipeline is:
 \[
 \text{retrieve comps} \rightarrow \text{time-adjust prices} \rightarrow
-\text{cross-attention fusion} \rightarrow \text{quantile outputs} \rightarrow
-\text{calibration} \rightarrow \text{evaluation}.
+\text{robust baseline} \rightarrow \text{cross-attention fusion} \rightarrow
+\text{quantile outputs} \rightarrow \text{income/area blend} \rightarrow
+\text{calibration and evaluation}.
 \]
 
 \section{Comparable Retrieval}
-Semantic retrieval uses dense text embeddings with a FAISS index, followed by
-structural filters. Let $e(\cdot)$ be the text encoder. A query vector
-$q = e(\text{title}_0 \oplus \text{desc}_0 \oplus \text{vlm}_0)$ is compared to
-candidate vectors by inner product (normalized cosine similarity).
-The candidate pool is then filtered by distance, property type, and size:
+We use dense text embeddings with a FAISS index. Let $e(\cdot)$ be the text
+encoder, and define the query vector
+$q = e(\text{title}_0 \oplus \text{desc}_0 \oplus \text{vlm}_0)$.
+Candidates are ranked by inner product (normalized cosine similarity), then
+filtered by structural and policy constraints:
 \begin{align}
 \text{dist}(j,0) &\leq R, \\
 \text{type}(j) &= \text{type}(0), \\
-1-\rho \leq \frac{\text{sqm}_j}{\text{sqm}_0} &\leq 1+\rho.
+1-\rho \leq \frac{\text{sqm}_j}{\text{sqm}_0} &\leq 1+\rho, \\
+\tau_j &\leq \tau_0.
 \end{align}
-This two-stage filter reflects a key valuation principle: similarity must be
-semantic and structural.
+This two-stage filter enforces semantic similarity and structural coherence.
+To avoid train/infer drift, the retriever metadata (encoder version and VLM
+policy) is fixed across runs, and comp IDs can be persisted for parity.
 
-\section{Hedonic Time Adjustment}
-Comparable prices are time-adjusted to the valuation date using a hedonic index.
-The index is estimated by a monthly regression
+\section{Time Normalization}
+Comparable prices are normalized to the target month using market indices.
+Let $I_{r,\ell}(\tau)$ be the monthly index for region $r$ and listing type
+$\ell$ (hedonic for sale, rent index for rent). The adjusted price is
 \begin{equation}
-\log P = \beta^\top f + \gamma_{\text{nh}} + \varepsilon,
+ y_j^{\ast} = y_j \cdot \frac{I_{r,\ell_0}(\tau_0)}{I_{r,\ell_j}(\tau_j)}.
 \end{equation}
-where $f$ contains size, bedrooms, bathrooms, elevator, and floor, and
-$\gamma_{\text{nh}}$ is a neighborhood fixed effect.
-Let $I_r(m)$ be the quality-adjusted price-per-sqm index for region $r$ at month
-$m$. For comp $j$ observed at month $m(j)$ and valued at month $m(0)$,
-\begin{equation}
-y_j^\ast = y_j \cdot \frac{I_r(m(0))}{I_r(m(j))}.
-\end{equation}
-This prevents leakage from temporal price drift and gives the model a
-current-market anchor.
+If indices are missing, the system falls back to the raw price rather than
+extrapolating. This keeps the anchor grounded in observed data.
 
-\section{Multimodal Encoding and Fusion}
+\section{Robust Comp Baseline}
+We form a robust baseline using a MAD-filtered weighted median. Let
+$\{y_j^{\ast}\}$ be the adjusted comp prices and $w_j$ be similarity or
+retriever weights. Define the median $m$ and median absolute deviation
+$\mathrm{MAD} = \mathrm{median}(|y_j^{\ast} - m|)$. We keep only comps with
+\begin{equation}
+|y_j^{\ast} - m| \leq 3\,\mathrm{MAD}.
+\end{equation}
+Weights are normalized, $\tilde{w}_j = w_j / \sum_k w_k$, and the baseline is
+the weighted median
+\begin{equation}
+ b = \mathrm{wmed}\left(\{y_j^{\ast}\}, \{\tilde{w}_j\}\right).
+\end{equation}
+This baseline is the primary anchor for pricing and prevents outliers from
+skewing the model.
+
+\section{Multimodal Encoding and Cross-Attention}
 Each modality is projected into a shared hidden dimension $d$:
 \begin{align}
-h_x &= \phi_x(W_x x + b_x), \\
-h_t &= W_t t, \\
-h_v &= W_v v, \\
-h &= \phi_f([h_x;h_t;h_v]),
+ h_x &= \phi_x(W_x x + b_x), \\
+ h_t &= W_t t, \\
+ h_v &= W_v v, \\
+ h &= \phi_f([h_x; h_t; h_v]),
 \end{align}
-with $d=64$ in the deployed model. The projection layers are shallow by design:
-they align features without erasing structure, a common failure mode in
-over-parameterized tabular fusion.
-
-For the target and its comps, define $h_0 \in \R^d$ and
-$H \in \R^{K \times d}$.
-Cross-attention uses the target as query and comps as keys and values:
+with $d = 64$ in the deployed model. For the target and its comps, define
+$h_0 \in \R^d$ and $H \in \R^{K \times d}$. Cross-attention uses the target as
+query and comps as keys/values:
 \begin{align}
-A &= \softmax\left(\frac{h_0 H^\top}{\sqrt{d}}\right) \in \R^{1 \times K}, \\
-z &= A H \in \R^{1 \times d}, \\
-r &= g(h_0 + z),
+ A &= \softmax\left(\frac{h_0 H^\top}{\sqrt{d}}\right) \in \R^{1 \times K}, \\
+ z &= A H \in \R^{1 \times d}, \\
+ r &= g(h_0 + z),
 \end{align}
-where $g(\cdot)$ is a small post-attention MLP.
-The attention weights $A$ also serve as interpretable comp weights.
+where $g(\cdot)$ is a small MLP. The attention weights $A$ provide an
+interpretable view of which comps drove the prediction.
 
-\section{Anchored Residual Prediction}
-From a finance perspective, the safest predictive strategy is to anchor to
-market evidence and learn residual adjustments. We form an attention-weighted
-price anchor
+\section{Log-Residual Quantile Prediction}
+The model predicts log-residuals over the comp baseline. Define the target
+adjusted price $y_0^{\ast}$ and residual
 \begin{equation}
-a = \sum_{j=1}^K A_j y_j^\ast,
+ \rho = \log y_0^{\ast} - \log b.
 \end{equation}
-and a scale term
+For quantile $q \in \{0.1, 0.5, 0.9\}$, the model outputs $\hat{\rho}_q$ and
+price quantiles are reconstructed as
 \begin{equation}
-s = \mathrm{std}(y_1^\ast,\ldots,y_K^\ast).
+ \hat{y}_q = \exp(\log b + \hat{\rho}_q).
 \end{equation}
-For quantile $q \in \{0.1,0.5,0.9\}$, the model predicts a residual
-${u}_q = w_q^\top r + b_q$, and outputs
+When fusion fails, the system falls back to the robust baseline with a
+dispersion-based interval. This keeps valuations available while preserving a
+clear provenance of the estimate.
+
+\section{Auxiliary Heads (Rent and Time-to-Sell)}
+The fusion model also emits auxiliary quantiles for rent and time-to-sell as
+supporting signals. The rent and time heads output residuals $\hat{u}_q$.
+Let the attention anchor be
+$a = \sum_{j=1}^K A_j y_j^{\ast}$. The rent anchor is
 \begin{equation}
-\hat{y}_q = a + s \cdot {u}_q.
+ r_0 = 0.004\,a,
 \end{equation}
-This simple decomposition keeps the model honest: it can only move predictions
-relative to what the market comps support, and the residual scale adapts to
-local dispersion.
+with rent quantiles modeled as
+\begin{equation}
+ \hat{r}_q = r_0 + \sigma_r \hat{u}_q, \quad \sigma_r = 0.2 r_0.
+\end{equation}
+For time-to-sell, the anchor is the mean days-on-market of comps (or 90 days
+when unavailable), with
+\begin{equation}
+ \hat{d}_q = d_0 + 30\,\hat{u}_q.
+\end{equation}
+In the current pipeline these heads are not trained with explicit labels, so
+they are treated as optional signals rather than core valuation drivers.
 
 \section{Training Objective}
-We use quantile regression with the pinball loss. For a single target with
-prediction $\hat{y}_q$:
+We train on residual targets rather than raw prices. For listing $i$, the
+ground-truth residual is
+\[
+\rho_i = \log y_i^{\ast} - \log b_i,
+\]
+and the model predicts residual quantiles $\hat{\rho}_{i,q}$. We use weighted
+quantile regression with the pinball loss:
 \begin{equation}
-\ell_q(y,\hat{y}_q) =
-\max\left(q(y-\hat{y}_q), (q-1)(y-\hat{y}_q)\right).
+\ell_q(\rho_i, \hat{\rho}_{i,q}) = \max\left(q(\rho_i - \hat{\rho}_{i,q}), (q-1)(\rho_i - \hat{\rho}_{i,q})\right).
 \end{equation}
-The training loss is the mean across the three quantiles:
+The total loss with label weights $\omega_i$ is
 \begin{equation}
-\mathcal{L} = \frac{1}{3} \sum_{q \in \{0.1,0.5,0.9\}} \ell_q(y,\hat{y}_q).
+\mathcal{L} = \frac{1}{N} \sum_{i=1}^N \omega_i \cdot
+\frac{1}{3} \sum_{q \in \{0.1,0.5,0.9\}} \ell_q(\rho_i, \hat{\rho}_{i,q}).
 \end{equation}
-Only price quantiles are optimized in the current training loop; other heads
-are deployed but not yet trained on explicit labels.
-Optimization uses AdamW with gradient clipping and early stopping.
-The dataset samples comps using a geo-radius and size filter, and can be
-evaluated using a standard holdout split or K-fold cross validation.
+Weights reflect label reliability (sold $>$ rent ask $>$ sale ask). Training
+uses AdamW with gradient clipping and early stopping. Data splits can be
+standard holdout or time+geo splits to reduce leakage.
+
+\section{Income Blend and Area Adjustment}
+After fusion, we blend the model value with an income-based value and apply
+area intelligence adjustments.
+
+\paragraph{Income value.}
+Let $\hat{r}$ be the monthly rent estimate from rent comps or a local yield
+distribution. Let $y_m$ be the local market yield (p50). The income value is
+\begin{equation}
+ v_{\text{inc}} = \frac{12\,\hat{r}}{y_m/100}.
+\end{equation}
+We cap the adjustment to avoid large deviations. Let comp coverage be
+$c = \min(1, n_{\text{rent}}/n_{\min})$ and rent uncertainty be
+$u_r \geq 0$. Define a variance factor
+\begin{equation}
+ \psi = \frac{1}{1 + 4 u_r^2},
+\end{equation}
+and blend weight $\alpha = \alpha_{\max} c \psi$, with
+$\alpha = 0$ if $\alpha < \alpha_{\min}$. The blended value is
+\begin{equation}
+ v = (1-\alpha) v_{\text{model}} + \alpha v_{\text{inc}},
+\end{equation}
+with uncertainty scaled by $(1 + \alpha\,\min(u_r, 0.5))$.
+
+\paragraph{Area adjustment.}
+Let area sentiment $s \in [0,1]$, development score $d \in [0,1]$, and
+confidence $\kappa \in [0,1]$. We compute
+\begin{equation}
+ \delta = \kappa \cdot \mathrm{clip}\left((s-0.5) w_s + (d-0.5) w_d, -c_a, c_a\right),
+\end{equation}
+then adjust
+\begin{equation}
+ v' = v (1 + \delta), \quad u' = u (1 + |\delta|).
+\end{equation}
+This keeps the adjustment bounded and scales it by data credibility.
 
 \section{Uncertainty and Calibration}
-The raw uncertainty proxy is the relative half-width:
+Raw uncertainty is the relative half-width:
 \begin{equation}
-u = \frac{\hat{y}_{0.9} - \hat{y}_{0.1}}{2\hat{y}_{0.5}}.
+ u = \frac{\hat{y}_{0.9} - \hat{y}_{0.1}}{2 \hat{y}_{0.5}}.
 \end{equation}
-Intervals are then calibrated by adaptive conformal prediction per horizon.
-Given residuals
+Intervals can be calibrated with asymmetric conformal prediction. Given
+residuals
 \begin{align}
-e^- &= \max(0, \hat{y}_{0.1} - y), \\
-e^+ &= \max(0, y - \hat{y}_{0.9}),
+ e^- &= \max(0, \hat{y}_{0.1} - y), \\
+ e^+ &= \max(0, y - \hat{y}_{0.9}),
 \end{align}
 we compute quantiles $c^- = Q_{1-\alpha}(e^-)$ and
-$c^+ = Q_{1-\alpha}(e^+)$ on a rolling window, and widen the interval:
+$c^+ = Q_{1-\alpha}(e^+)$ over a rolling window (bucketed by region, property
+type, and price band), and widen the interval:
 \begin{equation}
-\tilde{y}_{0.1} = \hat{y}_{0.1} - c^-, \quad
-\tilde{y}_{0.9} = \hat{y}_{0.9} + c^+.
+ \tilde{y}_{0.1} = \hat{y}_{0.1} - c^-, \quad
+ \tilde{y}_{0.9} = \hat{y}_{0.9} + c^+.
 \end{equation}
-This asymmetric calibration matches market intuition: downside and upside errors
+Asymmetric calibration matches market intuition: downside and upside errors
 behave differently in illiquid markets.
 
 \section{Evaluation Protocol}
-Evaluation is organized around two axes: point accuracy and interval quality.
-Point accuracy uses the median prediction $\hat{y}_{0.5}$:
+Evaluation targets both accuracy and risk communication. Point accuracy uses
+$\hat{y}_{0.5}$:
 \begin{align}
-\mathrm{MAE} &= \frac{1}{N}\sum_{i=1}^N |y_i - \hat{y}_{i,0.5}|, \\
-\mathrm{MAPE} &= \frac{100}{N}\sum_{i=1}^N
-\frac{|y_i - \hat{y}_{i,0.5}|}{\max(y_i,1)}, \\
+\mathrm{MAE} &= \frac{1}{N} \sum_{i=1}^N |y_i - \hat{y}_{i,0.5}|, \\
+\mathrm{MAPE} &= \frac{100}{N} \sum_{i=1}^N
+\frac{|y_i - \hat{y}_{i,0.5}|}{\max(y_i, 1)}, \\
 \mathrm{MedAE} &= \mathrm{median}_i |y_i - \hat{y}_{i,0.5}|.
 \end{align}
-Interval quality is evaluated by empirical coverage and width:
+Interval quality is evaluated by coverage and width:
 \begin{align}
 \mathrm{Coverage} &= \frac{1}{N} \sum_{i=1}^N
 \mathbf{1}\{\tilde{y}_{i,0.1} \le y_i \le \tilde{y}_{i,0.9}\}, \\
 \mathrm{Width} &= \frac{1}{N} \sum_{i=1}^N
 (\tilde{y}_{i,0.9} - \tilde{y}_{i,0.1}).
 \end{align}
-These metrics align with the deployment goal: the model must be accurate enough
-to rank opportunities, and calibrated enough to communicate risk.
+To reduce leakage, we emphasize time+geo splits and enforce time-safe
+comparable selection. Retriever policy is frozen between training and
+inference, and comp IDs can be persisted to ensure parity.
 
 \section{Closing Perspective}
-The model is intentionally modest in parameter count but precise in market
-structure. From long experience in financial modeling, the hardest part is not
-learning a price function; it is respecting how the market sets prices today,
-and how uncertainty should be priced into decisions. Cross-attention delivers a
-modern inductive bias for comp reasoning, and conformal calibration turns that
-reasoning into intervals that survive regime shifts. That combination is the
-core engineering thesis of PropertyScanner.
+The model is intentionally modest in parameter count but explicit about market
+structure. Retrieval ensures similarity, hedonic normalization keeps prices in
+the correct regime, and log-residual prediction enforces anchoring to comps.
+The income blend and area adjustment add domain intelligence on top of the
+learned model, while conformal calibration turns predictions into intervals
+that are defensible in practice. That combination is the core engineering
+thesis of PropertyScanner.
 
 \end{document}

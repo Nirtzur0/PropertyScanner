@@ -28,6 +28,7 @@ valuation:
   conformal_alpha: 0.1
   conformal_window: 50
   calibration_path: ${paths.calibration_path}
+  bootstrap_min_uncertainty_pct: 0.08
 
   income_value_weight_max: 0.35
   income_value_weight_min: 0.0

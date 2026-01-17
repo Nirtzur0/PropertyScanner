@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -91,6 +91,32 @@ class SourcesConfig(BaseConfigModel):
     sources: List[SourceConfig] = Field(default_factory=list)
 
 
+class RegistrySourceConfig(BaseConfigModel):
+    provider_id: str
+    country_code: str
+    enabled: bool = True
+    kind: str = "csv"
+    csv_paths: List[str] = Field(default_factory=list)
+    csv_urls: List[str] = Field(default_factory=list)
+    delimiter: str = ","
+    encoding: str = "utf-8"
+    date_format: Optional[str] = None
+    region_column: str = "region"
+    date_column: str = "period_date"
+    txn_column: Optional[str] = "txn_count"
+    mortgage_column: Optional[str] = "mortgage_count"
+    price_column: Optional[str] = "price_sqm"
+    price_yoy_column: Optional[str] = None
+    price_qoq_column: Optional[str] = None
+
+
+class RegistryConfig(BaseConfigModel):
+    sources: List[RegistrySourceConfig] = Field(default_factory=list)
+    include_country_prefix: bool = False
+    region_aliases: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+    provider_region_aliases: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+
+
 class AgentDefaultsConfig(BaseConfigModel):
     timeout_seconds: int = 300
     retries: int = 3
@@ -104,6 +130,7 @@ class DiscoveryAgentConfig(BaseConfigModel):
 class CrawlerAgentConfig(BaseConfigModel):
     download_delay: float = 2.0
     user_agent_rotation: bool = False
+    headless: bool = True
 
 
 class EnrichmentProvidersConfig(BaseConfigModel):
@@ -183,6 +210,7 @@ class ValuationConfig(BaseConfigModel):
     conformal_alpha: float = 0.1
     conformal_window: int = 50
     calibration_path: str = str(CALIBRATION_PATH)
+    bootstrap_min_uncertainty_pct: float = 0.08
 
     income_value_weight_max: float = 0.35
     income_value_weight_min: float = 0.0
@@ -231,6 +259,7 @@ class ImageSelectorConfig(BaseConfigModel):
 class AppConfig(BaseConfigModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
+    registry: RegistryConfig = Field(default_factory=RegistryConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     valuation: ValuationConfig = Field(default_factory=ValuationConfig)

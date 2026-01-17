@@ -127,6 +127,7 @@ class Harvester:
         max_workers: int = MAX_WORKERS,
         run_vlm: bool = True,
         quality_gate_config: Optional[QualityGateConfig] = None,
+        headless: Optional[bool] = None,
         *,
         app_config: Optional[AppConfig] = None,
         paths: Optional[PathsConfig] = None,
@@ -143,6 +144,10 @@ class Harvester:
         self.process_batch_size = max(1, int(process_batch_size))
         self.max_workers = max(1, int(max_workers))
         self.run_vlm = bool(run_vlm)
+        config_headless = True
+        if app_config is not None:
+            config_headless = bool(app_config.agents.crawler.headless)
+        self.headless = config_headless if headless is None else bool(headless)
         self.paths = paths or (app_config.paths if app_config is not None else PathsConfig())
         if db_path is None:
             if app_config is not None:
@@ -288,7 +293,7 @@ class Harvester:
         )
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True) # Set False to verify if needed
+            browser = p.chromium.launch(headless=self.headless)
             page = browser.new_page()
             stealth = Stealth()
             stealth.apply_stealth_sync(page)
@@ -389,7 +394,7 @@ class Harvester:
                     return {"status": "skipped", "url": url}
 
                 with sync_playwright() as p:
-                    browser = p.chromium.launch(headless=True)
+                    browser = p.chromium.launch(headless=self.headless)
                     page = browser.new_page()
                     stealth = Stealth()
                     stealth.apply_stealth_sync(page)
@@ -542,7 +547,7 @@ class Harvester:
             pending: List[str] = []
 
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)  # Set False to verify if needed
+                browser = p.chromium.launch(headless=self.headless)
                 page = browser.new_page()
                 stealth = Stealth()
                 stealth.apply_stealth_sync(page)

@@ -13,6 +13,7 @@ agents:
   crawler:
     download_delay: 2.0  # systematic delay between pages
     user_agent_rotation: false # Keep consistent for politeness
+    headless: true # Set false to run headful (useful with a virtual display)
 
   enrichment:
     providers:

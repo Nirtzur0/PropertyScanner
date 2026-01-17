@@ -80,11 +80,11 @@ class RegistryMetricsRepository(RepositoryBase):
                 price_sqm_yoy,
                 price_sqm_qoq
             FROM {self.table_name}
-            WHERE region_id = :region_id
+            WHERE LOWER(region_id) = :region_id
             ORDER BY period_date ASC
             """
         )
-        return pd.read_sql(query, self.engine, params={"region_id": region_id})
+        return pd.read_sql(query, self.engine, params={"region_id": region_id.lower().strip()})
 
     def fetch_latest_period_date(self, region_id: str) -> Optional[pd.Timestamp]:
         query = text(

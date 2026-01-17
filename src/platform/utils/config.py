@@ -25,10 +25,17 @@ def _ensure_hydra_initialized(config_dir: str) -> None:
 def _compose_config(config_dir: str, config_name: str, overrides: Sequence[str]) -> Dict[str, Any]:
     _ensure_hydra_initialized(config_dir)
     cfg = compose(config_name=config_name, overrides=list(overrides), return_hydra_config=True)
+    if OmegaConf.select(cfg, "hydra.job.num", default=None, throw_on_missing=False) is None:
+        OmegaConf.update(cfg, "hydra.job.num", 0, force_add=True)
+    if OmegaConf.select(cfg, "hydra.job.id", default=None, throw_on_missing=False) is None:
+        OmegaConf.update(cfg, "hydra.job.id", "local", force_add=True)
+    if OmegaConf.select(cfg, "hydra.runtime.output_dir", default=None, throw_on_missing=False) is None:
+        OmegaConf.update(cfg, "hydra.runtime.output_dir", str(Path(config_dir).resolve()), force_add=True)
     HydraConfig().set_config(cfg)
     data = OmegaConf.to_container(cfg, resolve=True)
     if not isinstance(data, dict):
         raise ValueError("config_invalid")
+    data.pop("hydra", None)
     return data
 
 
