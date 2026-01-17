@@ -565,6 +565,15 @@ def _build_scorecard_items(row) -> list[dict]:
         elif yield_est <= 3.0:
             add_item(False, "Yield", f"{yield_est:.2f}% gross yield")
 
+    price_to_rent = _safe_num(row.get("Price-to-Rent (yrs)"), None)
+    market_pr = _safe_num(row.get("Market P/R (yrs)"), None)
+    if price_to_rent is not None and market_pr is not None:
+        gap = price_to_rent - market_pr
+        if gap <= -2:
+            add_item(True, "Price/Rent", f"{price_to_rent:.1f}y vs {market_pr:.1f}y market")
+        elif gap >= 2:
+            add_item(False, "Price/Rent", f"{price_to_rent:.1f}y vs {market_pr:.1f}y market")
+
     score = _safe_num(row.get("Deal Score"), None)
     if score is not None:
         if score >= 0.7:
@@ -633,6 +642,15 @@ def _build_swot(row, reasons: list[str], thesis: object) -> dict:
             _append_unique(strengths, f"Yield {yield_est:.2f}% (+{spread:.2f}pp vs market)")
         elif spread <= -0.5:
             _append_unique(weaknesses, f"Yield {yield_est:.2f}% ({spread:.2f}pp vs market)")
+
+    price_to_rent = _safe_num(row.get("Price-to-Rent (yrs)"), None)
+    market_pr = _safe_num(row.get("Market P/R (yrs)"), None)
+    if price_to_rent is not None and market_pr is not None:
+        gap = price_to_rent - market_pr
+        if gap <= -2:
+            _append_unique(strengths, f"Price-to-rent {price_to_rent:.1f}y vs {market_pr:.1f}y market")
+        elif gap >= 2:
+            _append_unique(weaknesses, f"Price-to-rent {price_to_rent:.1f}y vs {market_pr:.1f}y market")
 
     score = _safe_num(row.get("Deal Score"), None)
     if score is not None:
@@ -1038,6 +1056,8 @@ try:
         liquidity = signals.get("liquidity")
         catchup = signals.get("catchup")
         market_yield = signals.get("market_yield")
+        price_to_rent_years = _safe_num(signals.get("price_to_rent_years"), None)
+        market_price_to_rent_years = _safe_num(signals.get("market_price_to_rent_years"), None)
         area_sentiment = signals.get("area_sentiment")
         area_development = signals.get("area_development")
 
@@ -1057,9 +1077,13 @@ try:
             value_delta = analysis.fair_value_estimate - listing.price
             value_delta_pct = value_delta / listing.price
 
-        projected_value_12m = None
-        price_return_12m_pct = None
-        if listing.price and listing.price > 0:
+        projected_value_12m = _safe_num(signals.get("projected_value_12m"), None)
+        price_return_12m_pct = _safe_num(signals.get("price_return_12m_pct"), None)
+        if price_return_12m_pct is None and projected_value_12m is not None and listing.price and listing.price > 0:
+            price_return_12m_pct = (
+                (projected_value_12m - listing.price) / listing.price
+            ) * 100
+        if price_return_12m_pct is None and listing.price and listing.price > 0:
             proj_12m = _select_projection(getattr(analysis, "projections", []), 12)
             if proj_12m and getattr(proj_12m, "predicted_value", None):
                 projected_value_12m = float(proj_12m.predicted_value)
@@ -1069,8 +1093,8 @@ try:
             elif value_delta_pct is not None:
                 price_return_12m_pct = value_delta_pct * 100
 
-        total_return_12m_pct = None
-        if price_return_12m_pct is not None or yield_est is not None:
+        total_return_12m_pct = _safe_num(signals.get("total_return_12m_pct"), None)
+        if total_return_12m_pct is None and (price_return_12m_pct is not None or yield_est is not None):
             total_return_12m_pct = (price_return_12m_pct or 0.0) + (yield_est or 0.0)
 
         image_urls = [str(url) for url in listing.image_urls] if listing.image_urls else []
@@ -1095,6 +1119,8 @@ try:
                 "Rent Est": rent_est,
                 "Yield %": yield_est,
                 "Market Yield %": market_yield,
+                "Price-to-Rent (yrs)": price_to_rent_years,
+                "Market P/R (yrs)": market_price_to_rent_years,
                 "Momentum %": (momentum * 100) if momentum is not None else None,
                 "Liquidity": liquidity,
                 "Catchup": catchup,
@@ -1149,6 +1175,8 @@ for col in [
     "Area Sentiment",
     "Price Return 12m %",
     "Total Return 12m %",
+    "Price-to-Rent (yrs)",
+    "Market P/R (yrs)",
 ]:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -1863,13 +1891,20 @@ with left_col:
                 )
                 f3.metric("Deal Score", f"{item.get('Deal Score'):.2f}")
 
-                f4, f5, f6, f7 = st.columns(4)
+                f4, f5, f6, f7, f8 = st.columns(5)
                 f4.metric("Est. Rent", f"{item.get('Rent Est'):,.0f} €")
                 f5.metric("Gross Yield", f"{item.get('Yield %'):.2f}%")
                 f6.metric("Market Yield", f"{item.get('Market Yield %'):.2f}%")
+                price_to_rent = _safe_num(item.get("Price-to-Rent (yrs)"), None)
+                market_pr = _safe_num(item.get("Market P/R (yrs)"), None)
+                pr_label = f"{price_to_rent:.1f}y" if price_to_rent is not None else "n/a"
+                pr_delta = None
+                if price_to_rent is not None and market_pr is not None:
+                    pr_delta = f"{price_to_rent - market_pr:+.1f}y vs market"
+                f7.metric("Price/Rent", pr_label, delta=pr_delta)
                 total_return = _safe_num(item.get("Total Return 12m %"), None)
                 total_return_label = f"{total_return:+.1f}%" if total_return is not None else "n/a"
-                f7.metric("Return 12m", total_return_label)
+                f8.metric("Return 12m", total_return_label)
 
                 scorecard_items = _build_scorecard_items(item)
                 st.markdown("### Scorecard")
@@ -1996,6 +2031,12 @@ with left_col:
                         if yield_est is not None and market_yield is not None:
                             spread = yield_est - market_yield
                             st.caption(f"Yield spread: {spread:+.2f}pp")
+                        price_to_rent = _safe_num(item.get("Price-to-Rent (yrs)"), None)
+                        market_pr = _safe_num(item.get("Market P/R (yrs)"), None)
+                        if price_to_rent is not None and market_pr is not None:
+                            st.caption(f"Price-to-rent: {price_to_rent:.1f}y vs {market_pr:.1f}y market")
+                        elif price_to_rent is not None:
+                            st.caption(f"Price-to-rent: {price_to_rent:.1f}y")
                     else:
                         st.caption("Yield signals aren't available yet.")
 

@@ -574,11 +574,11 @@ class ValuationService:
             # =====================================================================
 
             try:
-                rent_est, rent_uncertainty, rent_comps = self._compute_rental_value(
+                rent_est, rent_uncertainty, rent_comps, rent_meta = self._compute_rental_value(
                     listing, region_id, valuation_date, tracer
                 )
             except ValueError as exc:
-                rent_est, rent_uncertainty, rent_comps = self._fallback_rent_estimate(
+                rent_est, rent_uncertainty, rent_comps, rent_meta = self._fallback_rent_estimate(
                     listing=listing,
                     fair_value=fair_value,
                     reason=str(exc),
@@ -586,7 +586,11 @@ class ValuationService:
                     valuation_date=valuation_date,
                     tracer=tracer,
                 )
+            rent_source = rent_meta.get("rent_source") if rent_meta else None
+            if rent_source and rent_source != "rent_comps":
                 extra_flags.append("rent_fallback")
+                if rent_meta.get("rent_source_circular"):
+                    extra_flags.append("rent_fallback_circular")
             if fair_value <= 0:
                 raise ValueError("invalid_fair_value")
             rental_yield = (rent_est * 12 / fair_value * 100)
@@ -685,6 +689,19 @@ class ValuationService:
                     flags.append("missing_yield_projections")
             else:
                 yield_projections = []
+
+            pricing_signals = self._build_pricing_signals(
+                listing=listing,
+                fair_value=fair_value,
+                rent_est=rent_est,
+                rental_yield=rental_yield,
+                market_signals=market_signals,
+                projections=projections,
+                rent_projections=rent_projections,
+                yield_projections=yield_projections,
+            )
+            if pricing_signals:
+                market_signals = {**market_signals, **pricing_signals}
             
             # =====================================================================
             # STAGE 5: MARKET SIGNALS
@@ -1250,6 +1267,82 @@ class ValuationService:
 
         return out
 
+    @staticmethod
+    def _select_projection(
+        projections: List[ValuationProjection],
+        target_months: int,
+    ) -> Optional[ValuationProjection]:
+        if not projections:
+            return None
+        exact = [p for p in projections if getattr(p, "months_future", None) == target_months]
+        if exact:
+            return exact[0]
+        return min(
+            projections,
+            key=lambda p: abs(getattr(p, "months_future", target_months) - target_months),
+        )
+
+    def _build_pricing_signals(
+        self,
+        *,
+        listing: CanonicalListing,
+        fair_value: float,
+        rent_est: float,
+        rental_yield: Optional[float],
+        market_signals: Dict[str, float],
+        projections: List[ValuationProjection],
+        rent_projections: List[ValuationProjection],
+        yield_projections: List[ValuationProjection],
+    ) -> Dict[str, float]:
+        signals: Dict[str, float] = {}
+
+        price_basis = listing.price if listing.price and listing.price > 0 else fair_value
+        annual_rent = rent_est * 12 if rent_est and rent_est > 0 else None
+        if annual_rent:
+            signals["price_to_rent_years"] = float(price_basis / annual_rent)
+            if fair_value > 0:
+                signals["value_to_rent_years"] = float(fair_value / annual_rent)
+
+        market_yield = market_signals.get("market_yield")
+        if market_yield and market_yield > 0:
+            signals["market_price_to_rent_years"] = float(100.0 / market_yield)
+            if rental_yield is not None:
+                signals["yield_spread_pp"] = float(rental_yield - market_yield)
+            if signals.get("price_to_rent_years"):
+                signals["price_to_rent_gap_years"] = float(
+                    signals["price_to_rent_years"] - signals["market_price_to_rent_years"]
+                )
+
+        proj_12m = self._select_projection(projections, 12)
+        rent_proj_12m = self._select_projection(rent_projections, 12)
+        yield_proj_12m = self._select_projection(yield_projections, 12)
+
+        if proj_12m and proj_12m.predicted_value > 0:
+            projected_value = float(proj_12m.predicted_value)
+            signals["projected_value_12m"] = projected_value
+            if price_basis > 0:
+                signals["price_return_12m_pct"] = float(
+                    (projected_value - price_basis) / price_basis * 100
+                )
+            if fair_value > 0:
+                signals["fair_value_return_12m_pct"] = float(
+                    (projected_value - fair_value) / fair_value * 100
+                )
+
+        if rent_proj_12m and rent_proj_12m.predicted_value > 0:
+            signals["projected_rent_12m"] = float(rent_proj_12m.predicted_value)
+
+        if yield_proj_12m and yield_proj_12m.predicted_value > 0:
+            signals["projected_yield_12m_pct"] = float(yield_proj_12m.predicted_value)
+
+        base_yield = signals.get("projected_yield_12m_pct")
+        if base_yield is None and rental_yield is not None:
+            base_yield = float(rental_yield)
+        if "price_return_12m_pct" in signals and base_yield is not None:
+            signals["total_return_12m_pct"] = float(signals["price_return_12m_pct"] + base_yield)
+
+        return signals
+
     def update_calibration(
         self,
         listing: CanonicalListing,
@@ -1479,16 +1572,36 @@ class ValuationService:
         region_id: str,
         valuation_date: datetime,
         tracer: Any = None,
-    ) -> Tuple[float, float, List[CanonicalListing]]:
-        fallback_rent = getattr(listing, "estimated_rent", None)
-        fallback_source = "estimated_rent"
+    ) -> Tuple[float, float, List[CanonicalListing], Dict[str, Any]]:
+        fallback_rent = None
+        fallback_source = None
+        fallback_circular = False
         fallback_uncertainty = float(self.config.rent_fallback_uncertainty)
+        if listing.surface_area_sqm and listing.surface_area_sqm > 0:
+            try:
+                rent_index = self._get_market_index_value(
+                    region_id,
+                    valuation_date.strftime("%Y-%m"),
+                    "rent_index_sqm",
+                )
+            except ValueError:
+                rent_index = None
+            if rent_index and rent_index > 0:
+                fallback_rent = rent_index * listing.surface_area_sqm
+                fallback_source = "rent_index"
+
+        if not fallback_rent or fallback_rent <= 0:
+            fallback_rent = getattr(listing, "estimated_rent", None)
+            if fallback_rent and fallback_rent > 0:
+                fallback_source = "estimated_rent"
+
         if not fallback_rent or fallback_rent <= 0:
             gross_yield = getattr(listing, "gross_yield", None)
             price_basis = listing.price if listing.price and listing.price > 0 else fair_value
             if gross_yield and gross_yield > 0 and price_basis > 0:
                 fallback_rent = price_basis * (gross_yield / 100.0) / 12.0
                 fallback_source = "gross_yield"
+                fallback_circular = True
 
         if not fallback_rent or fallback_rent <= 0:
             price_basis = listing.price if listing.price and listing.price > 0 else fair_value
@@ -1497,21 +1610,28 @@ class ValuationService:
             if local_yield and local_yield > 0 and price_basis > 0:
                 fallback_rent = price_basis * (local_yield / 100.0) / 12.0
                 fallback_source = "local_yield_distribution"
+                fallback_circular = True
                 yield_std = yield_stats.get("yield_std")
                 if yield_std and local_yield > 0:
                     fallback_uncertainty = max(fallback_uncertainty, float(yield_std) / float(local_yield))
             else:
                 fallback_rent = price_basis * (self.config.fallback_yield_pct / 100.0) / 12.0
                 fallback_source = "default_yield"
+                fallback_circular = True
 
         if tracer:
             tracer.log("rental_fallback", {
                 "rent_est": float(fallback_rent),
                 "reason": reason,
                 "source": fallback_source,
+                "source_circular": fallback_circular,
             })
 
-        return float(fallback_rent), fallback_uncertainty, []
+        meta = {
+            "rent_source": fallback_source or "unknown",
+            "rent_source_circular": fallback_circular,
+        }
+        return float(fallback_rent), fallback_uncertainty, [], meta
 
     def _fallback_market_signals(
         self,
@@ -1824,7 +1944,7 @@ class ValuationService:
         region_id: str,
         valuation_date: datetime,
         country_code: Optional[str],
-    ) -> Tuple[bool, Dict[str, float], Dict[str, float]]:
+    ) -> Tuple[bool, Dict[str, float], Dict[str, Any]]:
         eri_signals = self.eri.get_signals(
             region_id,
             valuation_date,
@@ -1833,9 +1953,20 @@ class ValuationService:
         if not eri_signals:
             return False, {}, {}
 
+        if eri_signals.get("proxy_used"):
+            return False, {"eri_proxy_used": True}, eri_signals
+
+        effective_date = valuation_date
+        effective_str = eri_signals.get("effective_date")
+        if effective_str:
+            try:
+                effective_date = datetime.fromisoformat(str(effective_str))
+            except ValueError:
+                effective_date = valuation_date
+
         eri_yoy = eri_signals.get("registral_price_sqm_change")
-        hedonic_yoy = self._get_index_yoy("hedonic_indices", "hedonic_index_sqm", region_id, valuation_date)
-        market_yoy = self._get_index_yoy("market_indices", "price_index_sqm", region_id, valuation_date)
+        hedonic_yoy = self._get_index_yoy("hedonic_indices", "hedonic_index_sqm", region_id, effective_date)
+        market_yoy = self._get_index_yoy("market_indices", "price_index_sqm", region_id, effective_date)
 
         details: Dict[str, float] = {}
         disagree = False
@@ -1930,7 +2061,7 @@ class ValuationService:
         if not listing.location or not listing.location.city:
             raise ValueError("missing_location")
 
-        profile = self.analytics.analyze_listing(listing)
+        profile = self.analytics.analyze_listing(listing, include_eri=False)
         if not profile:
             raise ValueError("missing_market_profile")
         if getattr(profile, "zone_id", None) == "unknown":
@@ -2046,6 +2177,17 @@ class ValuationService:
         else:
             thesis += f"Yield {rental_yield:.1f}%. "
 
+        price_to_rent = market_signals.get("price_to_rent_years")
+        market_pr = market_signals.get("market_price_to_rent_years")
+        if price_to_rent is not None and market_pr is not None:
+            thesis += f"Price-to-rent {price_to_rent:.1f}y vs market {market_pr:.1f}y. "
+        elif price_to_rent is not None:
+            thesis += f"Price-to-rent {price_to_rent:.1f}y. "
+
+        total_return_12m = market_signals.get("total_return_12m_pct")
+        if total_return_12m is not None:
+            thesis += f"12m total return {total_return_12m:+.1f}%. "
+
         if momentum is not None and liquidity is not None:
             thesis += f"Momentum {momentum * 100:.1f}%/yr, liquidity {liquidity:.2f}. "
 
@@ -2074,12 +2216,12 @@ class ValuationService:
         region_id: str,
         valuation_date: datetime,
         tracer: Any = None
-    ) -> Tuple[float, float, List[CanonicalListing]]:
+    ) -> Tuple[float, float, List[CanonicalListing], Dict[str, Any]]:
         """
         Estimate rent using robust comparable rental listings.
 
         Returns:
-            (estimated_monthly_rent, uncertainty_pct, rental_comps_used)
+            (estimated_monthly_rent, uncertainty_pct, rental_comps_used, rent_meta)
         """
         if not listing.surface_area_sqm or listing.surface_area_sqm <= 0:
             raise ValueError("missing_surface_area_for_rent")
@@ -2087,20 +2229,41 @@ class ValuationService:
         try:
             rental_comps, similarity_by_id = self._retrieve_rent_comps(listing, as_of_date=valuation_date)
         except ValueError as exc:
-            fallback_rent = getattr(listing, "estimated_rent", None)
-            if not fallback_rent or fallback_rent <= 0:
+            fallback_rent = None
+            fallback_source = None
+            fallback_circular = False
+            try:
                 rent_index = self._get_market_index_value(
                     region_id,
                     valuation_date.strftime("%Y-%m"),
                     "rent_index_sqm"
                 )
-                if rent_index and rent_index > 0:
-                    fallback_rent = rent_index * listing.surface_area_sqm
+            except ValueError:
+                rent_index = None
+            if rent_index and rent_index > 0:
+                fallback_rent = rent_index * listing.surface_area_sqm
+                fallback_source = "rent_index"
+            if not fallback_rent or fallback_rent <= 0:
+                fallback_rent = getattr(listing, "estimated_rent", None)
+                if fallback_rent and fallback_rent > 0:
+                    fallback_source = "estimated_rent"
             if not fallback_rent or fallback_rent <= 0:
                 raise
             if tracer:
-                tracer.log("rental_fallback", {"rent_est": fallback_rent, "reason": str(exc)})
-            return float(fallback_rent), float(self.config.rent_fallback_uncertainty), []
+                tracer.log(
+                    "rental_fallback",
+                    {
+                        "rent_est": fallback_rent,
+                        "reason": str(exc),
+                        "source": fallback_source,
+                        "source_circular": fallback_circular,
+                    },
+                )
+            meta = {
+                "rent_source": fallback_source or "unknown",
+                "rent_source_circular": fallback_circular,
+            }
+            return float(fallback_rent), float(self.config.rent_fallback_uncertainty), [], meta
 
         adjusted_rents = []
         adjusted_weights = []
@@ -2168,4 +2331,8 @@ class ValuationService:
                 "avg_sqm": est_rent_sqm
             })
 
-        return est_rent, uncertainty, comps_used
+        meta = {
+            "rent_source": "rent_comps",
+            "rent_source_circular": False,
+        }
+        return est_rent, uncertainty, comps_used, meta

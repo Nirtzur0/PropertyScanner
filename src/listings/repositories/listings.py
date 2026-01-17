@@ -24,12 +24,24 @@ class ListingsRepository(RepositoryBase):
                 cities.append(city_norm)
         return sorted(set(cities))
 
-    def load_listings_df(self, city: Optional[str] = None) -> pd.DataFrame:
+    def load_listings_df(
+        self,
+        city: Optional[str] = None,
+        listing_type: Optional[str] = None,
+    ) -> pd.DataFrame:
         query = "SELECT * FROM listings"
         params: Dict[str, str] = {}
+        filters: List[str] = []
         if city:
-            query += " WHERE LOWER(city) = :city"
+            filters.append("LOWER(city) = :city")
             params["city"] = city.strip().lower()
+        if listing_type and self.has_column("listings", "listing_type"):
+            listing_norm = listing_type.strip().lower()
+            if listing_norm in ("sale", "rent"):
+                filters.append("LOWER(listing_type) = :listing_type")
+                params["listing_type"] = listing_norm
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
         return pd.read_sql(text(query), self.engine, params=params)
 
     def load_listings_for_hedonic(self, region_name: Optional[str] = None) -> pd.DataFrame:

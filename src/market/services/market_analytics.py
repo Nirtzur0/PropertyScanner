@@ -22,10 +22,14 @@ class MarketAnalyticsService:
         self.eri = ERISignalsService(db_url=self.db_url)
         self.listings_repo = ListingsRepository(db_url=self.db_url)
 
-    def _get_listings_df(self, city: str = None) -> pd.DataFrame:
+    def _get_listings_df(
+        self,
+        city: Optional[str] = None,
+        listing_type: Optional[str] = None,
+    ) -> pd.DataFrame:
         """Load listings into a DataFrame for vectorized analysis"""
         try:
-            df = self.listings_repo.load_listings_df(city=city)
+            df = self.listings_repo.load_listings_df(city=city, listing_type=listing_type)
             # Ensure types
             df['price'] = pd.to_numeric(df['price'], errors='coerce')
             df['surface_area_sqm'] = pd.to_numeric(df['surface_area_sqm'], errors='coerce')
@@ -102,14 +106,32 @@ class MarketAnalyticsService:
         score = max(0.0, min(1.0, 1.0 - (median_age - 30) / 150.0))
         return score
 
-    def analyze_listing(self, listing: CanonicalListing) -> MarketProfile:
+    def analyze_listing(
+        self,
+        listing: CanonicalListing,
+        *,
+        include_eri: bool = True,
+    ) -> MarketProfile:
         """
         Main entry point. Analyzes market for a specific listing.
         """
+        listing_type = getattr(listing, "listing_type", None)
+        if listing_type:
+            listing_type = str(listing_type).strip().lower()
+        if listing_type not in ("sale", "rent"):
+            listing_type = "sale"
         # 1. Define Zone (Cluster)
         # For now, simple clustering by City + approx Latitude (primitive tiling)
         # In prod, use H3 or Geohash
-        df = self._get_listings_df(city=listing.location.city if listing.location else None)
+        df = self._get_listings_df(
+            city=listing.location.city if listing.location else None,
+            listing_type=listing_type,
+        )
+        if df.empty and listing_type != "sale":
+            df = self._get_listings_df(
+                city=listing.location.city if listing.location else None,
+                listing_type="sale",
+            )
         
         if df.empty:
             return MarketProfile(
@@ -124,22 +146,29 @@ class MarketAnalyticsService:
         growth_rate, confidence = self.calculate_momentum(zone_df)
         liquidity = self.calculate_liquidity(zone_df)
 
-        eri_signals = {}
-        if listing.location and listing.location.city:
+        if include_eri and listing.location and listing.location.city:
             eri_signals = self.eri.get_signals(
                 listing.location.city.lower(),
                 listing.updated_at if listing.updated_at else datetime.now(),
                 country_code=listing.location.country if listing.location else None,
             )
 
-        if eri_signals:
-            txn_z = eri_signals.get("txn_volume_z", 0.0)
-            eri_liquidity = 1.0 / (1.0 + np.exp(-txn_z))
-            liquidity = 0.5 * liquidity + 0.5 * eri_liquidity
+            if eri_signals:
+                eri_liquidity_weight = 0.3
+                eri_momentum_weight = 0.3
+                txn_z = eri_signals.get("txn_volume_z", 0.0)
+                eri_liquidity = 1.0 / (1.0 + np.exp(-txn_z))
+                liquidity = (
+                    (1 - eri_liquidity_weight) * liquidity
+                    + eri_liquidity_weight * eri_liquidity
+                )
 
-            registral_change = eri_signals.get("registral_price_sqm_change")
-            if registral_change is not None:
-                growth_rate = 0.6 * registral_change + 0.4 * growth_rate
+                registral_change = eri_signals.get("registral_price_sqm_change")
+                if registral_change is not None:
+                    growth_rate = (
+                        (1 - eri_momentum_weight) * growth_rate
+                        + eri_momentum_weight * registral_change
+                    )
         
         # 3. Calculate Ripple (Simplistic: compare to city avg)
         # If this listing is in a cheaper zone but city is booming

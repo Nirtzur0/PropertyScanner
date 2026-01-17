@@ -1,7 +1,11 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 import importlib
+import threading
 from src.platform.agents.base import BaseAgent
 from src.platform.utils.compliance import ComplianceManager
+
+# Global lock for imports to prevent deadlocks in threaded environments
+_IMPORT_LOCK = threading.RLock()
 
 class AgentFactory:
     """
@@ -9,18 +13,51 @@ class AgentFactory:
     """
     
     _CRAWLERS: Dict[str, Tuple[str, str]] = {
-        "idealista": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
-        "idealista_es": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
-        "idealista_it": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
-        "idealista_local_test": ("src.listings.agents.crawlers.idealista", "IdealistaCrawlerAgent"),
-        "pisos_es": ("src.listings.agents.crawlers.pisos", "PisosCrawlerAgent"),
-        "pisos": ("src.listings.agents.crawlers.pisos", "PisosCrawlerAgent"),
-        "immobiliare_it": ("src.listings.agents.crawlers.immobiliare", "ImmobiliareCrawlerAgent"),
-        "immobiliare": ("src.listings.agents.crawlers.immobiliare", "ImmobiliareCrawlerAgent"),
-        "rightmove_uk": ("src.listings.agents.crawlers.rightmove", "RightmoveCrawlerAgent"),
-        "rightmove": ("src.listings.agents.crawlers.rightmove", "RightmoveCrawlerAgent"),
-        "zoopla_uk": ("src.listings.agents.crawlers.zoopla", "ZooplaCrawlerAgent"),
-        "zoopla": ("src.listings.agents.crawlers.zoopla", "ZooplaCrawlerAgent"),
+        # Spain
+        "idealista": ("src.listings.agents.crawlers.spain.idealista", "IdealistaCrawlerAgent"),
+        "idealista_es": ("src.listings.agents.crawlers.spain.idealista", "IdealistaCrawlerAgent"),
+        "idealista_it": ("src.listings.agents.crawlers.spain.idealista", "IdealistaCrawlerAgent"), 
+        "idealista_pt": ("src.listings.agents.crawlers.spain.idealista", "IdealistaCrawlerAgent"),
+        "idealista_local_test": ("src.listings.agents.crawlers.spain.idealista", "IdealistaCrawlerAgent"),
+        "pisos_es": ("src.listings.agents.crawlers.spain.pisos", "PisosCrawlerAgent"),
+        "pisos": ("src.listings.agents.crawlers.spain.pisos", "PisosCrawlerAgent"),
+        
+        # Italy
+        "immobiliare_it": ("src.listings.agents.crawlers.italy.immobiliare", "ImmobiliareCrawlerAgent"),
+        "immobiliare": ("src.listings.agents.crawlers.italy.immobiliare", "ImmobiliareCrawlerAgent"),
+        "casa_it": ("src.listings.agents.crawlers.italy.casa_it", "CasaItCrawlerAgent"),
+        
+        # United Kingdom
+        "rightmove_uk": ("src.listings.agents.crawlers.uk.rightmove", "RightmoveCrawlerAgent"),
+        "rightmove": ("src.listings.agents.crawlers.uk.rightmove", "RightmoveCrawlerAgent"),
+        "zoopla_uk": ("src.listings.agents.crawlers.uk.zoopla", "ZooplaCrawlerAgent"),
+        "zoopla": ("src.listings.agents.crawlers.uk.zoopla", "ZooplaCrawlerAgent"),
+        "onthemarket_uk": ("src.listings.agents.crawlers.uk.onthemarket", "OnTheMarketCrawlerAgent"),
+        "onthemarket": ("src.listings.agents.crawlers.uk.onthemarket", "OnTheMarketCrawlerAgent"),
+        
+        # France
+        "seloger_fr": ("src.listings.agents.crawlers.france.seloger", "SeLogerCrawlerAgent"),
+        "seloger": ("src.listings.agents.crawlers.france.seloger", "SeLogerCrawlerAgent"),
+        
+        # USA
+        "realtor_us": ("src.listings.agents.crawlers.usa.realtor", "RealtorCrawlerAgent"),
+        "realtor": ("src.listings.agents.crawlers.usa.realtor", "RealtorCrawlerAgent"),
+        "redfin_us": ("src.listings.agents.crawlers.usa.redfin", "RedfinCrawlerAgent"),
+        "redfin": ("src.listings.agents.crawlers.usa.redfin", "RedfinCrawlerAgent"),
+        "homes_us": ("src.listings.agents.crawlers.usa.homes", "HomesCrawlerAgent"),
+        "homes": ("src.listings.agents.crawlers.usa.homes", "HomesCrawlerAgent"),
+        
+        # Netherlands
+        "funda_nl": ("src.listings.agents.crawlers.netherlands.funda", "FundaCrawlerAgent"),
+        "funda": ("src.listings.agents.crawlers.netherlands.funda", "FundaCrawlerAgent"),
+        
+        # Germany
+        "immowelt_de": ("src.listings.agents.crawlers.germany.immowelt", "ImmoweltCrawlerAgent"),
+        "immowelt": ("src.listings.agents.crawlers.germany.immowelt", "ImmoweltCrawlerAgent"),
+        
+        # Portugal
+        "imovirtual_pt": ("src.listings.agents.crawlers.portugal.imovirtual", "ImovirtualCrawlerAgent"),
+        "imovirtual": ("src.listings.agents.crawlers.portugal.imovirtual", "ImovirtualCrawlerAgent"),
     }
     
     _NORMALIZERS: Dict[str, Tuple[str, str]] = {
@@ -44,12 +81,12 @@ class AgentFactory:
         if not crawler_info:
             raise ValueError(f"No crawler found for source_id: {source_id}")
         module_path, class_name = crawler_info
-        crawler_cls = getattr(importlib.import_module(module_path), class_name)
+        
+        # Thread-safe import
+        with _IMPORT_LOCK:
+            module = importlib.import_module(module_path)
+            crawler_cls = getattr(module, class_name)
             
-        # PisosCrawler signature is slightly different in previous code (compliance first/only?), 
-        # let's check code or standardize.
-        # IdealistaCrawler: (config, compliance)
-        # PisosCrawler: (compliance) -> I should update PisosCrawler to accept config to be uniform.
         config_payload = config or {}
         if hasattr(config_payload, "model_dump"):
             config_payload = config_payload.model_dump()
@@ -66,7 +103,17 @@ class AgentFactory:
     def create_normalizer(cls, source_id: str) -> BaseAgent:
         norm_info = cls._NORMALIZERS.get(source_id)
         if not norm_info:
+            # Fallback for new agents without normalizers yet
+            # Return a dummy or generic normalizer if possible, for now we let it fail or implementation needs to follow
+            # We can map them to generic or raise error. 
+            # For this test, let's allow "generic" if not found? No, better to be strict or user will see empty data.
+            # But the user asked to test crawling mainly. 
+            # Let's see if we can use a pass-through normalizer?
+            # Or just update map.
             raise ValueError(f"No normalizer found for source_id: {source_id}")
+            
         module_path, class_name = norm_info
-        norm_cls = getattr(importlib.import_module(module_path), class_name)
+        with _IMPORT_LOCK:
+            module = importlib.import_module(module_path)
+            norm_cls = getattr(module, class_name)
         return norm_cls()

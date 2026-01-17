@@ -91,7 +91,8 @@ class ERISignalsService:
         allow_proxy: bool,
         provider: RegistryProvider,
         proxy_region_id: Optional[str] = None,
-    ) -> pd.DataFrame:
+    ) -> Tuple[pd.DataFrame, bool]:
+        proxy_used = False
         # Priority 1: Official registry data
         try:
             provider.repository.ensure_schema()
@@ -118,16 +119,17 @@ class ERISignalsService:
                         }
                     )
                     df["mortgage_count"] = 0
+                    proxy_used = True
             except Exception as e:
                 logger.warning(
                     "registry_proxy_failed",
                     provider_id=provider.provider_id,
                     error=str(e),
                 )
-                return pd.DataFrame()
+                return pd.DataFrame(), proxy_used
 
         if df.empty:
-            return df
+            return df, proxy_used
 
         df["period_date"] = pd.to_datetime(df["period_date"], format="mixed", errors="coerce")
         df = df.dropna(subset=["period_date"])
@@ -141,7 +143,7 @@ class ERISignalsService:
         if "price_sqm_qoq" not in df.columns or df["price_sqm_qoq"].isna().all():
             df["price_sqm_qoq"] = df["price_sqm"].pct_change(periods=1).fillna(0)
         
-        return df
+        return df, proxy_used
 
     def _effective_date(self, as_of_date: Optional[datetime], provider: RegistryProvider) -> datetime:
         base = as_of_date or datetime.utcnow()
@@ -166,14 +168,14 @@ class ERISignalsService:
         allow_proxy: bool = True,
         country_code: Optional[str] = None,
         provider_id: Optional[str] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, object]:
         provider = self._select_provider(provider_id=provider_id, country_code=country_code)
         region_key = self.canonicalizer.canonicalize(
             region_id,
             country_code=country_code,
             provider_id=provider.provider_id,
         ) or str(region_id).strip().lower()
-        df = self._load_series(
+        df, proxy_used = self._load_series(
             region_key,
             allow_proxy=allow_proxy,
             provider=provider,
@@ -226,7 +228,9 @@ class ERISignalsService:
             "registry_provider": provider.provider_id,
             "txn_volume_z": txn_volume_z if txn_volume_z is not None else 0.0,
             "mortgage_share": mortgage_share if mortgage_share is not None else 0.0,
-            "effective_date": effective_date.date().isoformat()
+            "effective_date": effective_date.date().isoformat(),
+            "proxy_used": proxy_used,
+            "source_type": "proxy" if proxy_used else "registry",
         }
         if registral_change is not None:
             payload["registral_price_sqm_change"] = registral_change
