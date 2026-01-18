@@ -19,14 +19,13 @@ The product story is weaker without a single, explicit system spine.
 
 Decision points:
 - Prefect is the chosen orchestrator; decide when to shift from in-process runs to Prefect deployments + schedules.
-- When to split or keep orchestration inside the app (embedded scheduler vs external scheduler).
 
 ## 2) Scraping that holds up
 Scale comes from resilience and discipline, not only from volume.
 - Distributed extraction: containerized agents with queue-based scheduling and backpressure.
 - Source contract tests: golden queries and assertions for embedded JSON presence, parse rates, and required fields.
 - Canary change detection: structural change alerts before a full run; optional visual regression for JS-heavy pages.
-- Adaptive fetch strategy: gradual escalation from HTTP to headless rendering when needed, with rate limits and conservative retries.
+- Adaptive fetch strategy: Pydoll-only CDP fetches with network controls, hybrid UI+API, and context/proxy isolation as needed.
 - Compliance guardrails: honor robots and terms; avoid bypass or circumvention logic.
 
 Risks:

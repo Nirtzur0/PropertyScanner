@@ -65,18 +65,13 @@ class RobotsTxtValidator:
             rp = urllib.robotparser.RobotFileParser()
             rp.set_url(robots_url)
             try:
-                # Hack to bypass SSL verification for this specific environment/tool
-                import ssl
-                context = ssl._create_unverified_context()
-                with urllib.request.urlopen(robots_url, context=context) as response:
-                     data = response.read().decode('utf-8', errors='ignore')
-                     rp.parse(data.splitlines())
+                with urllib.request.urlopen(robots_url, timeout=10) as response:
+                    data = response.read().decode("utf-8", errors="ignore")
+                    rp.parse(data.splitlines())
             except Exception as e:
                 logger.warning("robots_txt_fetch_failed", url=robots_url, error=str(e))
-                # Default to allowing everything if robots.txt is unreachable
-                rp.allow_all = True
-                pass
-            
+                rp.disallow_all = True
+
             self._parsers[domain] = rp
             return rp
 

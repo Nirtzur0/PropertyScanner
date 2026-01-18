@@ -51,7 +51,15 @@ def test_valuation_service(test_db_path):
     # Patch heavy dependencies to avoid loading models
     with patch("src.valuation.services.valuation.DEFAULT_DB_PATH", str(test_db_path)), \
          patch("src.ml.services.fusion_model.TORCH_AVAILABLE", False), \
-         patch("src.valuation.services.retrieval.faiss", MagicMock()): # Mock faiss module
+         patch(
+             "src.valuation.services.valuation.build_retriever",
+             MagicMock(
+                 return_value=MagicMock(
+                     retrieve_comps=MagicMock(return_value=[]),
+                     get_metadata=MagicMock(return_value={}),
+                 )
+             ),
+         ):
         
             
             service = ValuationService(storage=storage)

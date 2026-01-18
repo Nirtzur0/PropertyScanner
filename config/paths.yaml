@@ -10,7 +10,7 @@ paths:
   default_db_path: ${oc.env:PROPERTY_SCANNER_DB_PATH, ${paths.data_dir}/listings.db}
   default_db_url: ${oc.env:PROPERTY_SCANNER_DB_URL, sqlite:///${paths.default_db_path}}
 
-  vector_index_path: ${oc.env:PROPERTY_SCANNER_VECTOR_INDEX_PATH, ${paths.data_dir}/vector_index.faiss}
+  vector_index_path: ${oc.env:PROPERTY_SCANNER_VECTOR_INDEX_PATH, ${paths.data_dir}/vector_index.lancedb}
   vector_metadata_path: ${oc.env:PROPERTY_SCANNER_VECTOR_METADATA_PATH, ${paths.data_dir}/vector_metadata.json}
   lancedb_path: ${oc.env:PROPERTY_SCANNER_LANCEDB_PATH, ${paths.data_dir}/vector_index.lancedb}
 

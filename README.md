@@ -32,7 +32,7 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 1) **Crawl backfill**: crawl, normalize, fuse, and augment listings.
 2) **Transactions**: ingest sold/registry data to ground truth sales labels.
 3) **Market data**: build macro, market indices, hedonic indices, and area intelligence.
-4) **Vector index**: build FAISS or LanceDB for time-safe comps.
+4) **Vector index**: build LanceDB for time-safe comps.
 5) **Training**: train the fusion model (time+geo splits available) and optional calibrators.
 6) **Valuation**: time-adjusted comps + fusion residuals + income blend + area adjustments.
 
@@ -78,21 +78,20 @@ All commands run from the project root.
 ```bash
 python3 -m src.interfaces.cli preflight                 # Refresh stale data and artifacts
 python3 -m src.interfaces.cli prefect preflight         # Prefect flow (retries + caching + UI)
-python3 -m src.interfaces.cli schedule                  # Scheduled preflight refreshes
 python3 -m src.interfaces.cli unified-crawl              # Crawl listings via unified runner
 python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
-python3 -m src.interfaces.cli build-market               # Macro + market + hedonic data
-python3 -m src.interfaces.cli build-index                # Build vector index for comps (FAISS/LanceDB)
+python3 -m src.interfaces.cli market-data                # Macro + market + hedonic data (Prefect flow)
+python3 -m src.interfaces.cli build-index                # Build vector index for comps (LanceDB, Prefect flow)
 python3 -m src.interfaces.cli train -- --listing-type sale
-python3 -m src.interfaces.cli backfill                   # Backfill cached valuations
+python3 -m src.interfaces.cli train-pipeline             # VLM prep + fusion training (Prefect flow)
+python3 -m src.interfaces.cli backfill                   # Backfill cached valuations (Prefect flow)
 python3 -m src.interfaces.cli calibrators -- --input <samples.jsonl>
 python3 -m src.interfaces.cli dashboard                  # Streamlit UI
 python3 -m src.interfaces.cli agent "Find deals" <areas>
 ```
 
 Vector backend note:
-- Set `valuation.retriever_backend: lancedb` (and `valuation.retriever_lancedb_path`) to use LanceDB.
-- Or override at runtime with `python3 -m src.interfaces.cli build-index -- --backend lancedb`.
+- LanceDB is the default retriever backend; configure `valuation.retriever_lancedb_path` to move the index.
 
 ## Crawler Status (Quick View)
 Status reflects current parsing tests and known live-crawl behavior. Live crawling can vary with rate limits and anti-bot defenses.
@@ -123,24 +122,17 @@ python3 scripts/source_harness.py --source immobiliare_it --search-url "<IMMOBIL
 
 ---
 
-## Automation (Prefect + Scheduler)
-Preflight is the canonical automation entry point. Use Prefect for observability or the legacy scheduler for simple intervals.
+## Automation (Prefect)
+Preflight is the canonical automation entry point. Use Prefect for observability and scheduling.
 
 Prefect (local UI):
 
 ```bash
 prefect server start
-python3 -m src.interfaces.cli prefect preflight
+python3 -m src.interfaces.cli preflight
+python3 -m src.interfaces.cli prefect deploy
+prefect agent start -q default
 ```
-
-Legacy APScheduler:
-
-```bash
-python3 -m src.interfaces.cli schedule --interval-minutes 360
-python3 -m src.interfaces.cli schedule --cron "0 3 * * *"
-```
-
-The scheduler uses the same preflight checks, so only stale steps run.
 
 ---
 

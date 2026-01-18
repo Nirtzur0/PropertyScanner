@@ -1,13 +1,25 @@
 version: '3.8'
 
 services:
-  scanner:
+  worker:
     build: .
     volumes:
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1
     command: python -m src.interfaces.agent
+    depends_on:
+      - db
+
+  dashboard:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: streamlit run src/interfaces/dashboard/app.py --server.port=8505 --server.address=0.0.0.0
+    ports:
+      - "8505:8505"
     depends_on:
       - db
 

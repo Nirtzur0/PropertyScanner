@@ -23,19 +23,26 @@ def main():
     """
     from src.agentic.orchestrator import CognitiveOrchestrator
     
-    if len(sys.argv) < 3:
-        print("Usage: python -m src.interfaces.agent \"<query>\" \"<area_url_or_path>\"")
+    args = sys.argv[1:]
+    if len(args) < 2:
+        print("Usage: python -m src.interfaces.agent \"<query>\" \"<area_url_or_path>\" [--strategy=balanced]")
         return
 
-    query = sys.argv[1]
-    areas = sys.argv[2:]
-    
+    query = args[0]
+    strategy = "balanced"
+    areas = []
+    for arg in args[1:]:
+        if arg.startswith("--strategy="):
+            strategy = arg.split("=", 1)[1] or "balanced"
+        else:
+            areas.append(arg)
+
     # Initialize cognitive orchestrator
     orchestrator = CognitiveOrchestrator()
     
     # Run analysis
     print(f"\n🧠 Starting cognitive analysis: {query}\n")
-    result = orchestrator.run(query=query, areas=areas)
+    result = orchestrator.run(query=query, areas=areas, strategy=strategy)
     
     # Print report
     if result.get("final_report"):
@@ -55,4 +62,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

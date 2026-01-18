@@ -29,6 +29,7 @@ class EvaluateInput(BaseModel):
     """Input for evaluation tool."""
     listing: Dict[str, Any] = Field(description="Canonical listing to evaluate")
     num_comps: int = Field(default=10, description="Number of comparables to consider")
+    strategy: str = Field(default="balanced", description="Scoring strategy/persona")
 
 
 class EnrichInput(BaseModel):
@@ -200,7 +201,11 @@ def normalize_listings(raw_listings: List[Dict[str, Any]], source_id: str) -> Di
 
 
 @tool(args_schema=EvaluateInput)
-def evaluate_listing(listing: Dict[str, Any], num_comps: int = 10) -> Dict[str, Any]:
+def evaluate_listing(
+    listing: Dict[str, Any],
+    num_comps: int = 10,
+    strategy: str = "balanced",
+) -> Dict[str, Any]:
     """
     Evaluate a property listing for investment potential.
     
@@ -214,7 +219,8 @@ def evaluate_listing(listing: Dict[str, Any], num_comps: int = 10) -> Dict[str, 
         agent = EvaluationAgent()
         result = agent.run({
             "listing": listing,
-            "num_comps": num_comps
+            "num_comps": num_comps,
+            "strategy": strategy,
         })
         
         return {

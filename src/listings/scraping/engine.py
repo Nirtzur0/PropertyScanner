@@ -47,10 +47,32 @@ class BrowserFetcher:
                 with self._semaphore:
                     return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
             return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
+        except RuntimeError as exc:
+            if str(exc) == "pydoll_fetch_in_running_loop":
+                raise
+            logger.warning("browser_fetch_failed", url=url, error=str(exc))
+            return None
         except Exception as exc:
             logger.warning("browser_fetch_failed", url=url, error=str(exc))
             return None
 
+    async def fetch_async(self, url: str, *, timeout_s: float = 30.0) -> Optional[str]:
+        return await self._engine.fetch_html(url, timeout_s=timeout_s)
+
+    async def fetch_many_async(
+        self,
+        urls: list[str],
+        *,
+        timeout_s: float = 30.0,
+        max_concurrency: Optional[int] = None,
+        preflight=None,
+    ):
+        return await self._engine.fetch_many(
+            urls,
+            timeout_s=timeout_s,
+            max_concurrency=max_concurrency,
+            preflight=preflight,
+        )
 
 def _run_async(coro):
     try:

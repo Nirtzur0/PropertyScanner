@@ -17,6 +17,7 @@ DEFAULT_ACTION_BUDGETS: Dict[str, int] = {
     "enrich": 1,
     "filter": 1,
     "evaluate": 10,
+    "quality_gate": 1,
     "report": 1,
 }
 
@@ -31,6 +32,7 @@ class ActionType(str, Enum):
     ENRICH = "enrich"
     FILTER = "filter"
     EVALUATE = "evaluate"
+    QUALITY_GATE = "quality_gate"
     REPORT = "report"
 
 
@@ -90,6 +92,7 @@ def build_default_plan(
         PlanStep(action=ActionType.ENRICH),
         PlanStep(action=ActionType.FILTER),
         PlanStep(action=ActionType.EVALUATE),
+        PlanStep(action=ActionType.QUALITY_GATE),
         PlanStep(action=ActionType.REPORT),
     ]
 

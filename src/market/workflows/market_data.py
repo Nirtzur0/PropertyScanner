@@ -39,54 +39,35 @@ def build_market_data(
         run_migrations(db_path=db_path)
 
     if not skip_macro:
-        try:
-            MacroDataService(db_path=db_path).fetch_all()
-        except Exception as e:
-            logger.warning("macro_refresh_failed", error=str(e))
+        MacroDataService(db_path=db_path).fetch_all()
 
     if not skip_market_indices:
-        try:
-            MarketIndexService(db_path=db_path).recompute_indices(region_type="city")
-        except Exception as e:
-            logger.warning("market_indices_failed", error=str(e))
+        MarketIndexService(db_path=db_path).recompute_indices(region_type="city")
             
     # 2b. Official Government Data (INE/ERI)
     # Allows fallback anchors for Hedonic and Liquidity signals
-    try:
-        from src.listings.agents.crawlers.official_sources import OfficialSourcesAgent
-        OfficialSourcesAgent(db_path=db_path).run()
-    except Exception as e:
-        logger.warning("official_sources_ingest_failed", error=str(e))
+    from src.listings.agents.crawlers import OfficialSourcesAgent
+    OfficialSourcesAgent(db_path=db_path).run()
 
     # 2c. Registry datasets (UK/IT and other providers configured via registry.yaml)
-    try:
-        from src.market.services.registry_ingest import RegistryIngestService
-        RegistryIngestService(db_path=db_path, app_config=app_config).run()
-    except Exception as e:
-        logger.warning("registry_sources_ingest_failed", error=str(e))
+    from src.market.services.registry_ingest import RegistryIngestService
+    RegistryIngestService(db_path=db_path, app_config=app_config).run()
 
 
     if not skip_hedonic:
-        try:
-            hedonic = HedonicIndexService(db_path=db_path)
-            hedonic.save_to_db(region_name=None)
-            if city:
-                cities = [city.strip().lower()]
-            else:
-                cities = _list_cities(db_path)
+        hedonic = HedonicIndexService(db_path=db_path)
+        hedonic.save_to_db(region_name=None)
+        if city:
+            cities = [city.strip().lower()]
+        else:
+            cities = _list_cities(db_path)
 
-            for target_city in cities:
-                hedonic.save_to_db(region_name=target_city)
-        except Exception as e:
-            logger.warning("hedonic_indices_failed", error=str(e))
+        for target_city in cities:
+            hedonic.save_to_db(region_name=target_city)
 
     if train_tft:
-        try:
-            from src.ml.training.forecasting_tft import TFTForecastingService
-
-            TFTForecastingService(db_path=db_path).train(epochs=50)
-        except Exception as e:
-            logger.warning("tft_training_failed", error=str(e))
+        from src.ml.training.forecasting_tft import TFTForecastingService
+        TFTForecastingService(db_path=db_path).train(epochs=50)
 
     logger.info("market_data_ready", db=db_path)
 

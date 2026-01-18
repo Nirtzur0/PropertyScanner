@@ -77,7 +77,7 @@ class PropertyDataset(Dataset):
             require_same_property_type: Require same property_type for comps
             time_safe_comps: Enforce comp dates <= target date
             normalize_to: "latest", "none", or ISO date for hedonic normalization
-            use_retriever: Use vector retriever for comps (FAISS/LanceDB)
+            use_retriever: Use vector retriever for comps (LanceDB)
             retriever_*: Retriever config (backend/model/index/metadata/policy)
             require_hedonic: Drop samples if hedonic normalization fails
         """
@@ -105,7 +105,7 @@ class PropertyDataset(Dataset):
         if retriever_lancedb_path is None:
             retriever_lancedb_path = str(LANCEDB_PATH)
         if retriever_backend is None:
-            retriever_backend = "faiss"
+            retriever_backend = "lancedb"
         if retriever_model_name is None:
             retriever_model_name = "all-MiniLM-L6-v2"
         if retriever_vlm_policy is None:

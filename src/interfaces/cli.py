@@ -22,10 +22,11 @@ def main(argv: List[str] = None) -> int:
         p = subparsers.add_parser(name, help=help_text)
         p.add_argument("args", nargs=argparse.REMAINDER)
 
-    passthrough("market-data", "Build market/hedonic indices & ingest registries (wraps src.market.workflows.market_data)")
-    passthrough("build-index", "Build vector index (FAISS/LanceDB) (wraps src.valuation.workflows.indexing)")
+    passthrough("market-data", "Build market/hedonic indices & ingest registries (runs Prefect flow)")
+    passthrough("build-index", "Build vector index (LanceDB) (runs Prefect flow)")
     passthrough("train", "Train the fusion model (wraps src.ml.training.train)")
-    passthrough("backfill", "Backfill cached valuations (wraps src.valuation.workflows.backfill)")
+    passthrough("backfill", "Backfill cached valuations (runs Prefect flow)")
+    passthrough("transactions", "Ingest sold/transaction data (runs Prefect flow)")
     passthrough("dashboard", "Launch Streamlit dashboard")
     passthrough("agent", "Run the cognitive agent (wraps src.interfaces.agent)")
     passthrough("calibrators", "Update conformal calibrators (wraps src.valuation.workflows.calibration)")
@@ -34,7 +35,7 @@ def main(argv: List[str] = None) -> int:
     passthrough("prefect", "Run Prefect flows (wraps src.platform.workflows.prefect_orchestration)")
     passthrough("unified-crawl", "Run unified multi-source crawl (wraps src.listings.workflows.unified_crawl)")
     passthrough("migrate", "Run database schema migrations (wraps src.platform.migrations)")
-    passthrough("train-pipeline", "Run full training sequence: VLM prep + Fusion Train (wraps src.platform.workflows.full_pipeline)")
+    passthrough("train-pipeline", "Run full training sequence: VLM prep + Fusion Train (runs Prefect flow)")
     passthrough("caption-images", "Run image captioning batch job (runs Prefect maintenance flow)")
 
     args, remaining = parser.parse_known_args(argv)
@@ -45,10 +46,11 @@ def main(argv: List[str] = None) -> int:
         cmd_args = []
 
     module_map = {
-        "market-data": "src.market.workflows.market_data", # Renamed from build-market
-        "build-index": "src.valuation.workflows.indexing",
+        "market-data": "src.platform.workflows.prefect_orchestration",
+        "build-index": "src.platform.workflows.prefect_orchestration",
         "train": "src.ml.training.train",
-        "backfill": "src.valuation.workflows.backfill",
+        "backfill": "src.platform.workflows.prefect_orchestration",
+        "transactions": "src.platform.workflows.prefect_orchestration",
         "agent": "src.interfaces.agent",
         "calibrators": "src.valuation.workflows.calibration",
         "clean-data": "src.platform.workflows.prefect_orchestration",
@@ -56,7 +58,7 @@ def main(argv: List[str] = None) -> int:
         "prefect": "src.platform.workflows.prefect_orchestration",
         "unified-crawl": "src.listings.workflows.unified_crawl",
         "migrate": "src.platform.migrations",
-        "train-pipeline": "src.platform.workflows.full_pipeline",
+        "train-pipeline": "src.platform.workflows.prefect_orchestration",
         "caption-images": "src.platform.workflows.prefect_orchestration",
     }
 
@@ -94,6 +96,16 @@ def main(argv: List[str] = None) -> int:
                 mapped.append(arg)
             idx += 1
         cmd_args = mapped
+    elif args.command == "market-data":
+        cmd_args = ["market-data"] + cmd_args
+    elif args.command == "build-index":
+        cmd_args = ["build-index"] + cmd_args
+    elif args.command == "transactions":
+        cmd_args = ["transactions"] + cmd_args
+    elif args.command == "train-pipeline":
+        cmd_args = ["train-pipeline"] + cmd_args
+    elif args.command == "backfill":
+        cmd_args = ["backfill"] + cmd_args
 
     return _run_module(module, cmd_args)
 

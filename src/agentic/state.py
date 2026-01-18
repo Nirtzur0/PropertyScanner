@@ -24,9 +24,11 @@ class AgentState(TypedDict):
     
     # Agent reasoning
     messages: Annotated[List[Dict[str, Any]], add]
+    trace: Annotated[List[Dict[str, Any]], add]
     current_stage: str
     next_action: str
     error_count: int
+    errors: Annotated[List[str], add]
     
     # Metadata
     sources_crawled: List[str]
@@ -44,6 +46,9 @@ class AgentState(TypedDict):
     plan_status: str
     tool_usage: Dict[str, int]
     tool_budgets: Dict[str, int]
+    quality_checks: List[Dict[str, Any]]
+    ui_blocks: List[Dict[str, Any]]
+    run_id: Optional[str]
     
     # Final output
     final_report: Optional[str]

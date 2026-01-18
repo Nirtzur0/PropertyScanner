@@ -3,13 +3,15 @@ LangGraph Workflow for Cognitive Property Scanner.
 Implements a plan-executor graph with deterministic run plans.
 """
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import structlog
 from typing import Literal, Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
 from src.agentic.state import AgentState
-from src.agentic.plan import ActionType, AgentPlan, build_default_plan, coerce_plan, default_action_budgets
+from src.agentic.plan import ActionType, AgentPlan, PlanStep, coerce_plan, default_action_budgets
 from src.agentic.source_router import SourceRouter
 from src.agentic.tools import (
     crawl_listings,
@@ -31,27 +33,28 @@ PLANNER_PROMPT = """You are the planning module for a property investment agent.
 Return a single JSON object only (no markdown, no commentary, no extra keys).
 
 Schema:
-{
+{{
   "objective": "<clear restatement of the user query>",
   "deterministic": true,
-  "budgets": {
+  "budgets": {{
     "max_steps": <int>,
     "max_action_calls": {default_budgets}
-  },
+  }},
   "steps": [
-    {"action": "<action>", "params": {"...": "..."}, "rationale": "<optional>"}
+    {{"action": "<action>", "params": {{"...": "..."}}, "rationale": "<optional>"}}
   ]
-}
+}}
 
 Actions (use only these):
 preflight, build_market_data, build_index, train_model,
-crawl, normalize, enrich, filter, evaluate, report
+crawl, normalize, enrich, filter, evaluate, quality_gate, report
 
 Rules:
 - deterministic must be true.
 - If pipeline_status indicates needs_refresh, needs_crawl, needs_market_data,
   needs_index, or needs_training, include the required pipeline steps first.
 - If pipeline_status contains an error, start with preflight.
+- Include quality_gate immediately before report.
 - End with report.
 - Keep rationale to one short sentence when used.
 
@@ -59,6 +62,7 @@ Context:
 query: {query}
 target_areas: {target_areas}
 pipeline_status: {pipeline_status}
+strategy: {strategy}
 """
 
 
@@ -76,11 +80,23 @@ def _parse_plan_payload(content: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _query_requires_fresh_data(query: str) -> bool:
+    tokens = (query or "").lower()
+    freshness_terms = ["latest", "new", "fresh", "today", "this week", "recent", "just listed"]
+    return any(term in tokens for term in freshness_terms)
+
+
+def _plan_has_action(plan: AgentPlan, action: ActionType) -> bool:
+    return any(step.action == action for step in plan.steps)
+
+
 def create_initial_state(
     query: str,
     areas: List[str] = None,
     plan: Optional[Dict[str, Any]] = None,
     tool_budgets: Optional[Dict[str, int]] = None,
+    strategy: str = "balanced",
+    run_id: Optional[str] = None,
 ) -> AgentState:
     """Create initial state for a new agent run."""
     try:
@@ -96,16 +112,18 @@ def create_initial_state(
         canonical_listings=[],
         evaluations=[],
         messages=[],
+        trace=[],
         current_stage="init",
         next_action="plan",
         error_count=0,
+        errors=[],
         sources_crawled=[],
         listings_count=0,
         enriched_count=0,
         enrichment_status="pending",
         filtered_count=0,
         final_report=None,
-        strategy="balanced",
+        strategy=strategy,
         pipeline_status=pipeline_status,
         pipeline_checked=False,
         plan=plan,
@@ -113,6 +131,9 @@ def create_initial_state(
         plan_status="pending",
         tool_usage={},
         tool_budgets=tool_budgets or {},
+        quality_checks=[],
+        ui_blocks=[],
+        run_id=run_id,
     )
 
 
@@ -125,52 +146,36 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
         if incoming_plan:
             plan = coerce_plan(incoming_plan, pipeline_status=pipeline_status)
         else:
-            try:
-                llm = get_llm(temperature=0)
-                prompt = PLANNER_PROMPT.format(
-                    query=state["query"],
-                    target_areas=state["target_areas"],
-                    pipeline_status=pipeline_status,
-                    default_budgets=json.dumps(default_action_budgets()),
-                )
-                messages = [
-                    SystemMessage(content=prompt),
-                    HumanMessage(content="Generate the plan JSON."),
-                ]
-                response = llm.invoke(messages)
+            llm = get_llm(temperature=0)
+            prompt = PLANNER_PROMPT.format(
+                query=state["query"],
+                target_areas=state["target_areas"],
+                pipeline_status=pipeline_status,
+                strategy=state.get("strategy", "balanced"),
+                default_budgets=json.dumps(default_action_budgets()),
+            )
+            messages = [
+                SystemMessage(content=prompt),
+                HumanMessage(content="Generate the plan JSON."),
+            ]
+            response = llm.invoke(messages)
 
-                if hasattr(response, "content"):
-                    content = response.content
-                else:
-                    content = str(response)
+            if hasattr(response, "content"):
+                content = response.content
+            else:
+                content = str(response)
 
-                payload = _parse_plan_payload(content)
-                if payload:
-                    try:
-                        plan = AgentPlan.model_validate(payload)
-                    except Exception as e:
-                        logger.warning("plan_payload_invalid", error=str(e))
-                        plan = build_default_plan(
-                            state["query"],
-                            state["target_areas"],
-                            pipeline_status=pipeline_status,
-                        )
-                else:
-                    logger.warning("plan_payload_missing")
-                    plan = build_default_plan(
-                        state["query"],
-                        state["target_areas"],
-                        pipeline_status=pipeline_status,
-                    )
-            except Exception as e:
-                logger.warning("planner_llm_failed", error=str(e))
-                plan = build_default_plan(
-                    state["query"],
-                    state["target_areas"],
-                    pipeline_status=pipeline_status,
-                )
+            payload = _parse_plan_payload(content)
+            if not payload:
+                raise ValueError("plan_payload_missing")
+
+            plan = AgentPlan.model_validate(payload)
 
         plan = coerce_plan(plan, pipeline_status=pipeline_status)
+        if _query_requires_fresh_data(state["query"]):
+            if not _plan_has_action(plan, ActionType.PREFLIGHT) and not _plan_has_action(plan, ActionType.CRAWL):
+                plan = plan.model_copy(update={"steps": [PlanStep(action=ActionType.PREFLIGHT)] + plan.steps})
+                plan = coerce_plan(plan, pipeline_status=pipeline_status)
         plan_payload = plan.model_dump(mode="json")
         tool_budgets = plan_payload.get("budgets", {}).get("max_action_calls", {}) or {}
         tool_usage = {action: 0 for action in tool_budgets.keys()}
@@ -201,6 +206,7 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
     router = SourceRouter()
     unresolved_areas = []
     crawl_errors = []
+    errors: List[str] = []
 
     def _listing_key(raw: Dict[str, Any]) -> Optional[str]:
         for key in ("id", "external_id", "url"):
@@ -246,8 +252,12 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
 
     if unresolved_areas:
         logger.warning("crawl_source_unresolved", areas=unresolved_areas)
+        errors.append(f"crawl:unresolved_areas:{','.join(unresolved_areas)}")
     if crawl_errors:
         logger.warning("crawl_source_failed", errors=crawl_errors)
+        errors.append(f"crawl:errors:{','.join(crawl_errors)}")
+    if not raw_listings:
+        errors.append("crawl:no_listings")
 
     messages = [{
         "role": "crawl",
@@ -269,6 +279,7 @@ def crawl_node(state: AgentState) -> Dict[str, Any]:
         "sources_crawled": sources_crawled,
         "current_stage": "crawled",
         "messages": messages,
+        "errors": errors,
     }
 
 
@@ -277,6 +288,7 @@ def normalize_node(state: AgentState) -> Dict[str, Any]:
     logger.info("normalize_node_started", count=len(state["raw_listings"]))
     
     canonical_listings = []
+    errors: List[str] = []
     
     # Group by source
     by_source: Dict[str, List] = {}
@@ -295,15 +307,22 @@ def normalize_node(state: AgentState) -> Dict[str, Any]:
             
             if result["status"] in ["success", "partial"]:
                 canonical_listings.extend(result["data"])
+            else:
+                errors.append(f"normalize:{source_id}:{result.get('errors')}")
                 
         except Exception as e:
             logger.error("normalize_failed", source=source_id, error=str(e))
+            errors.append(f"normalize:{source_id}:{e}")
             
+    if not canonical_listings:
+        errors.append("normalize:no_listings")
+
     return {
         "canonical_listings": canonical_listings,
         "listings_count": len(canonical_listings),
         "current_stage": "normalized",
-        "messages": [{"role": "normalize", "content": f"Normalized {len(canonical_listings)} listings"}]
+        "messages": [{"role": "normalize", "content": f"Normalized {len(canonical_listings)} listings"}],
+        "errors": errors,
     }
 
 
@@ -322,19 +341,23 @@ def enrich_node(state: AgentState) -> Dict[str, Any]:
                 "enriched_count": result.get("enriched_count", 0),
                 "enrichment_status": "success",
                 "current_stage": "enriched",
-                "messages": [{"role": "enrich", "content": f"Enriched {result.get('enriched_count', 0)} listings"}]
+                "messages": [{"role": "enrich", "content": f"Enriched {result.get('enriched_count', 0)} listings"}],
+                "errors": [],
             }
-        else:
-            return {
-                 "enrichment_status": "failed",
-                 "messages": [{"role": "enrich", "content": f"Enrichment failed: {result.get('errors')}"}]
-            }
+        return {
+            "enrichment_status": "failed",
+            "current_stage": "enriched",
+            "messages": [{"role": "enrich", "content": f"Enrichment failed: {result.get('errors')}"}],
+            "errors": [f"enrich:{result.get('errors')}"],
+        }
 
     except Exception as e:
         logger.error("enrich_node_failed", error=str(e))
         return {
             "enrichment_status": "failed",
-            "messages": [{"role": "enrich", "content": f"Enrichment failed: {str(e)}"}]
+            "current_stage": "enriched",
+            "messages": [{"role": "enrich", "content": f"Enrichment failed: {str(e)}"}],
+            "errors": [f"enrich:{str(e)}"],
         }
 
 
@@ -353,17 +376,21 @@ def filter_node(state: AgentState) -> Dict[str, Any]:
                 "filtered_count": result["count"], # Current valid count
                 "listings_count": result["count"], # Update main count too
                 "current_stage": "filtered",
-                "messages": [{"role": "filter", "content": f"Filtered listings. Kept {result['count']}, Dropped {result.get('dropped_count', 0)}"}]
+                "messages": [{"role": "filter", "content": f"Filtered listings. Kept {result['count']}, Dropped {result.get('dropped_count', 0)}"}],
+                "errors": [] if result["count"] > 0 else ["filter:no_listings"],
             }
-        else:
-             return {
-                 "messages": [{"role": "filter", "content": f"Filter failed: {result.get('errors')}"}]
-             }
+        return {
+            "current_stage": "filtered",
+            "messages": [{"role": "filter", "content": f"Filter failed: {result.get('errors')}"}],
+            "errors": [f"filter:{result.get('errors')}"],
+        }
              
     except Exception as e:
         logger.error("filter_node_failed", error=str(e))
         return {
-            "messages": [{"role": "filter", "content": f"Filter failed: {str(e)}"}]
+            "current_stage": "filtered",
+            "messages": [{"role": "filter", "content": f"Filter failed: {str(e)}"}],
+            "errors": [f"filter:{str(e)}"],
         }
 
 
@@ -409,6 +436,7 @@ def evaluate_node(state: AgentState) -> Dict[str, Any]:
     logger.info("evaluate_node_started", count=len(state["canonical_listings"]))
     
     evaluations = []
+    errors: List[str] = []
     
     # Evaluate top N listings (avoid rate limits)
     max_to_evaluate = min(len(state["canonical_listings"]), 10)
@@ -427,14 +455,21 @@ def evaluate_node(state: AgentState) -> Dict[str, Any]:
             
             if result["status"] == "success" and result["data"]:
                 evaluations.append(result["data"])
+            else:
+                errors.append(f"evaluate:{listing.get('id', 'unknown')}")
                 
         except Exception as e:
             logger.error("evaluate_failed", listing_id=listing.get("id"), error=str(e))
+            errors.append(f"evaluate:{listing.get('id', 'unknown')}:{str(e)}")
+
+    if not evaluations:
+        errors.append("evaluate:no_results")
             
     return {
         "evaluations": evaluations,
         "current_stage": "evaluated",
-        "messages": [{"role": "evaluate", "content": f"Evaluated {len(evaluations)} listings"}]
+        "messages": [{"role": "evaluate", "content": f"Evaluated {len(evaluations)} listings"}],
+        "errors": errors,
     }
 
 
@@ -444,6 +479,8 @@ def report_node(state: AgentState) -> Dict[str, Any]:
     
     try:
         llm = get_llm(temperature=0.3)
+
+        ui_blocks = _build_ui_blocks(state)
         
         # Prepare data summary
         top_deals = sorted(
@@ -485,13 +522,153 @@ Use clear, professional language. Avoid bullet lists and headings.
         
         return {
             "final_report": report_text,
+            "ui_blocks": ui_blocks,
             "current_stage": "complete",
-            "messages": [{"role": "report", "content": "Report generated"}]
+            "messages": [{"role": "report", "content": "Report generated"}],
+            "errors": [],
         }
         
     except Exception as e:
         logger.error("report_failed", error=str(e))
         raise
+
+
+def _build_ui_blocks(state: AgentState) -> List[Dict[str, Any]]:
+    evaluations = state.get("evaluations") or []
+    top_evals = sorted(evaluations, key=lambda item: item.get("deal_score", 0), reverse=True)[:5]
+    top_listing_ids = [e.get("listing_id") for e in top_evals if e.get("listing_id")]
+
+    if not top_listing_ids:
+        return []
+
+    query = (state.get("query") or "").lower()
+    blocks: List[Dict[str, Any]] = [
+        {
+            "type": "comparison_table",
+            "title": "Top Deal Comparison",
+            "listing_ids": top_listing_ids,
+            "columns": ["Price", "Deal Score", "Yield %", "Value Delta %"],
+        },
+        {
+            "type": "deal_score_chart",
+            "title": "Deal Score Ranking",
+            "listing_ids": top_listing_ids,
+        },
+    ]
+
+    if "map" in query or "area" in query or "neighborhood" in query:
+        blocks.append(
+            {
+                "type": "map_focus",
+                "title": "Map Focus",
+                "listing_ids": top_listing_ids,
+                "zoom": 13,
+            }
+        )
+
+    return blocks
+
+
+def quality_gate_node(state: AgentState) -> Dict[str, Any]:
+    """Run quality checks before reporting."""
+    checks: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    evaluations = state.get("evaluations") or []
+    listings = state.get("canonical_listings") or []
+
+    if not evaluations:
+        errors.append("quality_gate:no_evaluations")
+        checks.append({
+            "check": "evaluations_present",
+            "status": "fail",
+            "detail": "No evaluated listings available for report.",
+        })
+    else:
+        checks.append({
+            "check": "evaluations_present",
+            "status": "pass",
+            "detail": f"{len(evaluations)} evaluations ready.",
+        })
+
+    listing_ids = set()
+    for listing in listings:
+        listing_id = listing.get("id") or listing.get("ID")
+        if listing_id:
+            listing_ids.add(str(listing_id))
+
+    missing_listing_refs = []
+    invalid_scores = []
+    invalid_quantiles = []
+
+    for evaluation in evaluations:
+        listing_id = evaluation.get("listing_id")
+        if listing_id and str(listing_id) not in listing_ids:
+            missing_listing_refs.append(str(listing_id))
+
+        score = evaluation.get("deal_score")
+        if score is None or not isinstance(score, (int, float)) or score < 0 or score > 1:
+            invalid_scores.append(str(listing_id or "unknown"))
+
+        quantiles = evaluation.get("fair_value_quantiles") or {}
+        try:
+            p10 = float(quantiles.get("0.1"))
+            p50 = float(quantiles.get("0.5"))
+            p90 = float(quantiles.get("0.9"))
+            if not (p10 <= p50 <= p90):
+                invalid_quantiles.append(str(listing_id or "unknown"))
+        except Exception:
+            if quantiles:
+                invalid_quantiles.append(str(listing_id or "unknown"))
+
+    if missing_listing_refs:
+        errors.append("quality_gate:missing_listings")
+        checks.append({
+            "check": "evaluation_listing_refs",
+            "status": "fail",
+            "detail": f"Missing listings for {len(missing_listing_refs)} evaluations.",
+        })
+    else:
+        checks.append({
+            "check": "evaluation_listing_refs",
+            "status": "pass",
+            "detail": "All evaluations map to canonical listings.",
+        })
+
+    if invalid_scores:
+        errors.append("quality_gate:invalid_deal_scores")
+        checks.append({
+            "check": "deal_score_range",
+            "status": "fail",
+            "detail": f"Invalid deal_score values for {len(invalid_scores)} evaluations.",
+        })
+    else:
+        checks.append({
+            "check": "deal_score_range",
+            "status": "pass",
+            "detail": "Deal scores are within expected range.",
+        })
+
+    if invalid_quantiles:
+        errors.append("quality_gate:invalid_quantiles")
+        checks.append({
+            "check": "fair_value_quantiles",
+            "status": "fail",
+            "detail": f"Invalid fair value quantiles for {len(invalid_quantiles)} evaluations.",
+        })
+    else:
+        checks.append({
+            "check": "fair_value_quantiles",
+            "status": "pass",
+            "detail": "Fair value quantiles are ordered.",
+        })
+
+    return {
+        "quality_checks": checks,
+        "current_stage": "quality_gate",
+        "messages": [{"role": "quality_gate", "content": "Quality checks complete"}],
+        "errors": errors,
+    }
 
 
 def _refresh_pipeline_status() -> Dict[str, Any]:
@@ -503,6 +680,21 @@ def _refresh_pipeline_status() -> Dict[str, Any]:
         return {"error": str(e), "needs_refresh": False, "reasons": ["pipeline_status_failed"]}
 
 
+ACTION_TIMEOUTS = {
+    "preflight": 1800,
+    "build_market_data": 1200,
+    "build_index": 1200,
+    "train_model": 1800,
+    "crawl": 900,
+    "normalize": 300,
+    "enrich": 300,
+    "filter": 120,
+    "evaluate": 600,
+    "quality_gate": 60,
+    "report": 180,
+}
+
+
 def _run_workflow_action(
     state: AgentState,
     tool,
@@ -510,13 +702,43 @@ def _run_workflow_action(
     params: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], bool]:
     payload = dict(params or {})
-    result = tool.invoke(payload)
-    success = result.get("status") == "success"
-    content = f"{action_label} completed" if success else f"{action_label} failed: {result.get('error')}"
+    start_ts = time.monotonic()
+    error_detail = None
+    result = None
+    timeout_s = ACTION_TIMEOUTS.get(action_label)
+    try:
+        if timeout_s:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(tool.invoke, payload)
+                result = future.result(timeout=timeout_s)
+        else:
+            result = tool.invoke(payload)
+    except FutureTimeoutError:
+        error_detail = f"timeout_after_{timeout_s}s"
+    except Exception as exc:
+        error_detail = str(exc)
+
+    success = False
+    if error_detail is None:
+        success = result.get("status") == "success"
+        if not success:
+            error_detail = result.get("error") or result.get("errors") or "tool_failed"
+
+    content = f"{action_label} completed" if success else f"{action_label} failed: {error_detail}"
+    duration_ms = int((time.monotonic() - start_ts) * 1000)
+    trace_entry = {
+        "action": action_label,
+        "status": "success" if success else "failed",
+        "duration_ms": duration_ms,
+        "error": error_detail,
+        "params": payload,
+    }
     update = {
         "messages": [{"role": action_label, "content": content}],
         "current_stage": action_label,
         "pipeline_checked": True,
+        "trace": [trace_entry],
+        "errors": [] if success else [f"{action_label}:{error_detail}"],
     }
     if success:
         update["pipeline_status"] = _refresh_pipeline_status()
@@ -535,9 +757,46 @@ def _run_preflight_action(state: AgentState, params: Optional[Dict[str, Any]] = 
     return _run_workflow_action(state, preflight_pipeline, "preflight", payload)
 
 
-def _wrap_node(fn):
+def _wrap_node(fn, action_label: Optional[str] = None):
+    label = action_label or fn.__name__.replace("_node", "")
+
     def _runner(state: AgentState, params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
-        return fn(state), True
+        start_ts = time.monotonic()
+        timeout_s = ACTION_TIMEOUTS.get(label)
+        error_detail = None
+        update: Dict[str, Any] = {}
+
+        try:
+            if timeout_s:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(fn, state)
+                    update = future.result(timeout=timeout_s)
+            else:
+                update = fn(state)
+        except FutureTimeoutError:
+            error_detail = f"timeout_after_{timeout_s}s"
+            update = {"messages": [{"role": label, "content": f"{label} timed out"}], "errors": [error_detail]}
+        except Exception as exc:
+            error_detail = str(exc)
+            update = {"messages": [{"role": label, "content": f"{label} failed"}], "errors": [error_detail]}
+
+        errors = update.get("errors") or []
+        success = not errors
+        if errors and not error_detail:
+            error_detail = "; ".join(str(err) for err in errors)
+
+        duration_ms = int((time.monotonic() - start_ts) * 1000)
+        trace_entry = {
+            "action": label,
+            "status": "success" if success else "failed",
+            "duration_ms": duration_ms,
+            "error": error_detail,
+        }
+        update["trace"] = [trace_entry]
+        update["current_stage"] = update.get("current_stage", label)
+        update["errors"] = errors if errors else []
+
+        return update, success
 
     return _runner
 
@@ -628,12 +887,13 @@ ACTION_RUNNERS = {
     ActionType.TRAIN_MODEL.value: lambda state, params: _run_workflow_action(
         state, train_model_workflow, "train_model", params
     ),
-    ActionType.CRAWL.value: _wrap_node(crawl_node),
-    ActionType.NORMALIZE.value: _wrap_node(normalize_node),
-    ActionType.ENRICH.value: _wrap_node(enrich_node),
-    ActionType.FILTER.value: _wrap_node(filter_node),
-    ActionType.EVALUATE.value: _wrap_node(evaluate_node),
-    ActionType.REPORT.value: _wrap_node(report_node),
+    ActionType.CRAWL.value: _wrap_node(crawl_node, "crawl"),
+    ActionType.NORMALIZE.value: _wrap_node(normalize_node, "normalize"),
+    ActionType.ENRICH.value: _wrap_node(enrich_node, "enrich"),
+    ActionType.FILTER.value: _wrap_node(filter_node, "filter"),
+    ActionType.EVALUATE.value: _wrap_node(evaluate_node, "evaluate"),
+    ActionType.QUALITY_GATE.value: _wrap_node(quality_gate_node, "quality_gate"),
+    ActionType.REPORT.value: _wrap_node(report_node, "report"),
 }
 
 

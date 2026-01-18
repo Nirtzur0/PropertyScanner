@@ -18,6 +18,7 @@ flowchart LR
     subgraph Platform
         Storage["StorageService"]
         PipelineState["PipelineStateService"]
+        Runs["PipelineRunTracker"]
     end
 
     subgraph Listings
@@ -52,6 +53,7 @@ flowchart LR
     CLI --> PipelineState
     API --> PipelineState
     Dash --> PipelineState
+    PipelineState --> Runs
 
     Enrich --> Geo
     Fusion --> Persist --> Storage
@@ -116,7 +118,8 @@ ML services
 
 Platform services
 - `StorageService`: SQLite connection and session management.
-- `PipelineStateService`: run tracking and freshness checks.
+- `PipelineStateService`: freshness checks for listings, indices, and models.
+- `PipelineRunTracker`: writes to `pipeline_runs` for operational visibility.
 
 ## Interaction rules (to keep services cohesive)
 - Services read/write through repositories and `StorageService`, not direct SQL in workflows.

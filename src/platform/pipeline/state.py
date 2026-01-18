@@ -81,14 +81,7 @@ class PipelineStateService:
         listings_last_seen = listing_snapshot["last_seen"]
 
         market_data_at = self._market_data_timestamp()
-        index_paths = [self.paths.vector_metadata_path]
-        backend = None
-        if self.app_config is not None:
-            backend = self.app_config.valuation.retriever_backend
-        if backend == "lancedb":
-            index_paths.append(self.paths.lancedb_path)
-        else:
-            index_paths.append(self.paths.vector_index_path)
+        index_paths = [self.paths.vector_metadata_path, self.paths.lancedb_path]
         index_at = self._file_timestamp(index_paths, use_oldest=True)
         model_at = self._file_timestamp([self.paths.fusion_model_path], use_oldest=False)
 

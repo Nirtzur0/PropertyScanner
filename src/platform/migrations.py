@@ -185,6 +185,25 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     except Exception:
         pass
 
+    # 5c. Agent Runs (Cognitive Orchestrator memory)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id TEXT PRIMARY KEY,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            query TEXT NOT NULL,
+            target_areas TEXT,
+            strategy TEXT,
+            plan TEXT,
+            status TEXT,
+            summary TEXT,
+            error TEXT,
+            listings_count INT,
+            evaluations_count INT,
+            top_listing_ids TEXT,
+            ui_blocks TEXT
+        )
+    """)
+
     # 6. ERI (Registral) Metrics
     conn.execute("""
         CREATE TABLE IF NOT EXISTS eri_metrics (

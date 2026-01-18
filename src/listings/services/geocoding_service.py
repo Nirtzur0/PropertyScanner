@@ -10,9 +10,6 @@ class GeocodingService:
         import ssl
         import certifi
         ctx = ssl.create_default_context(cafile=certifi.where())
-        # Fallback if certifi fails or for dev envs with broken chains
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         self.geolocator = Nominatim(user_agent=user_agent, ssl_context=ctx)
 
     def geocode_address(self, address: str) -> Optional[Tuple[float, float]]:

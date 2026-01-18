@@ -4,8 +4,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import streamlit.components.v1 as components
 import html
+import math
+from typing import Optional, List, Dict, Any
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -13,17 +14,11 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 from src.interfaces.dashboard.scout_logic import (
     DEFAULT_PRICE_RANGE,
-    VIEW_OPTIONS,
-    _action_label,
     _build_deal_reasons,
-    _build_suggestions,
-    _compose_orchestrator_prompt,
     _format_deal_reasons,
     _format_intel_summary,
     _format_location,
     _format_ts,
-    _parse_prompt,
-    _resolve_autonomy,
     _resolve_profile_sort,
     _select_scout_picks,
 )
@@ -60,6 +55,8 @@ from src.interfaces.dashboard.components.cards import (
     build_scorecard_items,
     build_swot
 )
+from src.agentic.orchestrator import CognitiveOrchestrator
+from src.agentic.memory import AgentMemoryStore
 
 # Page Config
 st.set_page_config(page_title="Property Scanner | The Scout", layout="wide", page_icon="🦅")
@@ -82,40 +79,143 @@ cities, available_types, available_countries, cities_by_country = load_filter_op
 # Initialize Session
 ensure_session_defaults(cities, available_types, available_countries, cities_by_country)
 
-# --- Controller Logic ---
-def _reset_filters(available_cities, available_types, available_countries) -> None:
-    st.session_state.selected_country = "All"
-    st.session_state.selected_city = "All"
-    st.session_state.selected_types = list(available_types)
-    st.session_state.price_range = DEFAULT_PRICE_RANGE
-    st.session_state.max_listings = 300
-    st.session_state.sort_by = "Deal Score"
-    st.session_state.sort_order = "Desc"
-    st.session_state.scout_profile = "Balanced"
-
-def _apply_action(action, available_cities, available_types, available_countries):
-    kind = action.get("type")
-    if kind == "set_filters":
-        for key, value in action.get("payload", {}).items():
-            if key in st.session_state:
-                st.session_state[key] = value
-    elif kind == "set_view":
-        st.session_state.active_view = action.get("view", VIEW_OPTIONS[0])
-    elif kind == "select_listing":
-        st.session_state.selected_title = action.get("title")
-        st.session_state.active_view = "Investment Memo"
-    elif kind == "reset_filters":
-        _reset_filters(available_cities, available_types, available_countries)
-    elif kind == "preflight":
-        from src.interfaces.api.pipeline import PipelineAPI
-        api = PipelineAPI()
-        with st.spinner("Refreshing pipeline artifacts..."):
-            api.preflight()
-        load_pipeline_status.clear()
-        load_filter_options.clear()
-
 def _safe_list(val):
     return val if isinstance(val, list) else []
+
+def _resolve_target_areas(selected_city: str, selected_country: str) -> list[str]:
+    if selected_city and selected_city != "All":
+        return [selected_city]
+    if selected_country and selected_country != "All":
+        return [selected_country]
+    return []
+
+def _compute_map_view_state(map_data: pd.DataFrame, selected_title: Optional[str]):
+    lat_series = pd.to_numeric(map_data["lat"], errors="coerce").dropna()
+    lon_series = pd.to_numeric(map_data["lon"], errors="coerce").dropna()
+    if selected_title:
+        match = map_data[map_data["Title"] == selected_title]
+        if not match.empty:
+            lat_val = pd.to_numeric(match.iloc[0].get("lat"), errors="coerce")
+            lon_val = pd.to_numeric(match.iloc[0].get("lon"), errors="coerce")
+            if pd.notna(lat_val) and pd.notna(lon_val):
+                return float(lat_val), float(lon_val), 14.0
+
+    if lat_series.empty or lon_series.empty:
+        return 40.4168, -3.7038, 5.0
+
+    lat_min, lat_max = lat_series.quantile([0.05, 0.95]).tolist()
+    lon_min, lon_max = lon_series.quantile([0.05, 0.95]).tolist()
+    center_lat = float((lat_min + lat_max) / 2)
+    center_lon = float((lon_min + lon_max) / 2)
+    span = max(float(lat_max - lat_min), float(lon_max - lon_min), 0.01)
+    zoom = math.log2(360.0 / span) - 1.0
+    zoom = float(min(15.5, max(3.0, zoom)))
+    return center_lat, center_lon, zoom
+
+
+def _resolve_strategy(profile: str) -> str:
+    mapping = {
+        "Balanced": "balanced",
+        "Yield": "cash_flow_investor",
+        "Value": "bargain_hunter",
+        "Momentum": "safe_bet",
+    }
+    return mapping.get(profile, "balanced")
+
+
+def _plan_requires_confirmation(plan: Dict[str, Any]) -> bool:
+    sensitive = {"preflight", "build_market_data", "build_index", "train_model"}
+    steps = plan.get("steps") or []
+    for step in steps:
+        action = step.get("action") if isinstance(step, dict) else getattr(step, "action", None)
+        if action in sensitive:
+            return True
+    return False
+
+
+def _render_plan(plan_payload: Dict[str, Any]) -> None:
+    steps = plan_payload.get("steps", [])
+    for idx, step in enumerate(steps, start=1):
+        action = step.get("action", "unknown")
+        params = step.get("params", {})
+        rationale = step.get("rationale")
+        st.markdown(f"**{idx}. {action}**")
+        if params:
+            st.json(params)
+        if rationale:
+            st.caption(rationale)
+
+
+def _render_ui_blocks(ui_blocks: List[Dict[str, Any]], data_df: pd.DataFrame) -> None:
+    if not ui_blocks:
+        return
+
+    st.markdown("#### Agent Lens")
+    for idx, block in enumerate(ui_blocks):
+        block_type = block.get("type") or "unknown"
+        title = block.get("title") or block_type.replace("_", " ").title()
+        st.markdown(f"**{title}**")
+
+        listing_ids = block.get("listing_ids") or []
+        block_df = data_df[data_df["ID"].isin(listing_ids)].copy()
+        if not block_df.empty and listing_ids:
+            order = {str(listing_id): i for i, listing_id in enumerate(listing_ids)}
+            block_df["__order"] = block_df["ID"].astype(str).map(order)
+            block_df = block_df.sort_values("__order").drop(columns=["__order"])
+
+        if block_type == "comparison_table":
+            if block_df.empty:
+                st.info("No listings matched the comparison block.")
+            else:
+                cols = block.get("columns") or []
+                display_cols = ["Title"] + [c for c in cols if c in block_df.columns and c != "Title"]
+                st.dataframe(block_df[display_cols], use_container_width=True)
+
+        elif block_type == "deal_score_chart":
+            if "Deal Score" in block_df.columns and not block_df.empty:
+                fig = px.bar(block_df, x="Title", y="Deal Score")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No deal score data for chart.")
+
+        elif block_type == "map_focus":
+            if block_df.empty:
+                st.info("No listings matched the map focus block.")
+            else:
+                st.caption("Map focus targets:")
+                st.write(", ".join(block_df["Title"].tolist()))
+                if st.button("Focus first on map", key=f"map_focus_{idx}"):
+                    st.session_state.selected_title = block_df.iloc[0]["Title"]
+                    st.rerun()
+
+        else:
+            st.caption("Unsupported block type.")
+
+
+def _run_orchestrator(
+    prompt: str,
+    areas: List[str],
+    strategy: str,
+    plan: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    orchestrator = CognitiveOrchestrator()
+    result = orchestrator.run(prompt, areas=areas, plan=plan, strategy=strategy)
+
+    st.session_state.agent_plan = result.get("plan") or plan
+    st.session_state.agent_messages = result.get("messages", [])
+    st.session_state.agent_report = result.get("final_report") or ""
+    st.session_state.agent_evaluations = result.get("evaluations", [])
+    st.session_state.agent_error = result.get("error")
+    st.session_state.agent_trace = result.get("trace", [])
+    st.session_state.agent_ui_blocks = result.get("ui_blocks", [])
+    st.session_state.agent_quality_checks = result.get("quality_checks", [])
+    st.session_state.agent_run_id = result.get("run_id")
+
+    if result.get("plan_status") in {"failed", "budget_exhausted"}:
+        errors = result.get("errors") or []
+        st.session_state.agent_error = ", ".join(errors) if errors else "plan_failed"
+
+    return result
 
 # --- Sidebar ---
 with st.sidebar:
@@ -183,16 +283,6 @@ with st.sidebar:
         st.session_state.price_range = (min_p, max_p)
 
     st.divider()
-
-    # View Controls
-    active_view = st.selectbox(
-        "View", 
-        VIEW_OPTIONS, 
-        index=VIEW_OPTIONS.index(st.session_state.active_view)
-    )
-    if active_view != st.session_state.active_view:
-        st.session_state.active_view = active_view
-        st.rerun()
 
 # --- Pipeline Status ---
 pipeline_status = load_pipeline_status()
@@ -302,15 +392,21 @@ filtered_df["Why"] = filtered_df.apply(lambda row: _format_deal_reasons(row, sco
 filtered_df["Intel Summary"] = filtered_df.apply(lambda row: _format_intel_summary(row, scout_profile), axis=1)
 scout_picks = _select_scout_picks(filtered_df, scout_profile, max_picks=4)
 
-if not filtered_df.empty:
+if "Images" in filtered_df.columns:
+    deal_df = filtered_df[filtered_df["Images"].apply(lambda value: len(_safe_list(value)) > 0)].copy()
+else:
+    deal_df = filtered_df.iloc[0:0].copy()
+
+if not deal_df.empty:
+    titles = list(deal_df["Title"].unique())
+    if st.session_state.selected_title not in titles:
+        st.session_state.selected_title = titles[0]
+elif not filtered_df.empty:
     titles = list(filtered_df["Title"].unique())
     if st.session_state.selected_title not in titles:
         st.session_state.selected_title = titles[0]
 else:
     st.session_state.selected_title = None
-
-# --- Orchestrator / Command Center ---
-orchestrator_prompt = _compose_orchestrator_prompt(filtered_df, pipeline_needs_refresh, pipeline_error)
 
 st.markdown('<div id="scout-command-center"></div>', unsafe_allow_html=True)
 with st.form("scout_command_center", clear_on_submit=True):
@@ -322,128 +418,426 @@ with st.form("scout_command_center", clear_on_submit=True):
 
 if submitted and prompt:
     log_orchestrator("user", prompt)
-    actions, response = _parse_prompt(prompt, available_countries, cities, available_types)
-    log_orchestrator("assistant", response)
-    st.session_state.ai_response = response
-    auto_actions, pending = _resolve_autonomy(actions, st.session_state.autonomy_mode, st.session_state.allow_refresh)
-    st.session_state.pending_actions = pending
-    if auto_actions:
-        for action in auto_actions:
-            _apply_action(action, cities, available_types, available_countries)
+    target_areas = _resolve_target_areas(selected_city, selected_country)
+    if not target_areas:
+        st.session_state.agent_error = "target_area_required"
+        st.error("Select a city or country before running the agent.")
+        st.stop()
+
+    strategy = _resolve_strategy(scout_profile)
+    orchestrator = CognitiveOrchestrator()
+    try:
+        plan_payload = orchestrator.plan(prompt, areas=target_areas, strategy=strategy)
+    except Exception as exc:
+        st.session_state.agent_error = str(exc)
+        st.error(st.session_state.agent_error)
+        st.stop()
+
+    st.session_state.agent_pending_plan = plan_payload
+    st.session_state.agent_pending_prompt = prompt
+    st.session_state.agent_pending_areas = target_areas
+    st.session_state.agent_pending_strategy = strategy
+    st.session_state.agent_requires_approval = _plan_requires_confirmation(plan_payload)
+
+    if not st.session_state.agent_requires_approval:
+        result = _run_orchestrator(prompt, target_areas, strategy, plan_payload)
+
+        if st.session_state.agent_report:
+            log_orchestrator("assistant", st.session_state.agent_report)
+
+        if st.session_state.agent_error:
+            st.error(st.session_state.agent_error)
+            st.stop()
+
+        top_eval = None
+        if st.session_state.agent_evaluations:
+            top_eval = max(
+                st.session_state.agent_evaluations,
+                key=lambda item: item.get("deal_score", 0),
+            )
+        top_listing_id = top_eval.get("listing_id") if isinstance(top_eval, dict) else None
+        if top_listing_id:
+            matched = filtered_df[filtered_df["ID"] == top_listing_id]
+            if matched.empty:
+                st.error("Top evaluated listing is not in the current lens.")
+                st.stop()
+            st.session_state.selected_title = matched.iloc[0]["Title"]
+        st.session_state.agent_pending_plan = None
+        st.session_state.agent_requires_approval = False
         st.rerun()
 
-# --- Main Tabs ---
-tab_atlas, tab_flow, tab_memo, tab_lab = st.tabs(["🗺 Atlas", "📋 Deal Flow", "📑 Memo", "🧪 Signal Lab"])
+pending_plan = st.session_state.agent_pending_plan
+if pending_plan and st.session_state.agent_requires_approval:
+    st.markdown("#### Approval Required")
+    _render_plan(pending_plan)
 
-# --- Atlas Tab ---
-with tab_atlas:
+    action_cols = st.columns([1, 1])
+    with action_cols[0]:
+        if st.button("Approve & Run Plan", use_container_width=True):
+            result = _run_orchestrator(
+                st.session_state.agent_pending_prompt,
+                st.session_state.agent_pending_areas,
+                st.session_state.agent_pending_strategy,
+                pending_plan,
+            )
+            if st.session_state.agent_report:
+                log_orchestrator("assistant", st.session_state.agent_report)
+
+            st.session_state.agent_pending_plan = None
+            st.session_state.agent_requires_approval = False
+
+            if st.session_state.agent_error:
+                st.error(st.session_state.agent_error)
+                st.stop()
+
+            top_eval = None
+            if st.session_state.agent_evaluations:
+                top_eval = max(
+                    st.session_state.agent_evaluations,
+                    key=lambda item: item.get("deal_score", 0),
+                )
+            top_listing_id = top_eval.get("listing_id") if isinstance(top_eval, dict) else None
+            if top_listing_id:
+                matched = filtered_df[filtered_df["ID"] == top_listing_id]
+                if matched.empty:
+                    st.error("Top evaluated listing is not in the current lens.")
+                    st.stop()
+                st.session_state.selected_title = matched.iloc[0]["Title"]
+            st.rerun()
+    with action_cols[1]:
+        if st.button("Cancel", use_container_width=True):
+            st.session_state.agent_pending_plan = None
+            st.session_state.agent_requires_approval = False
+            st.rerun()
+
+if st.session_state.agent_report:
+    st.markdown("#### Agent Report")
+    st.write(st.session_state.agent_report)
+
+if st.session_state.agent_quality_checks:
+    with st.expander("Quality Gates", expanded=False):
+        for check in st.session_state.agent_quality_checks:
+            status = check.get("status")
+            icon = "✅" if status == "pass" else "⚠️"
+            st.write(f"{icon} **{check.get('check')}** — {check.get('detail')}")
+
+if st.session_state.agent_ui_blocks:
+    _render_ui_blocks(st.session_state.agent_ui_blocks, filtered_df)
+
+if st.session_state.agent_plan:
+    with st.expander("Agent Plan", expanded=False):
+        plan_payload = st.session_state.agent_plan or {}
+        _render_plan(plan_payload)
+
+if st.session_state.agent_trace:
+    with st.expander("Execution Trace", expanded=False):
+        trace_df = pd.DataFrame(st.session_state.agent_trace)
+        if not trace_df.empty:
+            display_cols = ["action", "status", "duration_ms", "error"]
+            display_cols = [c for c in display_cols if c in trace_df.columns]
+            st.dataframe(trace_df[display_cols], use_container_width=True)
+        else:
+            st.caption("No trace data.")
+
+if st.session_state.agent_messages:
+    with st.expander("Agent Messages", expanded=False):
+        for message in st.session_state.agent_messages:
+            role = message.get("role", "agent")
+            content = message.get("content", "")
+            st.markdown(f"**{role}** — {content}")
+
+with st.expander("Agent Memory", expanded=False):
+    try:
+        memory = AgentMemoryStore()
+        recent_runs = memory.list_recent(limit=5)
+        if not recent_runs:
+            st.caption("No saved agent runs yet.")
+        else:
+            for run in recent_runs:
+                status_icon = "✅" if run.get("status") == "success" else "⚠️"
+                areas = ", ".join(run.get("target_areas") or [])
+                st.markdown(f"{status_icon} **{run.get('query')}** — {areas}")
+                if run.get("summary"):
+                    st.caption(run.get("summary"))
+    except Exception as exc:
+        st.caption(f"Memory unavailable: {exc}")
+
+# --- Layout ---
+left_panel, right_panel = st.columns([1.35, 1], gap="large")
+
+with left_panel:
+    panel_choice = st.radio(
+        "Panel",
+        ["📋 Deal Flow", "📑 Memo"],
+        index=0 if st.session_state.left_panel_view == "📋 Deal Flow" else 1,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="left_panel_view",
+    )
+
+    if panel_choice == "📋 Deal Flow":
+        st.markdown("### 📋 Deal Flow")
+        st.caption(f"{len(deal_df)} listings with photos • sorted by {sort_key}")
+
+        view_cols = st.columns([1, 1, 2])
+        with view_cols[0]:
+            deal_view = st.radio(
+                "Deal view",
+                ["Grid", "List"],
+                index=0 if st.session_state.deal_view_mode == "Grid" else 1,
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+            if deal_view != st.session_state.deal_view_mode:
+                st.session_state.deal_view_mode = deal_view
+                st.rerun()
+        with view_cols[1]:
+            page_size = st.selectbox(
+                "Per page",
+                [6, 8, 10, 12],
+                index=[6, 8, 10, 12].index(st.session_state.deal_page_size)
+                if st.session_state.deal_page_size in [6, 8, 10, 12]
+                else 1,
+                label_visibility="collapsed",
+            )
+            if page_size != st.session_state.deal_page_size:
+                st.session_state.deal_page_size = page_size
+                st.session_state.deal_page = 1
+                st.rerun()
+        with view_cols[2]:
+            st.caption("Only listings with photos are shown.")
+
+        total_deals = len(deal_df)
+        if total_deals == 0:
+            st.info("No listings with photos match the current lens.")
+        else:
+            page_size = max(1, int(st.session_state.deal_page_size))
+            total_pages = max(1, int(math.ceil(total_deals / page_size)))
+            current_page = min(max(1, int(st.session_state.deal_page)), total_pages)
+            start_idx = (current_page - 1) * page_size
+            end_idx = min(start_idx + page_size, total_deals)
+            page_df = deal_df.iloc[start_idx:end_idx]
+
+            nav_cols = st.columns([1, 1, 2])
+            with nav_cols[0]:
+                if st.button("Prev", disabled=current_page <= 1, use_container_width=True):
+                    st.session_state.deal_page = max(1, current_page - 1)
+                    st.rerun()
+            with nav_cols[1]:
+                if st.button("Next", disabled=current_page >= total_pages, use_container_width=True):
+                    st.session_state.deal_page = min(total_pages, current_page + 1)
+                    st.rerun()
+            with nav_cols[2]:
+                page_choice = st.selectbox(
+                    "Page",
+                    list(range(1, total_pages + 1)),
+                    index=current_page - 1,
+                    label_visibility="collapsed",
+                )
+                if page_choice != current_page:
+                    st.session_state.deal_page = page_choice
+                    st.rerun()
+            st.caption(f"Showing {start_idx + 1}-{end_idx} of {total_deals}")
+
+            if st.session_state.deal_view_mode == "Grid":
+                grid_cols = st.columns(2, gap="large")
+                for idx, row in page_df.reset_index(drop=True).iterrows():
+                    col = grid_cols[idx % 2]
+                    with col:
+                        imgs = _safe_list(row.get("Images"))
+                        ranked = rank_images_sample(imgs, sample_size=4, _image_selector=image_selector)
+                        if ranked:
+                            st.image(ranked[0], use_container_width=True)
+                        st.markdown(f"**{row['Title']}**")
+                        st.caption(f"{row['City']}, {row['Country']} • {row['Price']:,.0f} €")
+                        why = row.get("Why")
+                        if isinstance(why, str) and why:
+                            st.caption(why)
+                        if st.button("Memo", key=f"memo_grid_{row['ID']}", use_container_width=True):
+                            st.session_state.selected_title = row["Title"]
+                            st.session_state.left_panel_view = "📑 Memo"
+                            st.rerun()
+                        st.divider()
+            else:
+                for _, row in page_df.iterrows():
+                    row_cols = st.columns([1, 3, 1])
+                    with row_cols[0]:
+                        imgs = _safe_list(row.get("Images"))
+                        ranked = rank_images_sample(imgs, sample_size=3, _image_selector=image_selector)
+                        if ranked:
+                            st.image(ranked[0], use_container_width=True)
+                    with row_cols[1]:
+                        st.markdown(f"**{row['Title']}**")
+                        st.caption(f"{row['City']}, {row['Country']} • {row['Price']:,.0f} €")
+                        why = row.get("Why")
+                        if isinstance(why, str) and why:
+                            st.caption(why)
+                    with row_cols[2]:
+                        if st.button("Memo", key=f"memo_list_{row['ID']}", use_container_width=True):
+                            st.session_state.selected_title = row["Title"]
+                            st.session_state.left_panel_view = "📑 Memo"
+                            st.rerun()
+                    st.divider()
+    else:
+        st.markdown("### 📑 Memo")
+        if st.session_state.selected_title:
+            item = filtered_df[filtered_df["Title"] == st.session_state.selected_title].iloc[0]
+            st.markdown(f"**{item['Title']}**")
+            st.caption(f"{item['City']}, {item['Country']} • {item['Price']:,.0f} €")
+            intel = item.get("Intel Summary")
+            if isinstance(intel, str) and intel:
+                st.caption(intel)
+
+            imgs = _safe_list(item.get("Images"))
+            ranked = rank_images(imgs, _image_selector=image_selector)
+            if ranked:
+                st.image(ranked[0], use_container_width=True)
+
+            st.markdown("#### Scorecard")
+            items = build_scorecard_items(item)
+            for i in items:
+                icon = "✅" if i["positive"] else "⚠️"
+                st.write(f"{icon} **{i['label']}**: {i['detail']}")
+
+            st.metric("Asking Price", f"{item['Price']:,.0f} €")
+            st.metric("Fair Value", f"{item['Fair Value']:,.0f} €", delta=f"{item['Value Delta %']:.1%}")
+
+            st.markdown("#### SWOT")
+            swot = build_swot(item, [], "")
+            for k, v in swot.items():
+                st.write(f"**{k}**: {', '.join(v)}")
+        else:
+            st.info("Select a listing in Deal Flow to open its memo.")
+
+    st.markdown("### 🔎 Insights")
+    insight_options = ["🧪 Signal Lab", "🎯 Scout Picks", "🧭 Pipeline Status"]
+    insight_choice = st.selectbox(
+        "Insights",
+        insight_options,
+        index=insight_options.index(st.session_state.insight_view)
+        if st.session_state.insight_view in insight_options
+        else 0,
+        key="insight_view",
+        label_visibility="collapsed",
+    )
+
+    if insight_choice == "🧪 Signal Lab":
+        fig = px.scatter(
+            filtered_df,
+            x="Yield %",
+            y="Value Delta %",
+            color="Deal Score",
+            size="Price",
+            hover_data=["Title"],
+        )
+        selection = st.plotly_chart(fig, on_select="rerun", selection_mode="lasso", use_container_width=True)
+        selected = resolve_plotly_selection(selection, filtered_df, id_col="ID")
+        if not selected.empty:
+            st.dataframe(selected, use_container_width=True)
+        else:
+            st.info("Select points to drill down.")
+
+    elif insight_choice == "🎯 Scout Picks":
+        if not scout_picks:
+            st.info("Scout picks are empty for this lens.")
+        else:
+            for pick in scout_picks:
+                row = pick["row"]
+                st.caption(pick["label"])
+                st.markdown(f"**{row['Title']}**")
+                st.caption(_format_location(row.get("City"), row.get("Country")))
+                why = row.get("Why")
+                if isinstance(why, str) and why:
+                    st.caption(why)
+                if st.button("Open memo", key=f"pick_{row['ID']}"):
+                    st.session_state.selected_title = row["Title"]
+                    st.rerun()
+                st.divider()
+
+    else:
+        st.metric("Pipeline State", pipeline_state_text)
+        st.caption(f"Listings tracked: {pipeline_listings}")
+        st.caption(f"Listings updated: {pipeline_listings_at}")
+        if pipeline_error:
+            st.error(pipeline_error)
+        elif pipeline_needs_refresh:
+            st.warning("Pipeline refresh recommended.")
+        else:
+            st.success("Pipeline healthy.")
+
+with right_panel:
+    st.markdown("### 🗺 Atlas")
     import pydeck as pdk
     map_data = filtered_df.dropna(subset=["lat", "lon"]).copy()
     if map_data.empty:
         st.info("No listings to map.")
     else:
-        st.caption(f"{len(map_data)} listings on map")
-        map_data["lat"] = pd.to_numeric(map_data["lat"])
-        map_data["lon"] = pd.to_numeric(map_data["lon"])
-        
-        # Logic for coloring map points
-        color_mode = st.radio("Color by", ["Deal Score", "Yield %"], horizontal=True, key="atlas_color")
-        
-        # Pydeck layer creation logic omitted for brevity (kept basic scatter)
-        # Using visualizers from original code logic
-        
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=map_data,
-            get_position="[lon, lat]",
-            get_color="[200, 30, 0, 160]",
-            get_radius=100,
-            pickable=True
-        )
-        st.pydeck_chart(pdk.Deck(
-            map_style="light",
-            initial_view_state=pdk.ViewState(
-                latitude=map_data["lat"].mean(),
-                longitude=map_data["lon"].mean(),
-                zoom=11
-            ),
-            layers=[layer]
-        ))
+        map_data["lat"] = pd.to_numeric(map_data["lat"], errors="coerce")
+        map_data["lon"] = pd.to_numeric(map_data["lon"], errors="coerce")
+        map_data = map_data.dropna(subset=["lat", "lon"])
+        if map_data.empty:
+            st.info("No listings to map.")
+        else:
+            st.caption(f"{len(map_data)} listings on map")
+            center_lat, center_lon, zoom = _compute_map_view_state(
+                map_data, st.session_state.selected_title
+            )
+            map_is_dark = str(st.get_option("theme.base") or "").lower() == "dark"
+            tooltip_style = {
+                "color": "#f8f6f0" if map_is_dark else "#1a1a1a",
+                "backgroundColor": "rgba(15, 18, 24, 0.9)" if map_is_dark else "rgba(255, 255, 255, 0.95)",
+            }
 
-# --- Deal Flow Tab ---
-with tab_flow:
-    if scout_picks:
-        st.markdown("**Scout picks**")
-        cols = st.columns(len(scout_picks))
-        for col, pick in zip(cols, scout_picks):
-            with col:
-                row = pick["row"]
-                st.caption(pick["label"])
-                st.markdown(f"**{row['Title']}**")
-                
-                # Image handling using extracted helper
-                imgs = _safe_list(row.get("Images"))
-                ranked = rank_images_sample(imgs, _image_selector=image_selector)
-                if ranked:
-                    st.image(ranked[0], use_container_width=True)
-                
-                if st.button("View", key=f"btn_flow_{row['ID']}"):
-                     st.session_state.selected_title = row["Title"]
-                     st.session_state.active_view = "Investment Memo"
-                     st.rerun()
-    st.divider()
-    
-    # Grid of cards
-    for idx, row in filtered_df.iterrows():
-        st.markdown(f"#### {row['Title']}")
-        st.caption(f"{row['City']}, {row['Country']} • {row['Price']:,.0f} €")
-        # Simplified listing loop
+            selected_title = st.session_state.selected_title
+            map_data["radius"] = np.where(map_data["Title"] == selected_title, 360, 220)
+            if selected_title:
+                map_data["color"] = map_data["Title"].apply(
+                    lambda title: [255, 255, 255, 230] if title == selected_title else [255, 140, 0, 180]
+                )
+            else:
+                map_data["color"] = [[255, 140, 0, 180]] * len(map_data)
+            map_data["price_label"] = map_data["Price"].apply(
+                lambda value: f"€{value:,.0f}" if pd.notna(value) else "N/A"
+            )
+            if "Deal Score" in map_data.columns:
+                map_data["score_label"] = map_data["Deal Score"].apply(
+                    lambda value: f"{value:.2f}" if pd.notna(value) else "N/A"
+                )
+            else:
+                map_data["score_label"] = "N/A"
 
-# --- Memo Tab (Detailed View) ---
-with tab_memo:
-    if st.session_state.selected_title:
-        item = filtered_df[filtered_df["Title"] == st.session_state.selected_title].iloc[0]
-        st.title(item["Title"])
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            # Images
-            imgs = _safe_list(item.get("Images"))
-            ranked = rank_images(imgs, _image_selector=image_selector)
-            if ranked:
-                st.image(ranked[0])
-            st.markdown("### SWOT")
-            swot = build_swot(item, [], "")  # Simplified for refactor demo
-            for k, v in swot.items():
-                st.write(f"**{k}**: {', '.join(v)}")
-                
-        with c2:
-            st.markdown("### Scorecard")
-            items = build_scorecard_items(item)
-            for i in items:
-                icon = "✅" if i["positive"] else "⚠️"
-                st.write(f"{icon} **{i['label']}**: {i['detail']}")
-                
-            st.metric("Asking Price", f"{item['Price']:,.0f} €")
-            st.metric("Fair Value", f"{item['Fair Value']:,.0f} €", delta=f"{item['Value Delta %']:.1%}")
-
-# --- Signal Lab ---
-with tab_lab:
-    st.markdown("### Signal Lab")
-    fig = px.scatter(
-        filtered_df, 
-        x="Yield %", 
-        y="Value Delta %", 
-        color="Deal Score",
-        size="Price",
-        hover_data=["Title"]
-    )
-    
-    selection = st.plotly_chart(fig, on_select="rerun", selection_mode="lasso")
-    selected = resolve_plotly_selection(selection, filtered_df, id_col="ID")
-    
-    if not selected.empty:
-        st.dataframe(selected)
-    else:
-        st.info("Select points to drill down.")
-
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=map_data,
+                get_position="[lon, lat]",
+                get_fill_color="color",
+                get_line_color="[255, 255, 255, 120]",
+                get_radius="radius",
+                pickable=True,
+                line_width_min_pixels=1,
+                filled=True,
+                stroked=True,
+            )
+            st.pydeck_chart(
+                pdk.Deck(
+                    map_style="dark" if map_is_dark else "light",
+                    initial_view_state=pdk.ViewState(
+                        latitude=center_lat,
+                        longitude=center_lon,
+                        zoom=zoom,
+                        pitch=45,
+                        bearing=0,
+                    ),
+                    layers=[layer],
+                    tooltip={
+                        "html": (
+                            "<b>{Title}</b><br/>"
+                            "{City}, {Country}<br/>"
+                            "Price: {price_label}<br/>"
+                            "Deal Score: {score_label}"
+                        ),
+                        "style": tooltip_style,
+                    },
+                ),
+                use_container_width=True,
+            )

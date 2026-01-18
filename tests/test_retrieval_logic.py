@@ -1,6 +1,6 @@
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import numpy as np
 import sys
 import os
@@ -13,7 +13,10 @@ from src.platform.domain.schema import CanonicalListing, GeoLocation
 
 class TestCompRetrieverLogic(unittest.TestCase):
     def setUp(self):
-        # Create a mock retriever that bypasses FAISS loading
+        self.faiss_patcher = patch("src.valuation.services.retrieval.faiss", MagicMock())
+        self.faiss_patcher.start()
+
+        # Create a mock retriever that bypasses legacy index loading
         self.retriever = CompRetriever(index_path="non_existent", metadata_path="non_existent")
         
         # Mock the index and model
@@ -37,6 +40,9 @@ class TestCompRetrieverLogic(unittest.TestCase):
         
         self.retriever.index.ntotal = n_listings
         self.retriever.index.search.return_value = (distances, indices)
+
+    def tearDown(self):
+        self.faiss_patcher.stop()
 
     def setup_mock_listings(self):
         self.retriever.listings = {}

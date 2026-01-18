@@ -38,9 +38,36 @@
   box-sizing: border-box;
 }
 
-/* Hides the hamburger menu and default header */
-.stApp > header, header[data-testid="stHeader"] {
-  display: none !important;
+/* Keep sidebar collapse control accessible while hiding the header chrome */
+.stApp > header,
+header[data-testid="stHeader"] {
+  position: relative;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+header[data-testid="stHeader"] * {
+  visibility: hidden;
+}
+
+header[data-testid="stHeader"] button[data-testid="collapsedControl"] {
+  visibility: visible;
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 1100;
+  background: var(--surface-strong);
+  border: 1px solid rgba(21, 19, 16, 0.2);
+  border-radius: 999px;
+  padding: 0.15rem 0.35rem;
+  box-shadow: var(--shadow-soft);
+}
+
+header[data-testid="stHeader"] button[data-testid="collapsedControl"] svg {
+  color: var(--ink);
 }
 
 [data-testid="stToolbar"] {
@@ -430,7 +457,9 @@ a:hover {
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.08em;
+  letter-spacing: 0.08em;
   box-shadow: 0 8px 18px rgba(193, 147, 91, 0.25);
+  white-space: nowrap;
 }
 
 [data-testid="stSidebar"] label {
@@ -1217,15 +1246,15 @@ footer {
     --accent-2: #6db39f;
     --accent-3: #d1894b;
     --accent-4: #8aa6c4;
-  --alert-warn-bg: rgba(209, 136, 69, 0.2);
-  --alert-warn-border: rgba(209, 136, 69, 0.5);
-  --alert-warn-text: #f2d2b2;
-  --success-bg: rgba(109, 179, 159, 0.2);
-  --success-border: rgba(109, 179, 159, 0.6);
-  --success-text: #bde8da;
-  --danger-bg: rgba(207, 105, 105, 0.2);
-  --danger-border: rgba(207, 105, 105, 0.6);
-  --danger-text: #f3b9b9;
+    --alert-warn-bg: rgba(209, 136, 69, 0.2);
+    --alert-warn-border: rgba(209, 136, 69, 0.5);
+    --alert-warn-text: #f2d2b2;
+    --success-bg: rgba(109, 179, 159, 0.2);
+    --success-border: rgba(109, 179, 159, 0.6);
+    --success-text: #bde8da;
+    --danger-bg: rgba(207, 105, 105, 0.2);
+    --danger-border: rgba(207, 105, 105, 0.6);
+    --danger-text: #f3b9b9;
     --shadow-soft: 0 18px 32px rgba(0, 0, 0, 0.4);
     --shadow-strong: 0 30px 60px rgba(0, 0, 0, 0.5);
     --text-color: var(--ink);
@@ -1267,6 +1296,10 @@ footer {
   [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #121822 0%, #171e29 100%);
     border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  header[data-testid="stHeader"] button[data-testid="collapsedControl"] {
+    border: 1px solid rgba(255, 255, 255, 0.2);
   }
 
   .app-bar {

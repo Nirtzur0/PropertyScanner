@@ -62,6 +62,14 @@ class ScrapeClient:
         )
         self.browser_engine = self.browser_fetcher.engine
 
+    @staticmethod
+    def _running_loop() -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return loop.is_running()
+
     def fetch_html(
         self,
         url: str,
@@ -70,6 +78,8 @@ class ScrapeClient:
         timeout_s: float = 30.0,
         backoff_base: float = 1.4,
     ) -> Optional[str]:
+        if self._running_loop():
+            raise RuntimeError("scrape_client_async_required")
         if not self.compliance_manager.check_and_wait(
             url, rate_limit_seconds=self.rate_limit_seconds
         ):
@@ -84,6 +94,29 @@ class ScrapeClient:
 
         return None
 
+    async def fetch_html_async(
+        self,
+        url: str,
+        *,
+        retries: int = 3,
+        timeout_s: float = 30.0,
+        backoff_base: float = 1.4,
+    ) -> Optional[str]:
+        allowed = await asyncio.to_thread(
+            self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
+        )
+        if not allowed:
+            logger.warning("crawler_blocked_by_robots", url=url)
+            return None
+
+        for attempt in range(retries):
+            html = await self.browser_fetcher.fetch_async(url, timeout_s=timeout_s)
+            if html:
+                return html
+            await asyncio.sleep(backoff_base ** attempt)
+
+        return None
+
     def fetch_html_batch(
         self,
         urls: Iterable[str],
@@ -92,6 +125,8 @@ class ScrapeClient:
         timeout_s: float = 30.0,
         retries: int = 3,
     ) -> list[FetchResult]:
+        if self._running_loop():
+            raise RuntimeError("scrape_client_async_required")
         url_list = [u for u in urls if u]
         if not url_list:
             return []
@@ -129,6 +164,49 @@ class ScrapeClient:
                 html = self.fetch_html(url, retries=retries, timeout_s=timeout_s)
                 results.append(FetchResult(url=url, html=html, error=str(exc)))
             return results
+
+        results = [FetchResult(url=item.url, html=item.html) for item in browser_results]
+        return results
+
+    async def fetch_html_batch_async(
+        self,
+        urls: Iterable[str],
+        *,
+        max_workers: Optional[int] = None,
+        timeout_s: float = 30.0,
+        retries: int = 3,
+    ) -> list[FetchResult]:
+        url_list = [u for u in urls if u]
+        if not url_list:
+            return []
+
+        deduped = list(dict.fromkeys(url_list))
+        worker_count = max_workers if max_workers is not None else self.max_workers
+        worker_count = max(1, int(worker_count))
+        worker_count = min(worker_count, len(deduped))
+
+        if worker_count <= 1:
+            results = []
+            for url in deduped:
+                html = await self.fetch_html_async(url, retries=retries, timeout_s=timeout_s)
+                results.append(FetchResult(url=url, html=html))
+            return results
+
+        async def preflight(url: str) -> bool:
+            return await asyncio.to_thread(
+                self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
+            )
+
+        try:
+            browser_results = await self.browser_engine.fetch_many(
+                deduped,
+                timeout_s=timeout_s,
+                max_concurrency=worker_count,
+                preflight=preflight,
+            )
+        except Exception as exc:
+            logger.warning("browser_batch_failed", error=str(exc))
+            raise
 
         results = [FetchResult(url=item.url, html=item.html) for item in browser_results]
         return results

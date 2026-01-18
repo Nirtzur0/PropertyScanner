@@ -15,7 +15,6 @@ streamlit>=1.30.0
 curl_cffi>=0.7.3
 plotly>=5.18.0
 sentence-transformers>=2.2.2
-faiss-cpu>=1.7.4
 numpy>=1.26
 lightgbm>=4.1
 scikit-learn>=1.3

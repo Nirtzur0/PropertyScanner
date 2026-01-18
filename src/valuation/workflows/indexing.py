@@ -47,14 +47,13 @@ def build_vector_index(
         vlm_policy = app_config.valuation.retriever_vlm_policy
     if backend is None:
         backend = app_config.valuation.retriever_backend
+    backend = str(backend).strip().lower()
+    if backend != "lancedb":
+        raise ValueError("retriever_backend_lancedb_only")
     if lancedb_path is None:
         lancedb_path = app_config.valuation.retriever_lancedb_path
-
-    if backend == "lancedb":
-        index_path = str(lancedb_path)
-    else:
-        index_path = str(index_path)
-        lancedb_path = str(lancedb_path)
+    index_path = str(lancedb_path)
+    lancedb_path = str(lancedb_path)
 
     if clear:
         for path in (index_path, metadata_path):
@@ -66,7 +65,7 @@ def build_vector_index(
         logger.info("vector_index_cleared", index_path=index_path, metadata_path=metadata_path, backend=backend)
 
     retriever = build_retriever(
-        backend=backend,
+        backend="lancedb",
         index_path=index_path,
         metadata_path=metadata_path,
         lancedb_path=lancedb_path,
@@ -104,7 +103,7 @@ def build_vector_index(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Build vector index (FAISS/LanceDB) from listings DB.")
+    parser = argparse.ArgumentParser(description="Build vector index (LanceDB) from listings DB.")
     defaults = load_app_config_safe()
     parser.add_argument(
         "--db-url",
@@ -120,19 +119,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Filter listings",
     )
     parser.add_argument("--limit", type=int, default=0, help="Max listings to index (0 = no limit)")
-    parser.add_argument(
-        "--backend",
-        type=str,
-        default=defaults.valuation.retriever_backend,
-        choices=["faiss", "lancedb"],
-        help="Vector index backend",
-    )
-    parser.add_argument(
-        "--index-path",
-        type=str,
-        default=str(defaults.pipeline.index_path),
-        help="FAISS index output path (ignored when backend=lancedb)",
-    )
     parser.add_argument(
         "--lancedb-path",
         type=str,
@@ -163,10 +149,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         db_url=args.db_url,
         listing_type=args.listing_type,
         limit=args.limit,
-        index_path=args.index_path,
         lancedb_path=args.lancedb_path,
         metadata_path=args.metadata_path,
-        backend=args.backend,
         clear=args.clear,
         batch_size=args.batch_size,
         model_name=args.model_name,

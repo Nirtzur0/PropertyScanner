@@ -82,9 +82,19 @@ def crawl_backfill_task(
 
 
 @task(retries=2, retry_delay_seconds=60)
-def transactions_ingest_task(*, db_path: str, transactions_path: str) -> Dict[str, Any]:
+def transactions_ingest_task(
+    *,
+    db_path: str,
+    transactions_path: str,
+    listing_type: str = "sale",
+    source_id: Optional[str] = None,
+) -> Dict[str, Any]:
     service = TransactionsIngestService(db_path=db_path)
-    return service.ingest_file(transactions_path)
+    return service.ingest_file(
+        transactions_path,
+        default_listing_type=listing_type,
+        default_source_id=source_id,
+    )
 
 
 @task(
@@ -94,8 +104,26 @@ def transactions_ingest_task(*, db_path: str, transactions_path: str) -> Dict[st
     cache_expiration=timedelta(hours=12),
     persist_result=True,
 )
-def market_data_task(*, db_path: str, enable_cache: bool = True) -> Dict[str, Any]:
-    build_market_data(db_path=db_path)
+def market_data_task(
+    *,
+    db_path: str,
+    skip_migrations: bool = False,
+    skip_macro: bool = False,
+    skip_market_indices: bool = False,
+    skip_hedonic: bool = False,
+    city: Optional[str] = None,
+    train_tft: bool = False,
+    enable_cache: bool = True,
+) -> Dict[str, Any]:
+    build_market_data(
+        db_path=db_path,
+        skip_migrations=skip_migrations,
+        skip_macro=skip_macro,
+        skip_market_indices=skip_market_indices,
+        skip_hedonic=skip_hedonic,
+        city=city,
+        train_tft=train_tft,
+    )
     return {"status": "ok"}
 
 
@@ -111,20 +139,48 @@ def build_vector_index_task(
     db_url: str,
     index_path: str,
     metadata_path: str,
+    listing_type: str = "all",
+    limit: int = 0,
+    lancedb_path: Optional[str] = None,
+    clear: bool = False,
+    batch_size: int = 200,
+    model_name: Optional[str] = None,
+    vlm_policy: Optional[str] = None,
     enable_cache: bool = True,
 ) -> Dict[str, Any]:
-    build_vector_index(
+    indexed = build_vector_index(
         db_url=db_url,
-        listing_type="all",
+        listing_type=listing_type,
+        limit=limit,
         index_path=index_path,
         metadata_path=metadata_path,
+        lancedb_path=lancedb_path,
+        clear=clear,
+        batch_size=batch_size,
+        model_name=model_name,
+        vlm_policy=vlm_policy,
     )
-    return {"status": "ok"}
+    return {"status": "ok", "indexed": indexed}
 
 
 @task(retries=1, retry_delay_seconds=60)
-def train_model_task(*, db_path: str, epochs: int) -> Dict[str, Any]:
-    train_model(db_path=db_path, epochs=epochs)
+def train_model_task(
+    *,
+    db_path: str,
+    epochs: int,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    patience: int = 10,
+    device: str = "cpu",
+) -> Dict[str, Any]:
+    train_model(
+        db_path=db_path,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        patience=patience,
+        device=device,
+    )
     return {"status": "ok"}
 
 
@@ -142,12 +198,18 @@ def maintenance_clean_task(*, db_path: str) -> Dict[str, Any]:
 
 @task(retries=1, retry_delay_seconds=30)
 def valuation_backfill_task(
-    *, db_path: str, listing_type: str = "sale", limit: int = 0, max_age_days: int = 7
+    *,
+    db_path: Optional[str] = None,
+    db_url: Optional[str] = None,
+    listing_type: str = "sale",
+    limit: int = 0,
+    max_age_days: int = 7,
+    city: Optional[str] = None,
 ) -> int:
-    # Resolve DB URL from path for the task
-    db_url = resolve_db_url(db_path=db_path)
+    resolved = resolve_db_url(db_url=db_url, db_path=db_path)
     return backfill_valuations(
-        db_url=db_url,
+        db_url=resolved,
+        city=city,
         listing_type=listing_type,
         limit=limit,
         max_age_days=max_age_days,
@@ -164,6 +226,9 @@ def maintenance_flow(
     vlm_override: bool = False,
     vlm_workers: int = 4,
     valuation_limit: int = 0,
+    valuation_listing_type: str = "sale",
+    valuation_city: Optional[str] = None,
+    valuation_max_age_days: int = 7,
 ) -> Dict[str, Any]:
     logger = get_run_logger()
     app_config = load_app_config_safe()
@@ -209,18 +274,304 @@ def maintenance_flow(
             step_name="valuation_backfill",
             func=lambda: valuation_backfill_task(
                 db_path=db_path,
+                listing_type=valuation_listing_type,
                 limit=valuation_limit,
-                max_age_days=7,
+                max_age_days=valuation_max_age_days,
+                city=valuation_city,
             ),
             metadata={
                 "db_path": db_path,
                 "limit": valuation_limit,
-                "max_age_days": 7,
+                "listing_type": valuation_listing_type,
+                "max_age_days": valuation_max_age_days,
+                "city": valuation_city,
             },
         )
         results["valuation"] = count
 
     return results
+
+
+@flow(name="transactions_flow")
+def transactions_flow(
+    *,
+    db_path: Optional[str] = None,
+    transactions_path: Optional[str] = None,
+    listing_type: str = "sale",
+    source_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    app_config = load_app_config_safe()
+    if db_path is None:
+        db_path = str(app_config.pipeline.db_path)
+    if transactions_path is None:
+        transactions_path = str(app_config.paths.transactions_path)
+    if not transactions_path or not transactions_path.strip():
+        raise ValueError("transactions_path_missing")
+
+    tracker = PipelineRunTracker(db_path=db_path)
+    logger.info("prefect_transactions_ingest", path=transactions_path)
+    result = _run_tracked(
+        tracker,
+        step_name="transactions_ingest",
+        func=lambda: transactions_ingest_task(
+            db_path=db_path,
+            transactions_path=transactions_path,
+            listing_type=listing_type,
+            source_id=source_id,
+        ),
+        metadata={
+            "db_path": db_path,
+            "path": transactions_path,
+            "listing_type": listing_type,
+            "source_id": source_id,
+        },
+    )
+    return {"status": "ok", "result": result}
+
+
+@flow(name="market_data_flow")
+def market_data_flow(
+    *,
+    db_path: Optional[str] = None,
+    skip_migrations: bool = False,
+    skip_macro: bool = False,
+    skip_market_indices: bool = False,
+    skip_hedonic: bool = False,
+    city: Optional[str] = None,
+    train_tft: bool = False,
+    registries_only: bool = False,
+    transactions: bool = False,
+    transactions_path: Optional[str] = None,
+    transactions_listing_type: str = "sale",
+    transactions_source_id: Optional[str] = None,
+    enable_cache: bool = True,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    app_config = load_app_config_safe()
+    if db_path is None:
+        db_path = str(app_config.pipeline.db_path)
+
+    if registries_only:
+        skip_migrations = True
+        skip_macro = True
+        skip_market_indices = True
+        skip_hedonic = True
+
+    tracker = PipelineRunTracker(db_path=db_path)
+    _run_tracked(
+        tracker,
+        step_name="market_data",
+        func=lambda: market_data_task(
+            db_path=db_path,
+            skip_migrations=skip_migrations,
+            skip_macro=skip_macro,
+            skip_market_indices=skip_market_indices,
+            skip_hedonic=skip_hedonic,
+            city=city,
+            train_tft=train_tft,
+            enable_cache=enable_cache,
+        ),
+        metadata={
+            "db_path": db_path,
+            "skip_migrations": skip_migrations,
+            "skip_macro": skip_macro,
+            "skip_market_indices": skip_market_indices,
+            "skip_hedonic": skip_hedonic,
+            "city": city,
+            "train_tft": train_tft,
+        },
+    )
+
+    results: Dict[str, Any] = {"market_data": "ok"}
+    if transactions:
+        tx_path = transactions_path or str(app_config.paths.transactions_path)
+        logger.info("prefect_market_data_transactions", path=tx_path)
+        _run_tracked(
+            tracker,
+            step_name="transactions_ingest",
+            func=lambda: transactions_ingest_task(
+                db_path=db_path,
+                transactions_path=tx_path,
+                listing_type=transactions_listing_type,
+                source_id=transactions_source_id,
+            ),
+            metadata={
+                "db_path": db_path,
+                "path": tx_path,
+                "listing_type": transactions_listing_type,
+                "source_id": transactions_source_id,
+            },
+        )
+        results["transactions"] = "ok"
+
+    return results
+
+
+@flow(name="build_index_flow")
+def build_index_flow(
+    *,
+    db_url: Optional[str] = None,
+    db_path: Optional[str] = None,
+    listing_type: str = "all",
+    limit: int = 0,
+    index_path: Optional[str] = None,
+    lancedb_path: Optional[str] = None,
+    metadata_path: Optional[str] = None,
+    clear: bool = False,
+    batch_size: int = 200,
+    model_name: Optional[str] = None,
+    vlm_policy: Optional[str] = None,
+    enable_cache: bool = True,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    app_config = load_app_config_safe()
+    if db_path is None and db_url is None:
+        db_path = str(app_config.pipeline.db_path)
+
+    resolved = resolve_db_url(db_url=db_url, db_path=db_path)
+    if index_path is None:
+        index_path = str(app_config.pipeline.index_path)
+    if metadata_path is None:
+        metadata_path = str(app_config.pipeline.metadata_path)
+    if lancedb_path is None:
+        lancedb_path = str(app_config.valuation.retriever_lancedb_path)
+
+    tracker = PipelineRunTracker(db_url=resolved)
+    logger.info("prefect_build_index_start")
+    result = _run_tracked(
+        tracker,
+        step_name="vector_index",
+        func=lambda: build_vector_index_task(
+            db_url=resolved,
+            listing_type=listing_type,
+            limit=limit,
+            index_path=index_path,
+            lancedb_path=lancedb_path,
+            metadata_path=metadata_path,
+            clear=clear,
+            batch_size=batch_size,
+            model_name=model_name,
+            vlm_policy=vlm_policy,
+            enable_cache=enable_cache,
+        ),
+        metadata={
+            "db_url": resolved,
+            "listing_type": listing_type,
+            "limit": limit,
+            "index_path": index_path,
+            "lancedb_path": lancedb_path,
+            "metadata_path": metadata_path,
+            "clear": clear,
+            "batch_size": batch_size,
+            "model_name": model_name,
+            "vlm_policy": vlm_policy,
+        },
+    )
+    return {"status": "ok", "result": result}
+
+
+@flow(name="training_flow")
+def training_flow(
+    *,
+    db_path: Optional[str] = None,
+    epochs: int = 100,
+    batch_size: int = 16,
+    lr: float = 1e-4,
+    patience: int = 15,
+    device: str = "cpu",
+    run_vlm: bool = True,
+    vlm_override: bool = False,
+    vlm_workers: int = 4,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    app_config = load_app_config_safe()
+    if db_path is None:
+        db_path = str(app_config.pipeline.db_path)
+
+    tracker = PipelineRunTracker(db_path=db_path)
+    results: Dict[str, Any] = {}
+
+    if run_vlm:
+        logger.info("training_vlm_start")
+        _run_tracked(
+            tracker,
+            step_name="vlm_backfill",
+            func=lambda: vlm_backfill_task(
+                db_path=db_path,
+                override=vlm_override,
+                workers=vlm_workers,
+            ),
+            metadata={
+                "db_path": db_path,
+                "override": vlm_override,
+                "workers": vlm_workers,
+            },
+        )
+        results["vlm"] = "ok"
+
+    logger.info("training_model_start", epochs=epochs)
+    _run_tracked(
+        tracker,
+        step_name="train_model",
+        func=lambda: train_model_task(
+            db_path=db_path,
+            epochs=epochs,
+            batch_size=batch_size,
+            lr=lr,
+            patience=patience,
+            device=device,
+        ),
+        metadata={
+            "db_path": db_path,
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "lr": lr,
+            "patience": patience,
+            "device": device,
+        },
+    )
+    results["train"] = "ok"
+    return results
+
+
+@flow(name="valuation_backfill_flow")
+def valuation_backfill_flow(
+    *,
+    db_url: Optional[str] = None,
+    db_path: Optional[str] = None,
+    listing_type: str = "sale",
+    limit: int = 0,
+    max_age_days: int = 7,
+    city: Optional[str] = None,
+) -> Dict[str, Any]:
+    app_config = load_app_config_safe()
+    if db_path is None and db_url is None:
+        db_url = resolve_db_url(
+            db_url=app_config.pipeline.db_url,
+            db_path=app_config.pipeline.db_path,
+        )
+    resolved = resolve_db_url(db_url=db_url, db_path=db_path)
+    tracker = PipelineRunTracker(db_url=resolved)
+    count = _run_tracked(
+        tracker,
+        step_name="valuation_backfill",
+        func=lambda: valuation_backfill_task(
+            db_url=resolved,
+            listing_type=listing_type,
+            limit=limit,
+            max_age_days=max_age_days,
+            city=city,
+        ),
+        metadata={
+            "db_url": resolved,
+            "listing_type": listing_type,
+            "limit": limit,
+            "max_age_days": max_age_days,
+            "city": city,
+        },
+    )
+    return {"processed": count}
 
 
 @flow(name="preflight_flow")
@@ -290,24 +641,20 @@ def preflight_flow(
             results["steps"].append("crawl_backfill")
 
     if not skip_transactions:
-        try:
-            tx_path = transactions_path or str(app_config.paths.transactions_path)
-            if tx_path and tx_path.strip():
-                logger.info("prefect_preflight_transactions", path=tx_path)
-                _run_tracked(
-                    tracker,
-                    step_name="transactions_ingest",
-                    func=lambda: transactions_ingest_task(
-                        db_path=db_path,
-                        transactions_path=tx_path,
-                    ),
-                    metadata={"path": tx_path},
-                )
-                results["steps"].append("transactions_ingest")
-        except FileNotFoundError:
-            logger.info("prefect_preflight_transactions_missing", path=transactions_path)
-        except Exception as exc:
-            logger.warning("prefect_preflight_transactions_failed", error=str(exc))
+        tx_path = transactions_path or str(app_config.paths.transactions_path)
+        if not tx_path or not tx_path.strip():
+            raise ValueError("transactions_path_missing")
+        logger.info("prefect_preflight_transactions", path=tx_path)
+        _run_tracked(
+            tracker,
+            step_name="transactions_ingest",
+            func=lambda: transactions_ingest_task(
+                db_path=db_path,
+                transactions_path=tx_path,
+            ),
+            metadata={"path": tx_path},
+        )
+        results["steps"].append("transactions_ingest")
 
     if not skip_market_data:
         state = state_service.snapshot()
@@ -402,6 +749,143 @@ def add_maintenance_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     parser.add_argument("--vlm-override", action="store_true", help="Override existing VLM descriptions")
     parser.add_argument("--vlm-workers", type=int, default=4)
     parser.add_argument("--valuation-limit", type=int, default=0)
+    parser.add_argument(
+        "--valuation-listing-type",
+        type=str,
+        default="sale",
+        choices=["sale", "rent", "all"],
+        help="Listing type filter for valuation backfill",
+    )
+    parser.add_argument("--valuation-city", type=str, default=None, help="City filter for valuation backfill")
+    parser.add_argument("--valuation-max-age-days", type=int, default=7)
+    return parser
+
+
+def add_transactions_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument(
+        "--path",
+        type=str,
+        default=str(defaults.paths.transactions_path),
+        help="CSV/JSONL path",
+    )
+    parser.add_argument(
+        "--db",
+        type=str,
+        default=str(defaults.pipeline.db_path),
+        help="SQLite DB path",
+    )
+    parser.add_argument("--listing-type", type=str, default="sale", choices=["sale", "rent"])
+    parser.add_argument("--source-id", type=str, default=None, help="Default source_id for matching")
+    return parser
+
+
+def add_market_data_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument(
+        "--db",
+        type=str,
+        default=str(defaults.pipeline.db_path),
+        help="Path to SQLite DB",
+    )
+    parser.add_argument("--skip-migrations", action="store_true", help="Skip schema migrations")
+    parser.add_argument("--skip-macro", action="store_true", help="Skip macro_indicators refresh")
+    parser.add_argument("--skip-market-indices", action="store_true", help="Skip market_indices recompute")
+    parser.add_argument("--skip-hedonic", action="store_true", help="Skip hedonic_indices recompute")
+    parser.add_argument("--city", type=str, default=None, help="Only compute hedonic index for this city (lowercased)")
+    parser.add_argument("--train-tft", action="store_true", help="Train TFT forecaster (requires hedonic indices)")
+    parser.add_argument(
+        "--registries-only",
+        action="store_true",
+        help="Run ONLY official registry ingestion (skips indices/macro)",
+    )
+    parser.add_argument("--transactions", action="store_true", help="Also ingest sold/transaction data from defaults")
+    parser.add_argument("--transactions-path", type=str, default=None)
+    parser.add_argument("--transactions-listing-type", type=str, default="sale", choices=["sale", "rent"])
+    parser.add_argument("--transactions-source-id", type=str, default=None)
+    parser.add_argument("--disable-cache", action="store_true", help="Disable Prefect task caching")
+    return parser
+
+
+def add_build_index_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument(
+        "--db-url",
+        type=str,
+        default=None,
+        help="SQLAlchemy DB URL",
+    )
+    parser.add_argument("--db", type=str, default=None, help="SQLite DB path (optional)")
+    parser.add_argument(
+        "--listing-type",
+        type=str,
+        default="all",
+        choices=["sale", "rent", "all"],
+        help="Filter listings",
+    )
+    parser.add_argument("--limit", type=int, default=0, help="Max listings to index (0 = no limit)")
+    parser.add_argument(
+        "--lancedb-path",
+        type=str,
+        default=str(defaults.valuation.retriever_lancedb_path),
+        help="LanceDB index directory",
+    )
+    parser.add_argument(
+        "--metadata-path", type=str, default=str(defaults.pipeline.metadata_path), help="Metadata output path"
+    )
+    parser.add_argument("--clear", action="store_true", help="Delete existing index/metadata before building")
+    parser.add_argument("--batch-size", type=int, default=200, help="Batch size for indexing")
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=defaults.valuation.retriever_model_name,
+        help="SentenceTransformer model name",
+    )
+    parser.add_argument(
+        "--vlm-policy",
+        type=str,
+        default=defaults.valuation.retriever_vlm_policy,
+        choices=["gated", "off"],
+        help="VLM text policy",
+    )
+    parser.add_argument("--disable-cache", action="store_true", help="Disable Prefect task caching")
+    return parser
+
+
+def add_training_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument("--db", default=str(defaults.pipeline.db_path), help="SQLite DB path")
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--patience", type=int, default=15)
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
+    parser.add_argument("--skip-vlm", action="store_true", help="Skip VLM preprocessing before training")
+    parser.add_argument("--vlm-override", action="store_true", help="Override existing VLM descriptions")
+    parser.add_argument("--vlm-workers", type=int, default=4)
+    return parser
+
+
+def add_backfill_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument(
+        "--db-url",
+        type=str,
+        default=str(resolve_db_url(db_url=defaults.pipeline.db_url, db_path=defaults.pipeline.db_path)),
+        help="SQLAlchemy DB URL",
+    )
+    parser.add_argument("--city", type=str, default=None, help="Only backfill a specific city (case-insensitive)")
+    parser.add_argument(
+        "--listing-type",
+        type=str,
+        default="sale",
+        choices=["sale", "rent", "all"],
+        help="Filter listings",
+    )
+    parser.add_argument("--limit", type=int, default=0, help="Max listings to process (0 = no limit)")
+    parser.add_argument(
+        "--max-age-days", type=int, default=7, help="Skip if cached valuation is newer than this"
+    )
     return parser
 
 
@@ -417,6 +901,21 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     maintenance_parser = subparsers.add_parser("maintenance", help="Run maintenance as a Prefect flow")
     add_maintenance_args(maintenance_parser)
+
+    transactions_parser = subparsers.add_parser("transactions", help="Ingest transactions as a Prefect flow")
+    add_transactions_args(transactions_parser)
+
+    market_data_parser = subparsers.add_parser("market-data", help="Run market data as a Prefect flow")
+    add_market_data_args(market_data_parser)
+
+    build_index_parser = subparsers.add_parser("build-index", help="Run vector index build as a Prefect flow")
+    add_build_index_args(build_index_parser)
+
+    training_parser = subparsers.add_parser("train-pipeline", help="Run VLM + training as a Prefect flow")
+    add_training_args(training_parser)
+
+    backfill_parser = subparsers.add_parser("backfill", help="Run valuation backfill as a Prefect flow")
+    add_backfill_args(backfill_parser)
 
     args = parser.parse_args(argv)
 
@@ -443,11 +942,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     elif args.command == "maintenance":
-        # If no flags provided, default to nothing? or clean?
-        # Let's verify at least one is picked or warn.
         if not (args.clean or args.vlm or args.valuation):
-            # Default to cleaning if nothing specified?
-            pass
+            parser.error("maintenance requires at least one of --clean, --vlm, or --valuation")
 
         maintenance_flow(
             db_path=args.db,
@@ -457,6 +953,76 @@ def main(argv: Optional[List[str]] = None) -> int:
             vlm_override=args.vlm_override,
             vlm_workers=args.vlm_workers,
             valuation_limit=args.valuation_limit,
+            valuation_listing_type=args.valuation_listing_type,
+            valuation_city=args.valuation_city,
+            valuation_max_age_days=args.valuation_max_age_days,
+        )
+        return 0
+
+    elif args.command == "transactions":
+        transactions_flow(
+            db_path=args.db,
+            transactions_path=args.path,
+            listing_type=args.listing_type,
+            source_id=args.source_id,
+        )
+        return 0
+
+    elif args.command == "market-data":
+        market_data_flow(
+            db_path=args.db,
+            skip_migrations=args.skip_migrations,
+            skip_macro=args.skip_macro,
+            skip_market_indices=args.skip_market_indices,
+            skip_hedonic=args.skip_hedonic,
+            city=args.city,
+            train_tft=args.train_tft,
+            registries_only=args.registries_only,
+            transactions=args.transactions,
+            transactions_path=args.transactions_path,
+            transactions_listing_type=args.transactions_listing_type,
+            transactions_source_id=args.transactions_source_id,
+            enable_cache=not args.disable_cache,
+        )
+        return 0
+
+    elif args.command == "build-index":
+        build_index_flow(
+            db_url=args.db_url,
+            db_path=args.db,
+            listing_type=args.listing_type,
+            limit=args.limit,
+            lancedb_path=args.lancedb_path,
+            metadata_path=args.metadata_path,
+            clear=args.clear,
+            batch_size=args.batch_size,
+            model_name=args.model_name,
+            vlm_policy=args.vlm_policy,
+            enable_cache=not args.disable_cache,
+        )
+        return 0
+
+    elif args.command == "train-pipeline":
+        training_flow(
+            db_path=args.db,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            patience=args.patience,
+            device=args.device,
+            run_vlm=not args.skip_vlm,
+            vlm_override=args.vlm_override,
+            vlm_workers=args.vlm_workers,
+        )
+        return 0
+
+    elif args.command == "backfill":
+        valuation_backfill_flow(
+            db_url=args.db_url,
+            listing_type=args.listing_type,
+            limit=args.limit,
+            max_age_days=args.max_age_days,
+            city=args.city,
         )
         return 0
 

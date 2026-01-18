@@ -18,7 +18,6 @@ flowchart LR
 
     subgraph Orchestration
         Prefect["Prefect flow"]
-        Scheduler["Scheduler workflow (legacy)"]
         Preflight["Preflight workflow"]
     end
 
@@ -54,7 +53,7 @@ flowchart LR
     subgraph Data
         ListingsDB[("SQLite: data/listings.db")]
         Seen[("unified_seen_urls.sqlite3")]
-        VectorIndex[("vector_index.faiss or vector_index.lancedb + metadata")]
+        VectorIndex[("vector_index.lancedb + metadata")]
         MarketTables[("market/hedonic/macro/area tables")]
         GovData[("ine_ipv + eri_metrics")]
         Runs[("pipeline_runs")]
@@ -66,7 +65,6 @@ flowchart LR
     Dash --> API
     API --> Preflight
     Prefect --> Preflight
-    Scheduler --> Preflight
     Agent --> Preflight
 
     Preflight --> CrawlBackfill
@@ -98,17 +96,17 @@ flowchart LR
 ```
 
 ## System components at a glance
-- Acquisition: Crawl backfill workflow plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
+- Acquisition: Crawl backfill workflow via `ScrapeClient` (Pydoll) plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
 - Processing: Normalize listings, fuse VLM signals, ingest sold transactions, then persist via StorageService.
 - Data: SQLite is the system of record; `pipeline_runs` tracks operational health.
 - Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
 - Interfaces: CLI, PipelineAPI, and the Scout Intelligence dashboard.
-- Automation: Prefect preflight flows or the legacy scheduler keep data and artifacts fresh without manual runs.
+- Automation: Prefect preflight flows keep data and artifacts fresh without manual runs.
 
 ## Module boundaries (what lives where)
 - Interfaces: CLI, API, and dashboard entry points.
 - Agents: LangGraph tools, the orchestrator, and analyst agents.
-- Listings: Crawl/normalize/enrich listings, listing repos, crawl workflows.
+- Listings: Crawl/normalize/enrich listings, `ScrapeClient` + `BrowserEngine` (Pydoll), listing repos, crawl workflows.
 - Market: Macro/indices/registry signals, market repos, market workflows.
 - Valuation: Retrieval + valuation services, calibration/backfill/indexing workflows.
 - ML: Models/encoders and training pipelines.

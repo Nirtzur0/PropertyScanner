@@ -167,7 +167,7 @@ class ScoringConfig(BaseConfigModel):
 class PipelineConfig(BaseConfigModel):
     db_path: str = str(DEFAULT_DB_PATH)
     db_url: Optional[str] = None
-    index_path: str = str(VECTOR_INDEX_PATH)
+    index_path: str = str(LANCEDB_PATH)
     metadata_path: str = str(VECTOR_METADATA_PATH)
 
 
@@ -186,8 +186,8 @@ class ValuationConfig(BaseConfigModel):
     min_rent_comps: int = 5
     rent_radius_km: float = 2.0
     retriever_model_name: str = "all-MiniLM-L6-v2"
-    retriever_backend: str = "faiss"
-    retriever_index_path: str = str(VECTOR_INDEX_PATH)
+    retriever_backend: str = "lancedb"
+    retriever_index_path: str = str(LANCEDB_PATH)
     retriever_metadata_path: str = str(VECTOR_METADATA_PATH)
     retriever_lancedb_path: str = str(LANCEDB_PATH)
     retriever_vlm_policy: str = "gated"

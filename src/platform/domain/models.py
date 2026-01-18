@@ -93,3 +93,27 @@ class PropertyValuation(Base):
     evidence = Column(JSON) 
     
     listing = relationship("DBListing", backref="valuations")
+
+
+class AgentRun(Base):
+    """
+    Stores a persisted record of an agent run for replay and memory.
+    """
+    __tablename__ = "agent_runs"
+
+    id = Column(String, primary_key=True)  # UUID
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    query = Column(Text, nullable=False)
+    target_areas = Column(JSON, default=list)
+    strategy = Column(String, default="balanced")
+
+    plan = Column(JSON, default=dict)
+    status = Column(String, default="success")
+    summary = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+
+    listings_count = Column(Integer, default=0)
+    evaluations_count = Column(Integer, default=0)
+    top_listing_ids = Column(JSON, default=list)
+    ui_blocks = Column(JSON, default=list)

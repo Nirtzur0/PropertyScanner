@@ -69,7 +69,7 @@ Rather than a free-form supervisor loop, the planner builds an explicit plan wit
 ## Adding new agents
 The architecture allows plugging in new agents easily:
 - `IdealistaCrawlerAgent`
-- `FotocasaCrawlerAgent`
-- `NewsAgent` (for macro data)
+- `RightmoveCrawlerAgent`
+- `ZooplaCrawlerAgent`
 
 Each new source only requires a matched pair of **Crawler** and **Processor**; the rest of the pipeline (Storage, Enrichment, Valuation) remains unchanged.

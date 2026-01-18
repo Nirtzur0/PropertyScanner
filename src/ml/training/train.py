@@ -619,7 +619,7 @@ if __name__ == "__main__":
     parser.add_argument("--time-safe-comps", action="store_true", help="Enforce comp dates <= target date")
     parser.add_argument("--no-time-safe-comps", dest="time_safe_comps", action="store_false")
     parser.set_defaults(time_safe_comps=True)
-    parser.add_argument("--use-retriever", action="store_true", help="Use vector retriever for comps (FAISS/LanceDB)")
+    parser.add_argument("--use-retriever", action="store_true", help="Use vector retriever for comps (LanceDB)")
     parser.add_argument("--no-retriever", dest="use_retriever", action="store_false")
     parser.set_defaults(use_retriever=True)
     parser.add_argument("--retriever-index", default=str(defaults.paths.vector_index_path))

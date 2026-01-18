@@ -69,9 +69,43 @@ def ensure_session_defaults(
     if "deal_page" not in state:
         state.deal_page = 1
     if "deal_page_size" not in state:
-        state.deal_page_size = 12
+        state.deal_page_size = 8
+    if "deal_view_mode" not in state:
+        state.deal_view_mode = "Grid"
+    if "left_panel_view" not in state:
+        state.left_panel_view = "📋 Deal Flow"
+    if "agent_plan" not in state:
+        state.agent_plan = None
+    if "agent_messages" not in state:
+        state.agent_messages = []
+    if "agent_report" not in state:
+        state.agent_report = ""
+    if "agent_evaluations" not in state:
+        state.agent_evaluations = []
+    if "agent_error" not in state:
+        state.agent_error = None
+    if "agent_trace" not in state:
+        state.agent_trace = []
+    if "agent_ui_blocks" not in state:
+        state.agent_ui_blocks = []
+    if "agent_quality_checks" not in state:
+        state.agent_quality_checks = []
+    if "agent_run_id" not in state:
+        state.agent_run_id = None
+    if "agent_pending_plan" not in state:
+        state.agent_pending_plan = None
+    if "agent_pending_prompt" not in state:
+        state.agent_pending_prompt = ""
+    if "agent_pending_areas" not in state:
+        state.agent_pending_areas = []
+    if "agent_pending_strategy" not in state:
+        state.agent_pending_strategy = "balanced"
+    if "agent_requires_approval" not in state:
+        state.agent_requires_approval = False
     if "lens_expanded" not in state:
         state.lens_expanded = False
+    if "insight_view" not in state:
+        state.insight_view = "🧪 Signal Lab"
 
 def log_orchestrator(role: str, text: str) -> None:
     """Appends a message to the orchestrator log in session state."""

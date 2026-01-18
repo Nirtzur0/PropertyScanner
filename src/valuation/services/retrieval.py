@@ -1,13 +1,15 @@
 """
-Enhanced Comp Retrieval Service with Qdrant-like features using FAISS (default) or LanceDB.
-Provides semantic search with metadata filtering for comparable listings.
+Enhanced comp retriever using LanceDB for semantic search with metadata filtering.
 """
 import os
 import json
 import re
 import structlog
 import numpy as np
-import faiss
+try:
+    import faiss
+except ImportError:  # pragma: no cover - optional dependency
+    faiss = None
 try:
     import lancedb
     import pyarrow as pa
@@ -54,7 +56,7 @@ class CompRetriever:
     Handles embedding generation and retrieving similar comparable listings (Comps).
     
     Features:
-    - FAISS for dense vector search
+    - Legacy FAISS backend (LanceDB is the primary backend)
     - SentenceTransformers for text embeddings
     - Geo-filtering (radius-based)
     - Temporal filtering (no future leakage)
@@ -83,6 +85,9 @@ class CompRetriever:
             self.model = SentenceTransformer(model_name)
         self.dimension = self.model.get_sentence_embedding_dimension()
         
+        if faiss is None:
+            raise ImportError("faiss_missing")
+
         # Initialize or Load FAISS Index
         if os.path.exists(index_path):
             self.index = faiss.read_index(index_path)
@@ -572,7 +577,7 @@ class CompRetriever:
 
 class LanceDBRetriever(CompRetriever):
     """
-    LanceDB-backed retriever with the same comp filtering logic as FAISS.
+    LanceDB-backed retriever with the same comp filtering logic as the legacy retriever.
     """
 
     table_name = "comp_listings"
@@ -960,8 +965,8 @@ def build_retriever(
     if backend is None:
         backend = app_config.valuation.retriever_backend
     backend = str(backend).strip().lower()
-    if backend not in {"faiss", "lancedb"}:
-        raise ValueError("invalid_retriever_backend")
+    if backend != "lancedb":
+        raise ValueError("retriever_backend_lancedb_only")
 
     if model_name is None:
         model_name = app_config.valuation.retriever_model_name
@@ -970,21 +975,10 @@ def build_retriever(
     if metadata_path is None:
         metadata_path = app_config.valuation.retriever_metadata_path
 
-    if backend == "lancedb":
-        if lancedb_path is None:
-            lancedb_path = app_config.valuation.retriever_lancedb_path
-        return LanceDBRetriever(
-            lancedb_path=str(lancedb_path),
-            metadata_path=str(metadata_path),
-            model_name=model_name,
-            strict_model_match=strict_model_match,
-            vlm_policy=vlm_policy,
-        )
-
-    if index_path is None:
-        index_path = app_config.valuation.retriever_index_path
-    return CompRetriever(
-        index_path=str(index_path),
+    if lancedb_path is None:
+        lancedb_path = app_config.valuation.retriever_lancedb_path
+    return LanceDBRetriever(
+        lancedb_path=str(lancedb_path),
         metadata_path=str(metadata_path),
         model_name=model_name,
         strict_model_match=strict_model_match,
