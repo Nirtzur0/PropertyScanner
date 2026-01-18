@@ -1,11 +1,14 @@
 from typing import Dict, Tuple, Any
 import importlib
 import threading
+import structlog
 from src.platform.agents.base import BaseAgent
 from src.platform.utils.compliance import ComplianceManager
+from src.platform.utils.config import load_app_config_safe
 
 # Global lock for imports to prevent deadlocks in threaded environments
 _IMPORT_LOCK = threading.RLock()
+logger = structlog.get_logger(__name__)
 
 class AgentFactory:
     """
@@ -116,4 +119,15 @@ class AgentFactory:
         with _IMPORT_LOCK:
             module = importlib.import_module(module_path)
             norm_cls = getattr(module, class_name)
-        return norm_cls()
+        normalizer = norm_cls()
+        try:
+            app_config = load_app_config_safe()
+            if app_config.llm.normalizer_enabled:
+                from src.listings.agents.processors.llm_fallback import LLMFallbackNormalizer
+                from src.listings.services.llm_normalizer import LLMNormalizerService
+
+                llm_service = LLMNormalizerService(app_config=app_config)
+                return LLMFallbackNormalizer(normalizer, llm_service)
+        except Exception as exc:
+            logger.warning("llm_normalizer_init_failed", error=str(exc))
+        return normalizer

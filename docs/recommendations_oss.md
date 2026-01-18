@@ -5,13 +5,13 @@ This document outlines high-impact open-source libraries and tools that could en
 ---
 
 ## 1. Orchestration & Observability (High Impact)
-**Current State**: Preflight scripts + `APScheduler` (legacy), with Prefect flow entrypoints available for richer observability.
+**Current State**: Prefect flows handle orchestration and retries; preflight/maintenance run via the CLI.
 
 ### **Prefect** (or Dagster)
 *   **Why**: Your pipeline involves complex dependencies (Scrape -> Normalize -> Fuse -> Augment). Prefect allows you to define these as flows with automatic retries, caching (don't re-scrape if done), and a local UI to debug failures.
 *   **Fit**: "Code as workflows" philosophy fits your Python-heavy codebase perfectly.
 *   **Migration**: Prefect flows wrap existing workflow steps; `pipeline_runs` still captures per-step metadata.
-*   **Status**: Implemented via `src/platform/workflows/orchestration.py` (use `python3 -m src.interfaces.cli orchestrator preflight`).
+*   **Status**: Implemented via `src/platform/workflows/prefect_orchestration.py` (use `python3 -m src.interfaces.cli preflight` or `python3 -m src.interfaces.cli prefect preflight`).
 
 ### **Pydantic Settings** (already likely used, but explicit usage)
 *   **Why**: Ensure strict validation of all `AppConfig` via `.env` files. Hydra is great for composition, but Pydantic Settings handles environment variable overrides cleaner for production.
@@ -50,6 +50,7 @@ This document outlines high-impact open-source libraries and tools that could en
 ### **Instructor**
 *   **Why**: LangChain's Pydantic extraction can be verbose. `Instructor` is a lightweight library that patches the OpenAI/LiteLLM client to return simple Pydantic objects.
 *   **Fit**: Ideal for the `Normalizer` agents extracting structured data from HTML.
+*   **Status**: Implemented as an LLM fallback normalizer (enable via `llm.normalizer_enabled: true`).
 
 ---
 

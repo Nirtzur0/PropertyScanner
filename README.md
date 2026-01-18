@@ -47,6 +47,8 @@ ollama serve
 
 If you want a hosted model instead, update `config/llm.yaml` and set the provider API key (e.g., `OPENAI_API_KEY`, `GOOGLE_API_KEY`).
 
+Optional: set `llm.normalizer_enabled: true` to enable the Instructor-based LLM fallback for HTML normalizers.
+
 ### 1) Install dependencies
 ```bash
 # Option A (Poetry)

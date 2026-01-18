@@ -45,6 +45,7 @@ Rather than a free-form supervisor loop, the planner builds an explicit plan wit
 ## What the agents need
 - Provide `areas` as search URLs, search paths, or plain location strings. The source router maps them using `config/sources.yaml`.
 - Provide at least one LLM provider via `config/llm.yaml` (LiteLLM supports Ollama, Gemini, OpenAI, etc.) for planning and report generation.
+- Optional: enable `llm.normalizer_enabled` to let Instructor fill gaps when HTML normalizers miss fields.
 - You can pass an explicit plan or allow the planner to build one; a default plan is used if the LLM fails.
 - Evaluation is delegated to `ValuationService` and requires comps, indices, model artifacts, and a retriever metadata match (encoder + VLM policy).
 - Calibration registry (`models/calibration_registry.json`) is optional but improves interval reliability.

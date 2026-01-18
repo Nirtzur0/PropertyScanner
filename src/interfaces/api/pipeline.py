@@ -19,7 +19,7 @@ from src.market.services.transactions import TransactionsIngestService
 from src.listings.workflows.unified_crawl import run_backfill
 from src.valuation.workflows.indexing import build_vector_index as build_vector_index_workflow
 from src.market.workflows.market_data import build_market_data as build_market_data_workflow
-from src.platform.workflows.preflight import run_preflight as run_preflight_workflow
+from src.platform.workflows.prefect_orchestration import preflight_flow as run_preflight_workflow
 from src.platform.utils.config import load_app_config_safe
 
 logger = structlog.get_logger(__name__)

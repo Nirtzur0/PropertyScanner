@@ -14,14 +14,11 @@ from src.market.workflows.market_data import build_market_data
 from src.ml.training.train import train_model
 from src.ml.training.image_captioning import batch_process_vlm
 from src.platform.db.base import resolve_db_url
+from src.platform.pipeline.runs import PipelineRunTracker
 from src.platform.pipeline.state import PipelinePolicy, PipelineStateService
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
-from src.valuation.workflows.indexing import build_vector_index
 from src.valuation.workflows.backfill import backfill_valuations
-from src.platform.pipeline.state import PipelinePolicy, PipelineStateService
-from src.platform.settings import AppConfig
-from src.platform.utils.config import load_app_config_safe
 from src.valuation.workflows.indexing import build_vector_index
 
 
@@ -31,6 +28,32 @@ def _cache_key_or_none(context: Any, parameters: Dict[str, Any]) -> Optional[str
     params = dict(parameters)
     params.pop("enable_cache", None)
     return task_input_hash(context, params)
+
+
+def _resolve_task_result(result: Any) -> Any:
+    if hasattr(result, "result"):
+        return result.result()
+    return result
+
+
+def _run_tracked(
+    tracker: PipelineRunTracker,
+    *,
+    step_name: str,
+    func,
+    metadata: Dict[str, Any],
+) -> Any:
+    run_id = tracker.start(step_name=step_name, run_type="prefect", metadata=metadata)
+    try:
+        result = func()
+        resolved = _resolve_task_result(result)
+        tracker.finish(run_id=run_id, status="success", metadata=metadata)
+        return resolved
+    except Exception as exc:
+        metadata = dict(metadata)
+        metadata["error"] = str(exc)
+        tracker.finish(run_id=run_id, status="failed", metadata=metadata)
+        raise
 
 
 @task(
@@ -146,23 +169,54 @@ def maintenance_flow(
     app_config = load_app_config_safe()
     if db_path is None:
         db_path = str(app_config.pipeline.db_path)
+
+    tracker = PipelineRunTracker(db_path=db_path)
     
     results = {}
 
     if run_clean:
         logger.info("maintenance_clean_start")
-        maintenance_clean_task(db_path=db_path)
+        _run_tracked(
+            tracker,
+            step_name="maintenance_clean",
+            func=lambda: maintenance_clean_task(db_path=db_path),
+            metadata={"db_path": db_path},
+        )
         results["clean"] = "ok"
 
     if run_vlm:
         logger.info("maintenance_vlm_start")
-        vlm_backfill_task(db_path=db_path, override=vlm_override, workers=vlm_workers)
+        _run_tracked(
+            tracker,
+            step_name="vlm_backfill",
+            func=lambda: vlm_backfill_task(
+                db_path=db_path,
+                override=vlm_override,
+                workers=vlm_workers,
+            ),
+            metadata={
+                "db_path": db_path,
+                "override": vlm_override,
+                "workers": vlm_workers,
+            },
+        )
         results["vlm"] = "ok"
 
     if run_valuation:
         logger.info("maintenance_valuation_start")
-        count = valuation_backfill_task(
-            db_path=db_path, limit=valuation_limit, max_age_days=7
+        count = _run_tracked(
+            tracker,
+            step_name="valuation_backfill",
+            func=lambda: valuation_backfill_task(
+                db_path=db_path,
+                limit=valuation_limit,
+                max_age_days=7,
+            ),
+            metadata={
+                "db_path": db_path,
+                "limit": valuation_limit,
+                "max_age_days": 7,
+            },
         )
         results["valuation"] = count
 
@@ -197,6 +251,7 @@ def preflight_flow(
         db_path = str(app_config.pipeline.db_path)
 
     db_url = resolve_db_url(db_path=db_path)
+    tracker = PipelineRunTracker(db_path=db_path)
     policy = PipelinePolicy(
         max_listing_age_days=max_listing_age_days,
         max_market_data_age_days=max_market_data_age_days,
@@ -213,13 +268,24 @@ def preflight_flow(
         state = state_service.snapshot()
         if state.needs_crawl:
             logger.info("prefect_preflight_crawl_backfill")
-            crawl_backfill_task(
-                source_ids=crawl_sources,
-                max_listings=max_listings,
-                max_pages=max_pages,
-                page_size=page_size,
-                run_vlm=run_vlm,
-                enable_cache=enable_cache,
+            _run_tracked(
+                tracker,
+                step_name="crawl_backfill",
+                func=lambda: crawl_backfill_task(
+                    source_ids=crawl_sources,
+                    max_listings=max_listings,
+                    max_pages=max_pages,
+                    page_size=page_size,
+                    run_vlm=run_vlm,
+                    enable_cache=enable_cache,
+                ),
+                metadata={
+                    "sources": crawl_sources,
+                    "max_listings": max_listings,
+                    "max_pages": max_pages,
+                    "page_size": page_size,
+                    "run_vlm": run_vlm,
+                },
             )
             results["steps"].append("crawl_backfill")
 
@@ -228,7 +294,15 @@ def preflight_flow(
             tx_path = transactions_path or str(app_config.paths.transactions_path)
             if tx_path and tx_path.strip():
                 logger.info("prefect_preflight_transactions", path=tx_path)
-                transactions_ingest_task(db_path=db_path, transactions_path=tx_path)
+                _run_tracked(
+                    tracker,
+                    step_name="transactions_ingest",
+                    func=lambda: transactions_ingest_task(
+                        db_path=db_path,
+                        transactions_path=tx_path,
+                    ),
+                    metadata={"path": tx_path},
+                )
                 results["steps"].append("transactions_ingest")
         except FileNotFoundError:
             logger.info("prefect_preflight_transactions_missing", path=transactions_path)
@@ -239,18 +313,35 @@ def preflight_flow(
         state = state_service.snapshot()
         if state.needs_market_data:
             logger.info("prefect_preflight_market_data")
-            market_data_task(db_path=db_path, enable_cache=enable_cache)
+            _run_tracked(
+                tracker,
+                step_name="market_data",
+                func=lambda: market_data_task(
+                    db_path=db_path,
+                    enable_cache=enable_cache,
+                ),
+                metadata={"db_path": db_path},
+            )
             results["steps"].append("market_data")
 
     if not skip_index:
         state = state_service.snapshot()
         if state.needs_index:
             logger.info("prefect_preflight_index")
-            build_vector_index_task(
-                db_url=db_url,
-                index_path=str(app_config.pipeline.index_path),
-                metadata_path=str(app_config.pipeline.metadata_path),
-                enable_cache=enable_cache,
+            _run_tracked(
+                tracker,
+                step_name="vector_index",
+                func=lambda: build_vector_index_task(
+                    db_url=db_url,
+                    index_path=str(app_config.pipeline.index_path),
+                    metadata_path=str(app_config.pipeline.metadata_path),
+                    enable_cache=enable_cache,
+                ),
+                metadata={
+                    "db_url": db_url,
+                    "index_path": str(app_config.pipeline.index_path),
+                    "metadata_path": str(app_config.pipeline.metadata_path),
+                },
             )
             results["steps"].append("vector_index")
 
@@ -258,7 +349,12 @@ def preflight_flow(
         state = state_service.snapshot()
         if state.needs_training:
             logger.info("prefect_preflight_training", epochs=train_epochs)
-            train_model_task(db_path=db_path, epochs=train_epochs)
+            _run_tracked(
+                tracker,
+                step_name="train_model",
+                func=lambda: train_model_task(db_path=db_path, epochs=train_epochs),
+                metadata={"db_path": db_path, "epochs": train_epochs},
+            )
             results["steps"].append("train_model")
 
     results["final_state"] = state_service.snapshot().to_dict()
@@ -377,7 +473,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 # Add reasonable defaults for a daily background run
                 "max_listings": 100, 
             },
-            entrypoint="src/platform/workflows/orchestration.py:preflight_flow",
+            entrypoint="src/platform/workflows/prefect_orchestration.py:preflight_flow",
         )
         deployment.apply()
         print("Deployment 'daily-preflight' applied! Run 'prefect agent start -q default' to execute schedules.")

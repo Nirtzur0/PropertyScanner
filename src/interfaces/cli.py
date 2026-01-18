@@ -29,13 +29,13 @@ def main(argv: List[str] = None) -> int:
     passthrough("dashboard", "Launch Streamlit dashboard")
     passthrough("agent", "Run the cognitive agent (wraps src.interfaces.agent)")
     passthrough("calibrators", "Update conformal calibrators (wraps src.valuation.workflows.calibration)")
-    passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.listings.workflows.maintenance)")
-    passthrough("preflight", "Refresh stale data and artifacts (wraps src.platform.workflows.preflight)")
-    passthrough("orchestrator", "Run orchestrated flows (wraps src.platform.workflows.orchestration)")
+    passthrough("clean-data", "Fix metadata/geocoding issues (runs Prefect maintenance flow)")
+    passthrough("preflight", "Refresh stale data and artifacts (runs Prefect preflight flow)")
+    passthrough("prefect", "Run Prefect flows (wraps src.platform.workflows.prefect_orchestration)")
     passthrough("unified-crawl", "Run unified multi-source crawl (wraps src.listings.workflows.unified_crawl)")
     passthrough("migrate", "Run database schema migrations (wraps src.platform.migrations)")
     passthrough("train-pipeline", "Run full training sequence: VLM prep + Fusion Train (wraps src.platform.workflows.full_pipeline)")
-    passthrough("caption-images", "Run image captioning batch job (wraps src.ml.training.image_captioning)")
+    passthrough("caption-images", "Run image captioning batch job (runs Prefect maintenance flow)")
 
     args, remaining = parser.parse_known_args(argv)
     cmd_args = getattr(args, "args", None)
@@ -51,26 +51,49 @@ def main(argv: List[str] = None) -> int:
         "backfill": "src.valuation.workflows.backfill",
         "agent": "src.interfaces.agent",
         "calibrators": "src.valuation.workflows.calibration",
-        "clean-data": "src.listings.workflows.maintenance",
-        "preflight": "src.platform.workflows.preflight",
-        "orchestrator": "src.platform.workflows.orchestration",
+        "clean-data": "src.platform.workflows.prefect_orchestration",
+        "preflight": "src.platform.workflows.prefect_orchestration",
+        "prefect": "src.platform.workflows.prefect_orchestration",
         "unified-crawl": "src.listings.workflows.unified_crawl",
         "migrate": "src.platform.migrations",
         "train-pipeline": "src.platform.workflows.full_pipeline",
-        "caption-images": "src.ml.training.image_captioning",
+        "caption-images": "src.platform.workflows.prefect_orchestration",
     }
 
     if args.command == "dashboard":
         if "--skip-preflight" in cmd_args:
             cmd_args = [arg for arg in cmd_args if arg != "--skip-preflight"]
         else:
-            _run_module("src.platform.workflows.preflight", [])
+            _run_module("src.platform.workflows.prefect_orchestration", ["preflight"])
         return _run_streamlit(cmd_args)
 
     module = module_map.get(args.command)
     if not module:
         parser.error(f"Unknown command: {args.command}")
         return 2
+
+    if args.command == "preflight":
+        cmd_args = ["preflight"] + cmd_args
+    elif args.command == "clean-data":
+        cmd_args = ["maintenance", "--clean"] + cmd_args
+    elif args.command == "caption-images":
+        mapped = ["maintenance", "--vlm"]
+        idx = 0
+        while idx < len(cmd_args):
+            arg = cmd_args[idx]
+            if arg == "--override":
+                mapped.append("--vlm-override")
+            elif arg.startswith("--workers="):
+                mapped.append("--vlm-workers=" + arg.split("=", 1)[1])
+            elif arg == "--workers":
+                mapped.append("--vlm-workers")
+                if idx + 1 < len(cmd_args):
+                    mapped.append(cmd_args[idx + 1])
+                    idx += 1
+            else:
+                mapped.append(arg)
+            idx += 1
+        cmd_args = mapped
 
     return _run_module(module, cmd_args)
 
