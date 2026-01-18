@@ -17,7 +17,8 @@ flowchart LR
     end
 
     subgraph Orchestration
-        Scheduler["Scheduler workflow"]
+        Prefect["Prefect flow"]
+        Scheduler["Scheduler workflow (legacy)"]
         Preflight["Preflight workflow"]
     end
 
@@ -53,7 +54,7 @@ flowchart LR
     subgraph Data
         ListingsDB[("SQLite: data/listings.db")]
         Seen[("unified_seen_urls.sqlite3")]
-        VectorIndex[("vector_index.faiss + metadata")]
+        VectorIndex[("vector_index.faiss or vector_index.lancedb + metadata")]
         MarketTables[("market/hedonic/macro/area tables")]
         GovData[("ine_ipv + eri_metrics")]
         Runs[("pipeline_runs")]
@@ -64,6 +65,7 @@ flowchart LR
     CLI --> API
     Dash --> API
     API --> Preflight
+    Prefect --> Preflight
     Scheduler --> Preflight
     Agent --> Preflight
 
@@ -101,7 +103,7 @@ flowchart LR
 - Data: SQLite is the system of record; `pipeline_runs` tracks operational health.
 - Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
 - Interfaces: CLI, PipelineAPI, and the Scout Intelligence dashboard.
-- Automation: Scheduled preflight keeps data and artifacts fresh without manual runs.
+- Automation: Prefect preflight flows or the legacy scheduler keep data and artifacts fresh without manual runs.
 
 ## Module boundaries (what lives where)
 - Interfaces: CLI, API, and dashboard entry points.

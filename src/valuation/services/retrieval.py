@@ -1,5 +1,5 @@
 """
-Enhanced Comp Retrieval Service with Qdrant-like features using FAISS.
+Enhanced Comp Retrieval Service with Qdrant-like features using FAISS (default) or LanceDB.
 Provides semantic search with metadata filtering for comparable listings.
 """
 import os
@@ -8,12 +8,20 @@ import re
 import structlog
 import numpy as np
 import faiss
+try:
+    import lancedb
+    import pyarrow as pa
+except ImportError:  # pragma: no cover - optional dependency
+    lancedb = None
+    pa = None
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from src.platform.config import VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 from src.platform.domain.schema import CanonicalListing, CompListing
+from src.platform.settings import AppConfig
+from src.platform.utils.config import load_app_config_safe
 
 logger = structlog.get_logger()
 
@@ -560,3 +568,425 @@ class CompRetriever:
             "embedding_dimension": self.dimension,
             "index_path": self.index_path
         }
+
+
+class LanceDBRetriever(CompRetriever):
+    """
+    LanceDB-backed retriever with the same comp filtering logic as FAISS.
+    """
+
+    table_name = "comp_listings"
+
+    def __init__(
+        self,
+        *,
+        lancedb_path: str,
+        metadata_path: str,
+        model_name: str = "all-MiniLM-L6-v2",
+        strict_model_match: bool = False,
+        vlm_policy: str = "gated",
+    ):
+        if lancedb is None or pa is None:
+            raise ImportError("lancedb_missing")
+
+        self.index_path = lancedb_path
+        self.metadata_path = metadata_path
+        self.model_name = model_name
+        self.strict_model_match = strict_model_match
+        self.vlm_policy = vlm_policy
+
+        device = os.environ.get("PROPERTY_SCANNER_TEXT_DEVICE")
+        if device:
+            self.model = SentenceTransformer(model_name, device=device)
+        else:
+            self.model = SentenceTransformer(model_name)
+        self.dimension = self.model.get_sentence_embedding_dimension()
+
+        self.db = lancedb.connect(lancedb_path)
+        self.table = self._load_table()
+
+        self.listings: Dict[int, IndexedListing] = {}
+        self.id_to_int: Dict[str, int] = {}
+        self.next_int_id = 0
+        self.metadata_version = 0
+        self.metadata_model_name = None
+        self.metadata_index_fingerprint = None
+        self.metadata_vlm_policy = None
+
+        if os.path.exists(metadata_path):
+            self._load_metadata()
+        elif self.strict_model_match:
+            raise FileNotFoundError("retrieval_metadata_missing")
+
+    def _load_table(self):
+        existing = self.db.table_names()
+        if self.table_name in existing:
+            return self.db.open_table(self.table_name)
+
+        schema = pa.schema(
+            [
+                ("id", pa.string()),
+                ("int_id", pa.int64()),
+                ("vector", pa.list_(pa.float32())),
+                ("title", pa.string()),
+                ("price", pa.float64()),
+                ("listing_type", pa.string()),
+                ("snapshot_id", pa.string()),
+                ("external_id", pa.string()),
+                ("source_id", pa.string()),
+                ("url", pa.string()),
+                ("property_type", pa.string()),
+                ("surface_area_sqm", pa.float64()),
+                ("bedrooms", pa.int64()),
+                ("lat", pa.float64()),
+                ("lon", pa.float64()),
+                ("listed_at", pa.string()),
+                ("updated_at", pa.string()),
+                ("status", pa.string()),
+            ]
+        )
+        return self.db.create_table(self.table_name, schema=schema)
+
+    def _row_to_indexed(self, row: Dict[str, Any]) -> IndexedListing:
+        return IndexedListing(
+            id=row.get("id", ""),
+            int_id=int(row.get("int_id", -1)),
+            external_id=row.get("external_id"),
+            source_id=row.get("source_id"),
+            url=row.get("url"),
+            title=row.get("title", ""),
+            price=row.get("price", 0.0),
+            listing_type=row.get("listing_type", "sale"),
+            property_type=row.get("property_type"),
+            surface_area_sqm=row.get("surface_area_sqm"),
+            bedrooms=row.get("bedrooms"),
+            lat=row.get("lat"),
+            lon=row.get("lon"),
+            snapshot_id=row.get("snapshot_id", ""),
+            listed_at=row.get("listed_at"),
+            updated_at=row.get("updated_at"),
+            status=row.get("status"),
+        )
+
+    def add_listings(
+        self,
+        listings: List[CanonicalListing],
+        snapshot_ids: Optional[Dict[str, str]] = None,
+    ) -> int:
+        if not listings:
+            return 0
+
+        snapshot_ids = snapshot_ids or {}
+        records = []
+        metadata_dirty = False
+
+        for l in listings:
+            if l.id in self.id_to_int:
+                int_id = self.id_to_int[l.id]
+                il = self.listings.get(int_id)
+                if il:
+                    listed_at = l.listed_at.isoformat() if getattr(l, "listed_at", None) else None
+                    updated_at = l.updated_at.isoformat() if getattr(l, "updated_at", None) else None
+                    if listed_at and not il.listed_at:
+                        il.listed_at = listed_at
+                        metadata_dirty = True
+                    if updated_at and not il.updated_at:
+                        il.updated_at = updated_at
+                        metadata_dirty = True
+                continue
+
+            text = self._build_text(l.title or "", l.description or "", getattr(l, "vlm_description", None))
+            vec = self.model.encode(text, normalize_embeddings=True, show_progress_bar=False)
+
+            int_id = self.next_int_id
+            self.next_int_id += 1
+
+            il = IndexedListing(
+                id=l.id,
+                int_id=int_id,
+                external_id=getattr(l, "external_id", None),
+                source_id=getattr(l, "source_id", None),
+                url=str(getattr(l, "url", "")) if getattr(l, "url", None) else None,
+                title=l.title or "",
+                price=l.price,
+                listing_type=l.listing_type if hasattr(l, "listing_type") and l.listing_type else "sale",
+                property_type=(l.property_type.value if hasattr(l, "property_type") and hasattr(l.property_type, "value") else str(getattr(l, "property_type", "") or "")).lower() or None,
+                surface_area_sqm=l.surface_area_sqm,
+                bedrooms=l.bedrooms,
+                lat=l.location.lat if l.location else None,
+                lon=l.location.lon if l.location else None,
+                snapshot_id=snapshot_ids.get(l.id, ""),
+                listed_at=l.listed_at.isoformat() if getattr(l, "listed_at", None) else None,
+                updated_at=l.updated_at.isoformat() if getattr(l, "updated_at", None) else None,
+                status=str(getattr(l, "status", None)) if getattr(l, "status", None) else None,
+            )
+
+            self.listings[int_id] = il
+            self.id_to_int[l.id] = int_id
+
+            record = {
+                "id": il.id,
+                "int_id": il.int_id,
+                "vector": vec.astype("float32").tolist(),
+                "title": il.title,
+                "price": il.price,
+                "listing_type": il.listing_type,
+                "snapshot_id": il.snapshot_id,
+                "external_id": il.external_id,
+                "source_id": il.source_id,
+                "url": il.url,
+                "property_type": il.property_type,
+                "surface_area_sqm": il.surface_area_sqm,
+                "bedrooms": il.bedrooms,
+                "lat": il.lat,
+                "lon": il.lon,
+                "listed_at": il.listed_at,
+                "updated_at": il.updated_at,
+                "status": il.status,
+            }
+            records.append(record)
+
+        if records:
+            self.table.add(records)
+            self._save_metadata()
+            logger.info("added_vectors_to_lancedb", count=len(records))
+        elif metadata_dirty:
+            self._save_metadata()
+            logger.info("updated_lancedb_metadata", count=len(self.listings))
+
+        return len(records)
+
+    def retrieve_comps(
+        self,
+        target: CanonicalListing,
+        k: int = 10,
+        max_radius_km: float = 5.0,
+        exclude_self: bool = True,
+        strict_filters: bool = True,
+        listing_type: Optional[str] = None,
+        max_listed_at: Optional[datetime] = None,
+        exclude_duplicate_external: bool = True,
+    ) -> List[CompListing]:
+        if not self.listings:
+            return []
+
+        if max_radius_km > 0:
+            if not target.location or target.location.lat is None or target.location.lon is None:
+                raise ValueError("missing_target_geolocation")
+
+        target_property_type = None
+        if hasattr(target, "property_type") and target.property_type:
+            target_property_type = str(target.property_type)
+            if "." in target_property_type:
+                target_property_type = target_property_type.split(".")[-1]
+            target_property_type = target_property_type.lower().strip()
+
+        if strict_filters:
+            if not target_property_type:
+                raise ValueError("missing_target_property_type")
+            if not target.surface_area_sqm or target.surface_area_sqm <= 0:
+                raise ValueError("missing_target_surface_area")
+
+        text = self._build_text(target.title or "", target.description or "", getattr(target, "vlm_description", None))
+        query_vec = self.model.encode(text, normalize_embeddings=True, show_progress_bar=False)
+        query_vec = query_vec.astype("float32").tolist()
+
+        index_total = len(self.listings)
+        search_k = min(max(k * 20, 100), index_total)
+
+        search_results = self.table.search(query_vec).limit(search_k).to_list()
+        candidates = []
+        for row in search_results:
+            int_id = row.get("int_id")
+            il = self.listings.get(int_id) if int_id is not None else None
+            if il is None:
+                il = self._row_to_indexed(row)
+            dist = row.get("_distance")
+            if dist is None:
+                dist = row.get("_score")
+            if dist is None:
+                continue
+            if exclude_self and il.id == target.id:
+                continue
+            candidates.append((il, float(dist)))
+
+        results = []
+        allowed_bedroom_diff = 1
+        allowed_sqm_ratio = 0.2
+
+        target_lat = target.location.lat if target.location else None
+        target_lon = target.location.lon if target.location else None
+        target_external_id = getattr(target, "external_id", None)
+        target_url = str(getattr(target, "url", "")) if getattr(target, "url", None) else None
+
+        for il, dist in candidates:
+            if listing_type and il.listing_type != listing_type:
+                continue
+            if exclude_duplicate_external and target_external_id and il.external_id == target_external_id:
+                continue
+            if target_url and il.url and il.url == target_url:
+                continue
+
+            if max_listed_at:
+                comp_dt = self._parse_dt(il.listed_at) or self._parse_dt(il.updated_at)
+                if comp_dt is None:
+                    continue
+                as_of = max_listed_at
+                if comp_dt.tzinfo is not None:
+                    comp_dt = comp_dt.replace(tzinfo=None)
+                if as_of.tzinfo is not None:
+                    as_of = as_of.replace(tzinfo=None)
+                if comp_dt > as_of:
+                    continue
+
+            if target_property_type and il.property_type and il.property_type != target_property_type:
+                continue
+
+            if max_radius_km > 0:
+                if il.lat is None or il.lon is None:
+                    continue
+                geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
+                if geo_dist > max_radius_km:
+                    continue
+
+            if strict_filters:
+                if target.bedrooms is not None:
+                    if il.bedrooms is None:
+                        continue
+                    if target.bedrooms <= 1 and il.bedrooms != target.bedrooms:
+                        continue
+                    if target.bedrooms > 1 and abs(il.bedrooms - target.bedrooms) > allowed_bedroom_diff:
+                        continue
+
+                if target.surface_area_sqm:
+                    if not il.surface_area_sqm:
+                        continue
+                    ratio = il.surface_area_sqm / target.surface_area_sqm
+                    if not ((1.0 - allowed_sqm_ratio) <= ratio <= (1.0 + allowed_sqm_ratio)):
+                        continue
+
+            similarity = 1.0 / (1.0 + dist)
+            results.append(
+                CompListing(
+                    id=il.id,
+                    price=il.price,
+                    features={
+                        "sqm": il.surface_area_sqm or 0,
+                        "bedrooms": il.bedrooms or 0,
+                        "lat": il.lat or 0,
+                        "lon": il.lon or 0,
+                    },
+                    similarity_score=similarity,
+                    snapshot_id=il.snapshot_id,
+                )
+            )
+
+            if len(results) >= k:
+                break
+
+        if strict_filters and len(results) < k:
+            relaxed_ids = {c.id for c in results}
+            for il, dist in candidates:
+                if il.id in relaxed_ids:
+                    continue
+                if listing_type and il.listing_type != listing_type:
+                    continue
+                if exclude_duplicate_external and target_external_id and il.external_id == target_external_id:
+                    continue
+                if target_url and il.url and il.url == target_url:
+                    continue
+
+                if max_listed_at:
+                    comp_dt = self._parse_dt(il.listed_at) or self._parse_dt(il.updated_at)
+                    if comp_dt is None:
+                        continue
+                    as_of = max_listed_at
+                    if comp_dt.tzinfo is not None:
+                        comp_dt = comp_dt.replace(tzinfo=None)
+                    if as_of.tzinfo is not None:
+                        as_of = as_of.replace(tzinfo=None)
+                    if comp_dt > as_of:
+                        continue
+
+                if max_radius_km > 0:
+                    if il.lat is None or il.lon is None:
+                        continue
+                    geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
+                    if geo_dist > max_radius_km:
+                        continue
+
+                similarity = 1.0 / (1.0 + dist)
+                results.append(
+                    CompListing(
+                        id=il.id,
+                        price=il.price,
+                        features={
+                            "sqm": il.surface_area_sqm or 0,
+                            "bedrooms": il.bedrooms or 0,
+                            "lat": il.lat or 0,
+                            "lon": il.lon or 0,
+                        },
+                        similarity_score=similarity,
+                        snapshot_id=il.snapshot_id,
+                    )
+                )
+
+                if len(results) >= k:
+                    break
+
+        return results[:k]
+
+    def get_stats(self) -> Dict[str, Any]:
+        return {
+            "total_vectors": len(self.listings),
+            "total_listings": len(self.listings),
+            "embedding_dimension": self.dimension,
+            "index_path": self.index_path,
+        }
+
+
+def build_retriever(
+    *,
+    backend: Optional[str] = None,
+    index_path: Optional[str] = None,
+    metadata_path: Optional[str] = None,
+    lancedb_path: Optional[str] = None,
+    model_name: Optional[str] = None,
+    strict_model_match: bool = False,
+    vlm_policy: Optional[str] = None,
+    app_config: Optional[AppConfig] = None,
+):
+    app_config = app_config or load_app_config_safe()
+    if backend is None:
+        backend = app_config.valuation.retriever_backend
+    backend = str(backend).strip().lower()
+    if backend not in {"faiss", "lancedb"}:
+        raise ValueError("invalid_retriever_backend")
+
+    if model_name is None:
+        model_name = app_config.valuation.retriever_model_name
+    if vlm_policy is None:
+        vlm_policy = app_config.valuation.retriever_vlm_policy
+    if metadata_path is None:
+        metadata_path = app_config.valuation.retriever_metadata_path
+
+    if backend == "lancedb":
+        if lancedb_path is None:
+            lancedb_path = app_config.valuation.retriever_lancedb_path
+        return LanceDBRetriever(
+            lancedb_path=str(lancedb_path),
+            metadata_path=str(metadata_path),
+            model_name=model_name,
+            strict_model_match=strict_model_match,
+            vlm_policy=vlm_policy,
+        )
+
+    if index_path is None:
+        index_path = app_config.valuation.retriever_index_path
+    return CompRetriever(
+        index_path=str(index_path),
+        metadata_path=str(metadata_path),
+        model_name=model_name,
+        strict_model_match=strict_model_match,
+        vlm_policy=vlm_policy,
+    )

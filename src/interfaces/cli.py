@@ -23,7 +23,7 @@ def main(argv: List[str] = None) -> int:
         p.add_argument("args", nargs=argparse.REMAINDER)
 
     passthrough("market-data", "Build market/hedonic indices & ingest registries (wraps src.market.workflows.market_data)")
-    passthrough("build-index", "Build FAISS vector index (wraps src.valuation.workflows.indexing)")
+    passthrough("build-index", "Build vector index (FAISS/LanceDB) (wraps src.valuation.workflows.indexing)")
     passthrough("train", "Train the fusion model (wraps src.ml.training.train)")
     passthrough("backfill", "Backfill cached valuations (wraps src.valuation.workflows.backfill)")
     passthrough("dashboard", "Launch Streamlit dashboard")
@@ -31,11 +31,11 @@ def main(argv: List[str] = None) -> int:
     passthrough("calibrators", "Update conformal calibrators (wraps src.valuation.workflows.calibration)")
     passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.listings.workflows.maintenance)")
     passthrough("preflight", "Refresh stale data and artifacts (wraps src.platform.workflows.preflight)")
-    passthrough("schedule", "Run scheduled preflight refreshes (wraps src.platform.workflows.scheduler)")
+    passthrough("orchestrator", "Run orchestrated flows (wraps src.platform.workflows.orchestration)")
     passthrough("unified-crawl", "Run unified multi-source crawl (wraps src.listings.workflows.unified_crawl)")
     passthrough("migrate", "Run database schema migrations (wraps src.platform.migrations)")
     passthrough("train-pipeline", "Run full training sequence: VLM prep + Fusion Train (wraps src.platform.workflows.full_pipeline)")
-    passthrough("preprocess-vlm", "Run VLM image captioning batch job (wraps src.ml.training.preprocess_vlm)")
+    passthrough("caption-images", "Run image captioning batch job (wraps src.ml.training.image_captioning)")
 
     args, remaining = parser.parse_known_args(argv)
     cmd_args = getattr(args, "args", None)
@@ -53,11 +53,11 @@ def main(argv: List[str] = None) -> int:
         "calibrators": "src.valuation.workflows.calibration",
         "clean-data": "src.listings.workflows.maintenance",
         "preflight": "src.platform.workflows.preflight",
-        "schedule": "src.platform.workflows.scheduler",
+        "orchestrator": "src.platform.workflows.orchestration",
         "unified-crawl": "src.listings.workflows.unified_crawl",
         "migrate": "src.platform.migrations",
         "train-pipeline": "src.platform.workflows.full_pipeline",
-        "preprocess-vlm": "src.ml.training.preprocess_vlm",
+        "caption-images": "src.ml.training.image_captioning",
     }
 
     if args.command == "dashboard":

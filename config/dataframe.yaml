@@ -1,0 +1,5 @@
+# dataframe.yaml
+# DataFrame backend configuration.
+
+dataframe:
+  backend: "pandas"

@@ -50,7 +50,7 @@ The high-level pipeline is:
 \]
 
 \section{Comparable Retrieval}
-We use dense text embeddings with a FAISS index. Let $e(\cdot)$ be the text
+We use dense text embeddings with a FAISS (or LanceDB) index. Let $e(\cdot)$ be the text
 encoder, and define the query vector
 $q = e(\text{title}_0 \oplus \text{desc}_0 \oplus \text{vlm}_0)$.
 Candidates are ranked by inner product (normalized cosine similarity), then

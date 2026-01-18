@@ -11,9 +11,11 @@ valuation:
   min_rent_comps: 5
   rent_radius_km: 2.0
   retriever_model_name: "all-MiniLM-L6-v2"
+  retriever_backend: "faiss"
   retriever_vlm_policy: "gated"
   retriever_index_path: ${paths.vector_index_path}
   retriever_metadata_path: ${paths.vector_metadata_path}
+  retriever_lancedb_path: ${paths.lancedb_path}
 
   eri_lag_days: 45
   eri_disagreement_threshold: 0.08

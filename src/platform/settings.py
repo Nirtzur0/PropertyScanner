@@ -13,6 +13,7 @@ from src.platform.config import (
     DEFAULT_DB_URL,
     FUSION_CONFIG_PATH,
     FUSION_MODEL_PATH,
+    LANCEDB_PATH,
     MODELS_DIR,
     SNAPSHOTS_DIR,
     TFT_MODEL_PATH,
@@ -37,6 +38,7 @@ class PathsConfig(BaseConfigModel):
 
     vector_index_path: Path = Field(default=VECTOR_INDEX_PATH)
     vector_metadata_path: Path = Field(default=VECTOR_METADATA_PATH)
+    lancedb_path: Path = Field(default=LANCEDB_PATH)
 
     fusion_model_path: Path = Field(default=FUSION_MODEL_PATH)
     fusion_config_path: Path = Field(default=FUSION_CONFIG_PATH)
@@ -184,8 +186,10 @@ class ValuationConfig(BaseConfigModel):
     min_rent_comps: int = 5
     rent_radius_km: float = 2.0
     retriever_model_name: str = "all-MiniLM-L6-v2"
+    retriever_backend: str = "faiss"
     retriever_index_path: str = str(VECTOR_INDEX_PATH)
     retriever_metadata_path: str = str(VECTOR_METADATA_PATH)
+    retriever_lancedb_path: str = str(LANCEDB_PATH)
     retriever_vlm_policy: str = "gated"
 
     eri_lag_days: int = 45
@@ -247,6 +251,25 @@ class ImageSelectorConfig(BaseConfigModel):
     clip_weight: float = 0.35
 
 
+class DataFrameConfig(BaseConfigModel):
+    backend: str = "pandas"
+
+
+class LLMConfig(BaseConfigModel):
+    models: List[str] = Field(
+        default_factory=lambda: [
+            "ollama/llama3:latest",
+            "gemini/gemini-1.5-flash",
+            "gpt-4o-mini",
+        ]
+    )
+    temperature: float = 0.0
+    max_tokens: int = 900
+    timeout_seconds: int = 60
+    normalizer_enabled: bool = False
+    normalizer_max_chars: int = 6000
+
+
 class AppConfig(BaseConfigModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
@@ -260,3 +283,5 @@ class AppConfig(BaseConfigModel):
     description_analyst: DescriptionAnalystConfig = Field(default_factory=DescriptionAnalystConfig)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     image_selector: ImageSelectorConfig = Field(default_factory=ImageSelectorConfig)
+    dataframe: DataFrameConfig = Field(default_factory=DataFrameConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)

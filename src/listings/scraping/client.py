@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import structlog
 from bs4 import BeautifulSoup
 
-from src.listings.scraping.engine import PydollFetcher, _run_async
+from src.listings.scraping.engine import BrowserFetcher, _run_async
 from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
 
@@ -44,7 +44,7 @@ class ScrapeClient:
         browser_wait_s: float = 8.0,
         max_workers: int = 4,
         browser_max_concurrency: Optional[int] = None,
-        pydoll_config: Optional[dict[str, Any]] = None,
+        browser_config: Optional[dict[str, Any]] = None,
     ) -> None:
         self.source_id = source_id
         self.base_url = base_url
@@ -54,13 +54,13 @@ class ScrapeClient:
         self.max_workers = max(1, int(max_workers))
         resolved_concurrency = max(1, int(browser_max_concurrency or self.max_workers))
 
-        self.pydoll_fetcher = PydollFetcher(
+        self.browser_fetcher = BrowserFetcher(
             user_agent,
             wait_s=browser_wait_s,
             max_concurrency=resolved_concurrency,
-            pydoll_config=pydoll_config,
+            browser_config=browser_config,
         )
-        self.pydoll_engine = self.pydoll_fetcher.engine
+        self.browser_engine = self.browser_fetcher.engine
 
     def fetch_html(
         self,
@@ -77,7 +77,7 @@ class ScrapeClient:
             return None
 
         for attempt in range(retries):
-            html = self.pydoll_fetcher.fetch(url, timeout_s=timeout_s)
+            html = self.browser_fetcher.fetch(url, timeout_s=timeout_s)
             if html:
                 return html
             time.sleep(backoff_base ** attempt)
@@ -114,8 +114,8 @@ class ScrapeClient:
             )
 
         try:
-            pydoll_results = _run_async(
-                self.pydoll_engine.fetch_many(
+            browser_results = _run_async(
+                self.browser_engine.fetch_many(
                     deduped,
                     timeout_s=timeout_s,
                     max_concurrency=worker_count,
@@ -123,14 +123,14 @@ class ScrapeClient:
                 )
             )
         except Exception as exc:
-            logger.warning("pydoll_batch_failed", error=str(exc))
+            logger.warning("browser_batch_failed", error=str(exc))
             results = []
             for url in deduped:
                 html = self.fetch_html(url, retries=retries, timeout_s=timeout_s)
                 results.append(FetchResult(url=url, html=html, error=str(exc)))
             return results
 
-        results = [FetchResult(url=item.url, html=item.html) for item in pydoll_results]
+        results = [FetchResult(url=item.url, html=item.html) for item in browser_results]
         return results
 
     def extract_links(self, html: str, spec: LinkExtractorSpec) -> list[str]:

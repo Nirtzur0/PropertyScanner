@@ -10,7 +10,8 @@ Preflight is the simplest way to run the pipeline. It checks freshness and only 
 flowchart LR
     CLI["CLI"] --> Preflight["Preflight workflow"]
     Dash["Dashboard"] --> Preflight
-    Scheduler["Scheduler workflow"] --> Preflight
+    Prefect["Prefect flow"] --> Preflight
+    Scheduler["Scheduler workflow (legacy)"] --> Preflight
     Preflight --> Crawl["Crawl backfill workflow"]
     Preflight --> Transactions["Transactions ingest"]
     Preflight --> MarketData["Market data workflow"]
@@ -20,9 +21,13 @@ flowchart LR
 ```
 
 - `python3 -m src.interfaces.cli dashboard` triggers preflight unless `--skip-preflight` is passed.
-- `python3 -m src.interfaces.cli schedule` runs preflight on an interval or cron schedule (canonical automation entry point).
+- `python3 -m src.interfaces.cli prefect preflight` runs preflight as a Prefect flow with retries and task-level caching.
+- `python3 -m src.interfaces.cli schedule` runs preflight on an interval or cron schedule (legacy APScheduler path).
 - Preflight uses `PipelineStateService` to compare listing freshness against market data, index files, and model artifacts.
 - Preflight ingests transactions from config defaults unless `--skip-transactions` is set; `--transactions-path` overrides the default. Transactions run before market data and training.
+- Set `dataframe.backend: polars` to enable Polars aggregation for market indices.
+  
+Prefect UI: run `prefect server start` and then launch the flow to get run history, retries, and task logs.
 
 ## 1. Ingestion: crawl backfill with quality gates
 
@@ -62,7 +67,7 @@ flowchart LR
     Gov["OfficialSourcesAgent"] --> GovData["ine_ipv + eri_metrics"] --> MarketData
 
     Listings --> Index["Vector index workflow"]
-    Index --> VectorIndex["vector_index.faiss + vector_metadata.json"]
+    Index --> VectorIndex["vector_index.faiss or vector_index.lancedb + vector_metadata.json"]
 
     Listings --> Train["Training workflow"]
     MarketTables --> Train
@@ -81,10 +86,12 @@ Recommended manual order:
 1) Crawl backfill + normalize + store
 2) Ingest transactions (sold/registry data)
 3) Build market data (macro + indices)
-4) Build vector index
+4) Build vector index (FAISS or LanceDB)
 5) Train fusion model
 6) Backfill valuations
 7) Update calibration registry
+
+LanceDB option: `python3 -m src.interfaces.cli build-index -- --backend lancedb`.
 
 ## 3. Quality gates and run logs
 
@@ -101,7 +108,8 @@ Recommended manual order:
 | `data/listings.db` (ine_ipv) | Official stats | `OfficialSourcesAgent` | Benchmark anchors |
 | `data/listings.db` (eri_metrics) | Registral stats | `OfficialSourcesAgent` | Liquidity signals |
 | `data/listings.db` (pipeline_runs) | Operational logs | `PipelineRunTracker` | Run metadata |
-| `data/vector_index.faiss` | Dense comp index | Indexing workflow | Required for comps |
+| `data/vector_index.faiss` | Dense comp index (FAISS) | Indexing workflow | Required for comps |
+| `data/vector_index.lancedb` | Dense comp index (LanceDB) | Indexing workflow | Required for comps |
 | `data/vector_metadata.json` | Comp metadata | Indexing workflow | Encoder + policy lock |
 | `data/unified_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |
 | `models/fusion_model.pt` | Trained fusion model | Training workflow | Required for valuation |

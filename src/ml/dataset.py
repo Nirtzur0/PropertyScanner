@@ -16,7 +16,7 @@ import structlog
 from PIL import Image
 import io
 from src.listings.services.feature_sanitizer import sanitize_listing_dict, sanitize_year_built
-from src.platform.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
+from src.platform.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH, LANCEDB_PATH
 from src.platform.settings import AppConfig
 from src.listings.repositories.listings import ListingsRepository
 from src.market.repositories.market_indices import MarketIndicesRepository
@@ -55,6 +55,8 @@ class PropertyDataset(Dataset):
         use_retriever: bool = False,
         retriever_index_path: Optional[str] = None,
         retriever_metadata_path: Optional[str] = None,
+        retriever_lancedb_path: Optional[str] = None,
+        retriever_backend: Optional[str] = None,
         retriever_model_name: Optional[str] = None,
         retriever_vlm_policy: Optional[str] = None,
         comp_cache_path: Optional[str] = None,
@@ -75,8 +77,8 @@ class PropertyDataset(Dataset):
             require_same_property_type: Require same property_type for comps
             time_safe_comps: Enforce comp dates <= target date
             normalize_to: "latest", "none", or ISO date for hedonic normalization
-            use_retriever: Use FAISS retriever for comps (frozen distribution)
-            retriever_*: Retriever config (model/index/metadata/policy)
+            use_retriever: Use vector retriever for comps (FAISS/LanceDB)
+            retriever_*: Retriever config (backend/model/index/metadata/policy)
             require_hedonic: Drop samples if hedonic normalization fails
         """
         if app_config is not None:
@@ -86,6 +88,10 @@ class PropertyDataset(Dataset):
                 retriever_index_path = str(app_config.paths.vector_index_path)
             if retriever_metadata_path is None:
                 retriever_metadata_path = str(app_config.paths.vector_metadata_path)
+            if retriever_lancedb_path is None:
+                retriever_lancedb_path = str(app_config.paths.lancedb_path)
+            if retriever_backend is None:
+                retriever_backend = app_config.valuation.retriever_backend
             if retriever_model_name is None:
                 retriever_model_name = app_config.valuation.retriever_model_name
             if retriever_vlm_policy is None:
@@ -96,6 +102,10 @@ class PropertyDataset(Dataset):
             retriever_index_path = str(VECTOR_INDEX_PATH)
         if retriever_metadata_path is None:
             retriever_metadata_path = str(VECTOR_METADATA_PATH)
+        if retriever_lancedb_path is None:
+            retriever_lancedb_path = str(LANCEDB_PATH)
+        if retriever_backend is None:
+            retriever_backend = "faiss"
         if retriever_model_name is None:
             retriever_model_name = "all-MiniLM-L6-v2"
         if retriever_vlm_policy is None:
@@ -119,6 +129,8 @@ class PropertyDataset(Dataset):
         self.use_retriever = bool(use_retriever)
         self.retriever_index_path = retriever_index_path
         self.retriever_metadata_path = retriever_metadata_path
+        self.retriever_lancedb_path = retriever_lancedb_path
+        self.retriever_backend = retriever_backend
         self.retriever_model_name = retriever_model_name
         self.retriever_vlm_policy = retriever_vlm_policy
         self.comp_cache_path = comp_cache_path
@@ -140,13 +152,16 @@ class PropertyDataset(Dataset):
 
         self.retriever = None
         if self.use_retriever:
-            from src.valuation.services.retrieval import CompRetriever
-            self.retriever = CompRetriever(
+            from src.valuation.services.retrieval import build_retriever
+            self.retriever = build_retriever(
+                backend=self.retriever_backend,
                 index_path=self.retriever_index_path,
                 metadata_path=self.retriever_metadata_path,
+                lancedb_path=self.retriever_lancedb_path,
                 model_name=self.retriever_model_name,
                 strict_model_match=True,
-                vlm_policy=self.retriever_vlm_policy
+                vlm_policy=self.retriever_vlm_policy,
+                app_config=app_config,
             )
         
         # Load all listings from database

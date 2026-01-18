@@ -302,11 +302,11 @@ def retrieve_comparables(
     
     Returns a dict with 'comps' list and similarity scores.
     """
-    from src.valuation.services.retrieval import CompRetriever
+    from src.valuation.services.retrieval import build_retriever
     from src.platform.domain.schema import CanonicalListing
     
     try:
-        retriever = CompRetriever()
+        retriever = build_retriever()
         
         # Convert dict to CanonicalListing
         if isinstance(listing, dict):

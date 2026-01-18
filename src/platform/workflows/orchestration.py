@@ -8,10 +8,17 @@ from prefect import flow, get_run_logger, task
 from prefect.tasks import task_input_hash
 
 from src.listings.workflows.unified_crawl import run_backfill
+from src.listings.workflows.maintenance import clean_data
 from src.market.services.transactions import TransactionsIngestService
 from src.market.workflows.market_data import build_market_data
 from src.ml.training.train import train_model
+from src.ml.training.image_captioning import batch_process_vlm
 from src.platform.db.base import resolve_db_url
+from src.platform.pipeline.state import PipelinePolicy, PipelineStateService
+from src.platform.settings import AppConfig
+from src.platform.utils.config import load_app_config_safe
+from src.valuation.workflows.indexing import build_vector_index
+from src.valuation.workflows.backfill import backfill_valuations
 from src.platform.pipeline.state import PipelinePolicy, PipelineStateService
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
@@ -54,8 +61,7 @@ def crawl_backfill_task(
 @task(retries=2, retry_delay_seconds=60)
 def transactions_ingest_task(*, db_path: str, transactions_path: str) -> Dict[str, Any]:
     service = TransactionsIngestService(db_path=db_path)
-    rows = service.ingest_file(transactions_path)
-    return {"rows_ingested": rows}
+    return service.ingest_file(transactions_path)
 
 
 @task(
@@ -97,6 +103,70 @@ def build_vector_index_task(
 def train_model_task(*, db_path: str, epochs: int) -> Dict[str, Any]:
     train_model(db_path=db_path, epochs=epochs)
     return {"status": "ok"}
+
+
+@task(retries=3, retry_delay_seconds=60)
+def vlm_backfill_task(*, db_path: str, override: bool = False, workers: int = 4) -> Dict[str, Any]:
+    batch_process_vlm(db_path=db_path, override=override, max_workers=workers)
+    return {"status": "ok"}
+
+
+@task(retries=1, retry_delay_seconds=30)
+def maintenance_clean_task(*, db_path: str) -> Dict[str, Any]:
+    clean_data(db_path=db_path)
+    return {"status": "ok"}
+
+
+@task(retries=1, retry_delay_seconds=30)
+def valuation_backfill_task(
+    *, db_path: str, listing_type: str = "sale", limit: int = 0, max_age_days: int = 7
+) -> int:
+    # Resolve DB URL from path for the task
+    db_url = resolve_db_url(db_path=db_path)
+    return backfill_valuations(
+        db_url=db_url,
+        listing_type=listing_type,
+        limit=limit,
+        max_age_days=max_age_days,
+    )
+
+
+@flow(name="maintenance_flow")
+def maintenance_flow(
+    *,
+    db_path: Optional[str] = None,
+    run_vlm: bool = False,
+    run_clean: bool = True,
+    run_valuation: bool = False,
+    vlm_override: bool = False,
+    vlm_workers: int = 4,
+    valuation_limit: int = 0,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    app_config = load_app_config_safe()
+    if db_path is None:
+        db_path = str(app_config.pipeline.db_path)
+    
+    results = {}
+
+    if run_clean:
+        logger.info("maintenance_clean_start")
+        maintenance_clean_task(db_path=db_path)
+        results["clean"] = "ok"
+
+    if run_vlm:
+        logger.info("maintenance_vlm_start")
+        vlm_backfill_task(db_path=db_path, override=vlm_override, workers=vlm_workers)
+        results["vlm"] = "ok"
+
+    if run_valuation:
+        logger.info("maintenance_valuation_start")
+        count = valuation_backfill_task(
+            db_path=db_path, limit=valuation_limit, max_age_days=7
+        )
+        results["valuation"] = count
+
+    return results
 
 
 @flow(name="preflight_flow")
@@ -227,12 +297,30 @@ def add_prefect_preflight_args(parser: argparse.ArgumentParser) -> argparse.Argu
     return parser
 
 
+def add_maintenance_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    defaults = load_app_config_safe()
+    parser.add_argument("--db", type=str, default=str(defaults.pipeline.db_path), help="SQLite DB path")
+    parser.add_argument("--clean", action="store_true", default=False, help="Run clean-data")
+    parser.add_argument("--vlm", action="store_true", default=False, help="Run VLM backfill")
+    parser.add_argument("--valuation", action="store_true", default=False, help="Run Valuation backfill")
+    parser.add_argument("--vlm-override", action="store_true", help="Override existing VLM descriptions")
+    parser.add_argument("--vlm-workers", type=int, default=4)
+    parser.add_argument("--valuation-limit", type=int, default=0)
+    return parser
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Prefect orchestration entrypoint.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     preflight_parser = subparsers.add_parser("preflight", help="Run preflight as a Prefect flow")
     add_prefect_preflight_args(preflight_parser)
+    
+    deploy_parser = subparsers.add_parser("deploy", help="Register deployment with Prefect")
+    add_prefect_preflight_args(deploy_parser)
+
+    maintenance_parser = subparsers.add_parser("maintenance", help="Run maintenance as a Prefect flow")
+    add_maintenance_args(maintenance_parser)
 
     args = parser.parse_args(argv)
 
@@ -256,6 +344,43 @@ def main(argv: Optional[List[str]] = None) -> int:
             skip_transactions=args.skip_transactions,
             enable_cache=not args.disable_cache,
         )
+        return 0
+
+    elif args.command == "maintenance":
+        # If no flags provided, default to nothing? or clean?
+        # Let's verify at least one is picked or warn.
+        if not (args.clean or args.vlm or args.valuation):
+            # Default to cleaning if nothing specified?
+            pass
+
+        maintenance_flow(
+            db_path=args.db,
+            run_clean=args.clean,
+            run_vlm=args.vlm,
+            run_valuation=args.valuation,
+            vlm_override=args.vlm_override,
+            vlm_workers=args.vlm_workers,
+            valuation_limit=args.valuation_limit,
+        )
+        return 0
+
+    elif args.command == "deploy":
+        from prefect.deployments import Deployment
+
+        deployment = Deployment.build_from_flow(
+            flow=preflight_flow,
+            name="daily-preflight",
+            work_queue_name="default",
+            parameters={
+                "db_path": args.db,
+                "skip_training": False,
+                # Add reasonable defaults for a daily background run
+                "max_listings": 100, 
+            },
+            entrypoint="src/platform/workflows/orchestration.py:preflight_flow",
+        )
+        deployment.apply()
+        print("Deployment 'daily-preflight' applied! Run 'prefect agent start -q default' to execute schedules.")
         return 0
 
     parser.error("Unknown command")

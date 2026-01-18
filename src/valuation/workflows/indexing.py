@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 from typing import List, Optional
 
 import structlog
@@ -7,7 +8,7 @@ import structlog
 from src.platform.domain.models import DBListing
 from src.platform.settings import AppConfig
 from src.platform.db.base import resolve_db_url
-from src.valuation.services.retrieval import CompRetriever
+from src.valuation.services.retrieval import build_retriever
 from src.platform.storage import StorageService
 from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.platform.utils.config import load_app_config_safe
@@ -22,6 +23,8 @@ def build_vector_index(
     limit: int = 0,
     index_path: Optional[str] = None,
     metadata_path: Optional[str] = None,
+    lancedb_path: Optional[str] = None,
+    backend: Optional[str] = None,
     clear: bool = False,
     batch_size: int = 200,
     model_name: Optional[str] = None,
@@ -42,19 +45,35 @@ def build_vector_index(
         model_name = app_config.valuation.retriever_model_name
     if vlm_policy is None:
         vlm_policy = app_config.valuation.retriever_vlm_policy
+    if backend is None:
+        backend = app_config.valuation.retriever_backend
+    if lancedb_path is None:
+        lancedb_path = app_config.valuation.retriever_lancedb_path
+
+    if backend == "lancedb":
+        index_path = str(lancedb_path)
+    else:
+        index_path = str(index_path)
+        lancedb_path = str(lancedb_path)
 
     if clear:
         for path in (index_path, metadata_path):
             if os.path.exists(path):
-                os.remove(path)
-        logger.info("vector_index_cleared", index_path=index_path, metadata_path=metadata_path)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+        logger.info("vector_index_cleared", index_path=index_path, metadata_path=metadata_path, backend=backend)
 
-    retriever = CompRetriever(
+    retriever = build_retriever(
+        backend=backend,
         index_path=index_path,
         metadata_path=metadata_path,
+        lancedb_path=lancedb_path,
         model_name=model_name,
         strict_model_match=False,
         vlm_policy=vlm_policy,
+        app_config=app_config,
     )
     storage = StorageService(db_url=db_url)
     session = storage.get_session()
@@ -78,14 +97,14 @@ def build_vector_index(
         if batch:
             retriever.add_listings(batch)
 
-        logger.info("vector_index_built", indexed=total, index_path=index_path)
+        logger.info("vector_index_built", indexed=total, index_path=index_path, backend=backend)
         return total
     finally:
         session.close()
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Build FAISS vector index from listings DB.")
+    parser = argparse.ArgumentParser(description="Build vector index (FAISS/LanceDB) from listings DB.")
     defaults = load_app_config_safe()
     parser.add_argument(
         "--db-url",
@@ -102,10 +121,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--limit", type=int, default=0, help="Max listings to index (0 = no limit)")
     parser.add_argument(
+        "--backend",
+        type=str,
+        default=defaults.valuation.retriever_backend,
+        choices=["faiss", "lancedb"],
+        help="Vector index backend",
+    )
+    parser.add_argument(
         "--index-path",
         type=str,
         default=str(defaults.pipeline.index_path),
-        help="FAISS index output path",
+        help="FAISS index output path (ignored when backend=lancedb)",
+    )
+    parser.add_argument(
+        "--lancedb-path",
+        type=str,
+        default=str(defaults.valuation.retriever_lancedb_path),
+        help="LanceDB index directory",
     )
     parser.add_argument(
         "--metadata-path", type=str, default=str(defaults.pipeline.metadata_path), help="Metadata output path"
@@ -132,7 +164,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         listing_type=args.listing_type,
         limit=args.limit,
         index_path=args.index_path,
+        lancedb_path=args.lancedb_path,
         metadata_path=args.metadata_path,
+        backend=args.backend,
         clear=args.clear,
         batch_size=args.batch_size,
         model_name=args.model_name,

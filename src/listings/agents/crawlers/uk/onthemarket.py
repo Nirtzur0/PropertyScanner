@@ -35,7 +35,7 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             rate_limit_seconds=float(config.get("period_seconds", 5)),
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
-            pydoll_config=config.get("pydoll_config"),
+            browser_config=config.get("browser_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:

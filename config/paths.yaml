@@ -12,6 +12,7 @@ paths:
 
   vector_index_path: ${oc.env:PROPERTY_SCANNER_VECTOR_INDEX_PATH, ${paths.data_dir}/vector_index.faiss}
   vector_metadata_path: ${oc.env:PROPERTY_SCANNER_VECTOR_METADATA_PATH, ${paths.data_dir}/vector_metadata.json}
+  lancedb_path: ${oc.env:PROPERTY_SCANNER_LANCEDB_PATH, ${paths.data_dir}/vector_index.lancedb}
 
   fusion_model_path: ${oc.env:PROPERTY_SCANNER_FUSION_MODEL_PATH, ${paths.models_dir}/fusion_model.pt}
   fusion_config_path: ${oc.env:PROPERTY_SCANNER_FUSION_CONFIG_PATH, ${paths.models_dir}/fusion_config.json}

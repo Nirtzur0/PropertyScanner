@@ -37,7 +37,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
-            pydoll_config=config.get("pydoll_config"),
+            browser_config=config.get("browser_config"),
         )
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:

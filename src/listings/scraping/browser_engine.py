@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
 
-PydollTask = Callable[["Tab"], Awaitable[Any]]
-PydollPreflight = Callable[[str], Awaitable[bool]]
+BrowserTask = Callable[["Tab"], Awaitable[Any]]
+BrowserPreflight = Callable[[str], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
-class PydollApiRequest:
+class BrowserApiRequest:
     method: str
     url: str
     params: Optional[dict[str, str]] = None
@@ -24,7 +24,7 @@ class PydollApiRequest:
 
 
 @dataclass(frozen=True)
-class PydollMockResponse:
+class BrowserMockResponse:
     url_contains: str
     status_code: int = 200
     body: object = ""
@@ -34,17 +34,17 @@ class PydollMockResponse:
 
 
 @dataclass(frozen=True)
-class PydollNetworkConfig:
+class BrowserNetworkConfig:
     block_resource_types: Sequence[str] = ()
     block_url_keywords: Sequence[str] = ()
     extra_headers: dict[str, str] = field(default_factory=dict)
-    mock_responses: Sequence[PydollMockResponse] = ()
+    mock_responses: Sequence[BrowserMockResponse] = ()
     monitor_network: bool = False
     network_log_limit: int = 2000
 
 
 @dataclass(frozen=True)
-class PydollEngineConfig:
+class BrowserEngineConfig:
     user_agent: str
     headless: bool = True
     wait_s: float = 8.0
@@ -61,7 +61,7 @@ class PydollEngineConfig:
     retry_exponential_backoff: bool = True
     maximize_stealth: bool = True
     maximize_speed: bool = True
-    network: PydollNetworkConfig = field(default_factory=PydollNetworkConfig)
+    network: BrowserNetworkConfig = field(default_factory=BrowserNetworkConfig)
 
     @classmethod
     def from_dict(
@@ -72,7 +72,7 @@ class PydollEngineConfig:
         headless: bool,
         wait_s: float,
         max_concurrency: int,
-    ) -> "PydollEngineConfig":
+    ) -> "BrowserEngineConfig":
         payload = data or {}
         network_payload = payload.get("network", {}) if isinstance(payload.get("network"), dict) else {}
         resolved_max_concurrency = int(payload.get("max_concurrency", max_concurrency))
@@ -103,7 +103,7 @@ class PydollEngineConfig:
             retry_exponential_backoff=bool(payload.get("retry_exponential_backoff", True)),
             maximize_stealth=bool(payload.get("maximize_stealth", True)),
             maximize_speed=bool(payload.get("maximize_speed", True)),
-            network=PydollNetworkConfig(
+            network=BrowserNetworkConfig(
                 block_resource_types=tuple(
                     network_payload.get(
                         "block_resource_types", payload.get("block_resource_types", ())
@@ -118,7 +118,7 @@ class PydollEngineConfig:
                     network_payload.get("extra_headers", payload.get("extra_headers", {}))
                 ),
                 mock_responses=tuple(
-                    PydollMockResponse(**item)
+                    BrowserMockResponse(**item)
                     for item in network_payload.get(
                         "mock_responses", payload.get("mock_responses", ())
                     )
@@ -135,7 +135,7 @@ class PydollEngineConfig:
 
 
 @dataclass
-class PydollFetchResult:
+class BrowserFetchResult:
     url: str
     html: Optional[str]
     network_log: list[dict[str, Any]] = field(default_factory=list)
@@ -149,19 +149,19 @@ class _TabState:
     network_log: list[dict[str, Any]] = field(default_factory=list)
 
 
-def ensure_pydoll_on_path() -> None:
+def ensure_browser_lib_on_path() -> None:
     root_dir = Path(__file__).resolve().parents[3]
     pydoll_dir = root_dir / "third_party" / "pydoll"
     if pydoll_dir.exists() and str(pydoll_dir) not in sys.path:
         sys.path.insert(0, str(pydoll_dir))
 
 
-class PydollEngine:
-    def __init__(self, config: PydollEngineConfig) -> None:
+class BrowserEngine:
+    def __init__(self, config: BrowserEngineConfig) -> None:
         self.config = config
 
     def is_available(self) -> bool:
-        ensure_pydoll_on_path()
+        ensure_browser_lib_on_path()
         try:
             import pydoll  # noqa: F401
         except Exception:
@@ -174,8 +174,8 @@ class PydollEngine:
 
     async def fetch_with_meta(
         self, url: str, *, timeout_s: float = 30.0
-    ) -> PydollFetchResult:
-        ensure_pydoll_on_path()
+    ) -> BrowserFetchResult:
+        ensure_browser_lib_on_path()
         from pydoll.decorators import retry
         from pydoll.exceptions import (
             ElementNotFound,
@@ -202,7 +202,7 @@ class PydollEngine:
             delay=self.config.retry_delay_s,
             exponential_backoff=self.config.retry_exponential_backoff,
         )
-        async def run() -> PydollFetchResult:
+        async def run() -> BrowserFetchResult:
             return await self._fetch_once(url, timeout_s=timeout_s, state=state)
 
         return await run()
@@ -212,10 +212,10 @@ class PydollEngine:
         *,
         login_url: str,
         login_steps: Optional[Callable[["Tab"], Awaitable[None]]],
-        api_requests: Sequence[PydollApiRequest],
+        api_requests: Sequence[BrowserApiRequest],
         timeout_s: float = 30.0,
     ) -> list["Response"]:
-        ensure_pydoll_on_path()
+        ensure_browser_lib_on_path()
         from pydoll.decorators import retry
         from pydoll.exceptions import NetworkError, PageLoadTimeout, WaitElementTimeout
 
@@ -249,7 +249,7 @@ class PydollEngine:
         return await run()
 
     async def run_concurrent(
-        self, tasks: Sequence[PydollTask], *, max_concurrency: Optional[int] = None
+        self, tasks: Sequence[BrowserTask], *, max_concurrency: Optional[int] = None
     ) -> list[Any]:
         if not tasks:
             return []
@@ -261,29 +261,29 @@ class PydollEngine:
         *,
         timeout_s: float = 30.0,
         max_concurrency: Optional[int] = None,
-        preflight: Optional[PydollPreflight] = None,
-    ) -> list[PydollFetchResult]:
+        preflight: Optional[BrowserPreflight] = None,
+    ) -> list[BrowserFetchResult]:
         if not urls:
             return []
 
-        def build_task(url: str) -> Callable[["Tab"], Awaitable[PydollFetchResult]]:
-            async def task(tab: "Tab") -> PydollFetchResult:
+        def build_task(url: str) -> Callable[["Tab"], Awaitable[BrowserFetchResult]]:
+            async def task(tab: "Tab") -> BrowserFetchResult:
                 if preflight:
                     allowed = await preflight(url)
                     if not allowed:
-                        return PydollFetchResult(url=url, html=None)
+                        return BrowserFetchResult(url=url, html=None)
                 html = await self._navigate_and_extract(tab, url, timeout_s=timeout_s)
-                return PydollFetchResult(url=url, html=html)
+                return BrowserFetchResult(url=url, html=html)
 
             return task
 
         tasks = [build_task(url) for url in urls]
         results = await self._run_concurrent(tasks, max_concurrency=max_concurrency)
-        return [result for result in results if isinstance(result, PydollFetchResult)]
+        return [result for result in results if isinstance(result, BrowserFetchResult)]
 
     async def _fetch_once(
         self, url: str, *, timeout_s: float, state: dict[str, Any]
-    ) -> PydollFetchResult:
+    ) -> BrowserFetchResult:
         browser, initial_tab, is_remote = await self._launch_browser()
         tab, context_id, should_close_tab = await self._select_tab(
             browser, initial_tab, is_remote
@@ -292,7 +292,7 @@ class PydollEngine:
         tab_state = await self._prepare_tab(tab)
         try:
             html = await self._navigate_and_extract(tab, url, timeout_s=timeout_s)
-            return PydollFetchResult(
+            return BrowserFetchResult(
                 url=url,
                 html=html,
                 network_log=list(tab_state.network_log),
@@ -310,7 +310,7 @@ class PydollEngine:
         *,
         login_url: str,
         login_steps: Optional[Callable[["Tab"], Awaitable[None]]],
-        api_requests: Sequence[PydollApiRequest],
+        api_requests: Sequence[BrowserApiRequest],
         timeout_s: float,
         state: dict[str, Any],
     ) -> list["Response"]:
@@ -337,7 +337,7 @@ class PydollEngine:
             await self._shutdown_browser(browser, is_remote)
 
     async def _run_concurrent(
-        self, tasks: Sequence[PydollTask], *, max_concurrency: Optional[int] = None
+        self, tasks: Sequence[BrowserTask], *, max_concurrency: Optional[int] = None
     ) -> list[Any]:
         browser, initial_tab, is_remote = await self._launch_browser()
         resolved = (
@@ -353,7 +353,7 @@ class PydollEngine:
             await initial_tab.close()
             initial_tab = None
 
-        async def run_task(idx: int, task: PydollTask) -> None:
+        async def run_task(idx: int, task: BrowserTask) -> None:
             await semaphore.acquire()
             tab: Optional["Tab"] = None
             tab_state: Optional[_TabState] = None
@@ -384,7 +384,7 @@ class PydollEngine:
             await self._shutdown_browser(browser, is_remote)
 
     async def _launch_browser(self):
-        ensure_pydoll_on_path()
+        ensure_browser_lib_on_path()
         from pydoll.browser import Chrome
 
         options = self._build_options()
@@ -677,7 +677,7 @@ class PydollEngine:
         if self.config.wait_s:
             await asyncio.sleep(self.config.wait_s)
 
-    async def _run_api_request(self, tab: "Tab", request: PydollApiRequest) -> "Response":
+    async def _run_api_request(self, tab: "Tab", request: BrowserApiRequest) -> "Response":
         headers = None
         if request.headers:
             headers = [

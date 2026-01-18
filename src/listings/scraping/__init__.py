@@ -1,23 +1,23 @@
 from src.listings.scraping.client import FetchResult, LinkExtractorSpec, ScrapeClient
-from src.listings.scraping.engine import PydollFetcher
-from src.listings.scraping.pydoll_engine import (
-    PydollApiRequest,
-    PydollEngine,
-    PydollEngineConfig,
-    PydollFetchResult,
-    PydollMockResponse,
-    PydollNetworkConfig,
+from src.listings.scraping.engine import BrowserFetcher
+from src.listings.scraping.browser_engine import (
+    BrowserApiRequest,
+    BrowserEngine,
+    BrowserEngineConfig,
+    BrowserFetchResult,
+    BrowserMockResponse,
+    BrowserNetworkConfig,
 )
 
 __all__ = [
     "FetchResult",
     "LinkExtractorSpec",
     "ScrapeClient",
-    "PydollFetcher",
-    "PydollApiRequest",
-    "PydollEngine",
-    "PydollEngineConfig",
-    "PydollFetchResult",
-    "PydollMockResponse",
-    "PydollNetworkConfig",
+    "BrowserFetcher",
+    "BrowserApiRequest",
+    "BrowserEngine",
+    "BrowserEngineConfig",
+    "BrowserFetchResult",
+    "BrowserMockResponse",
+    "BrowserNetworkConfig",
 ]

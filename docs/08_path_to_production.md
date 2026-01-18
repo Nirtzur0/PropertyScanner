@@ -13,12 +13,12 @@ Production is not just uptime. It is a set of guarantees we commit to:
 
 ## 1) Product spine: one orchestration and data surface
 The product story is weaker without a single, explicit system spine.
-- Single orchestration stack: agentic runs already use a plan-executor; batch workflows still run through preflight. Unify these under one run plan and shared budgets.
+- Single orchestration stack: agentic runs already use a plan-executor; batch workflows now run as Prefect flows (`src/platform/workflows/prefect_orchestration.py`). Continue converging on a single run plan and shared budgets.
 - Canonical data access: prohibit raw SQL in services; data access lives behind repository classes with a stable API.
 - Clean library surface: `PipelineAPI` already exposes crawl/index/market/valuation for CLI, agent, and dashboard; keep it as the single surface.
 
 Decision points:
-- Orchestrator selection (Airflow vs Prefect vs Dagster) based on local-first dev, scheduling complexity, and operational overhead.
+- Prefect is the chosen orchestrator; decide when to shift from in-process runs to Prefect deployments + schedules.
 - When to split or keep orchestration inside the app (embedded scheduler vs external scheduler).
 
 ## 2) Scraping that holds up
@@ -107,6 +107,6 @@ Phase 3: Productization
 
 ## 10) Recommended next actions (planning only)
 - Define the truth model (snapshot vs event) and document it.
-- Choose the orchestration platform and define minimal run DAGs.
+- Expand Prefect deployments and schedules for crawl backfill + market data + training.
 - Draft a data-contract spec for each source with golden fixtures.
 - Establish evaluation baselines for valuation and rent estimation.

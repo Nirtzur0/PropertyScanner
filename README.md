@@ -23,7 +23,7 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 - **Income-aware valuation** blends rent estimates with local yield distributions and comp coverage weighting.
 - **Area intelligence** adds sentiment/development signals with credibility and freshness scaling.
 - **Sold-price training labels** prefer transaction prices; rent labels normalize to rent indices.
-- **Preflight orchestration** is the canonical entry point; it checks freshness and runs only what is stale.
+- **Preflight orchestration** is the canonical entry point; it checks freshness and runs only what is stale (Prefect flow or direct runner).
 - **Quality gates** stop bad crawls before they pollute the lake, with run logs in `pipeline_runs`.
 
 ---
@@ -32,7 +32,7 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 1) **Crawl backfill**: crawl, normalize, fuse, and augment listings.
 2) **Transactions**: ingest sold/registry data to ground truth sales labels.
 3) **Market data**: build macro, market indices, hedonic indices, and area intelligence.
-4) **Vector index**: build FAISS for time-safe comps.
+4) **Vector index**: build FAISS or LanceDB for time-safe comps.
 5) **Training**: train the fusion model (time+geo splits available) and optional calibrators.
 6) **Valuation**: time-adjusted comps + fusion residuals + income blend + area adjustments.
 
@@ -44,6 +44,8 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 ```bash
 ollama serve
 ```
+
+If you want a hosted model instead, update `config/llm.yaml` and set the provider API key (e.g., `OPENAI_API_KEY`, `GOOGLE_API_KEY`).
 
 ### 1) Install dependencies
 ```bash
@@ -73,17 +75,22 @@ All commands run from the project root.
 
 ```bash
 python3 -m src.interfaces.cli preflight                 # Refresh stale data and artifacts
+python3 -m src.interfaces.cli prefect preflight         # Prefect flow (retries + caching + UI)
 python3 -m src.interfaces.cli schedule                  # Scheduled preflight refreshes
 python3 -m src.interfaces.cli unified-crawl              # Crawl listings via unified runner
 python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
 python3 -m src.interfaces.cli build-market               # Macro + market + hedonic data
-python3 -m src.interfaces.cli build-index                # Build vector index for comps
+python3 -m src.interfaces.cli build-index                # Build vector index for comps (FAISS/LanceDB)
 python3 -m src.interfaces.cli train -- --listing-type sale
 python3 -m src.interfaces.cli backfill                   # Backfill cached valuations
 python3 -m src.interfaces.cli calibrators -- --input <samples.jsonl>
 python3 -m src.interfaces.cli dashboard                  # Streamlit UI
 python3 -m src.interfaces.cli agent "Find deals" <areas>
 ```
+
+Vector backend note:
+- Set `valuation.retriever_backend: lancedb` (and `valuation.retriever_lancedb_path`) to use LanceDB.
+- Or override at runtime with `python3 -m src.interfaces.cli build-index -- --backend lancedb`.
 
 ## Crawler Status (Quick View)
 Status reflects current parsing tests and known live-crawl behavior. Live crawling can vary with rate limits and anti-bot defenses.
@@ -114,8 +121,17 @@ python3 scripts/source_harness.py --source immobiliare_it --search-url "<IMMOBIL
 
 ---
 
-## Automation (Scheduler)
-Preflight is the canonical automation entry point. Run the scheduler to keep the pipeline fresh:
+## Automation (Prefect + Scheduler)
+Preflight is the canonical automation entry point. Use Prefect for observability or the legacy scheduler for simple intervals.
+
+Prefect (local UI):
+
+```bash
+prefect server start
+python3 -m src.interfaces.cli prefect preflight
+```
+
+Legacy APScheduler:
 
 ```bash
 python3 -m src.interfaces.cli schedule --interval-minutes 360

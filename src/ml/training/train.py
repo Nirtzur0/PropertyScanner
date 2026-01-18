@@ -343,6 +343,8 @@ def train_model(
     use_retriever: bool = True,
     retriever_index_path: Optional[str] = None,
     retriever_metadata_path: Optional[str] = None,
+    retriever_lancedb_path: Optional[str] = None,
+    retriever_backend: Optional[str] = None,
     retriever_model_name: Optional[str] = None,
     retriever_vlm_policy: Optional[str] = None,
     comp_cache_path: Optional[str] = None,
@@ -359,6 +361,10 @@ def train_model(
         retriever_index_path = str(app_config.paths.vector_index_path)
     if retriever_metadata_path is None:
         retriever_metadata_path = str(app_config.paths.vector_metadata_path)
+    if retriever_lancedb_path is None:
+        retriever_lancedb_path = str(app_config.paths.lancedb_path)
+    if retriever_backend is None:
+        retriever_backend = app_config.valuation.retriever_backend
     if retriever_model_name is None:
         retriever_model_name = app_config.valuation.retriever_model_name
     if retriever_vlm_policy is None:
@@ -371,8 +377,12 @@ def train_model(
         raise RuntimeError("PyTorch not available. Install with: pip install torch")
 
     if use_retriever:
-        if not os.path.exists(retriever_index_path) or not os.path.exists(retriever_metadata_path):
-            raise FileNotFoundError("retriever_index_missing")
+        if retriever_backend == "lancedb":
+            if not os.path.exists(retriever_lancedb_path) or not os.path.exists(retriever_metadata_path):
+                raise FileNotFoundError("retriever_index_missing")
+        else:
+            if not os.path.exists(retriever_index_path) or not os.path.exists(retriever_metadata_path):
+                raise FileNotFoundError("retriever_index_missing")
 
     from src.ml.dataset import PropertyDataset, collate_fn
     from torch.utils.data import DataLoader, SubsetRandomSampler
@@ -394,6 +404,8 @@ def train_model(
         use_retriever=use_retriever,
         retriever_index_path=retriever_index_path,
         retriever_metadata_path=retriever_metadata_path,
+        retriever_lancedb_path=retriever_lancedb_path,
+        retriever_backend=retriever_backend,
         retriever_model_name=retriever_model_name,
         retriever_vlm_policy=retriever_vlm_policy,
         comp_cache_path=comp_cache_path,
@@ -607,7 +619,7 @@ if __name__ == "__main__":
     parser.add_argument("--time-safe-comps", action="store_true", help="Enforce comp dates <= target date")
     parser.add_argument("--no-time-safe-comps", dest="time_safe_comps", action="store_false")
     parser.set_defaults(time_safe_comps=True)
-    parser.add_argument("--use-retriever", action="store_true", help="Use FAISS retriever for comps")
+    parser.add_argument("--use-retriever", action="store_true", help="Use vector retriever for comps (FAISS/LanceDB)")
     parser.add_argument("--no-retriever", dest="use_retriever", action="store_false")
     parser.set_defaults(use_retriever=True)
     parser.add_argument("--retriever-index", default=str(defaults.paths.vector_index_path))

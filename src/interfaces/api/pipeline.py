@@ -10,7 +10,7 @@ import structlog
 from src.platform.settings import AppConfig, PipelineConfig, ValuationConfig
 from src.platform.db.base import resolve_db_url
 from src.listings.services.listing_adapter import db_listing_to_canonical
-from src.valuation.services.retrieval import CompRetriever
+from src.valuation.services.retrieval import build_retriever
 from src.platform.storage import StorageService
 from src.valuation.services.valuation import ValuationService
 from src.valuation.services.valuation_persister import ValuationPersister
@@ -77,14 +77,17 @@ class PipelineAPI:
         return self._valuation
 
     @property
-    def retriever(self) -> CompRetriever:
+    def retriever(self) -> Any:
         if self._retriever is None:
-            self._retriever = CompRetriever(
+            self._retriever = build_retriever(
+                backend=self._valuation_config.retriever_backend,
                 index_path=self.config.index_path,
                 metadata_path=self.config.metadata_path,
+                lancedb_path=self._valuation_config.retriever_lancedb_path,
                 model_name=self._valuation_config.retriever_model_name,
                 strict_model_match=True,
                 vlm_policy=self._valuation_config.retriever_vlm_policy,
+                app_config=self.app_config,
             )
         return self._retriever
 

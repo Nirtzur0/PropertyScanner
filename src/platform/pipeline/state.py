@@ -65,6 +65,7 @@ class PipelineStateService:
         app_config: Optional[AppConfig] = None,
     ) -> None:
         self.paths = paths or (app_config.paths if app_config is not None else PathsConfig())
+        self.app_config = app_config
         if db_path is None:
             db_path = str(self.paths.default_db_path)
         resolved = resolve_db_url(db_url=db_url, db_path=db_path)
@@ -80,10 +81,15 @@ class PipelineStateService:
         listings_last_seen = listing_snapshot["last_seen"]
 
         market_data_at = self._market_data_timestamp()
-        index_at = self._file_timestamp(
-            [self.paths.vector_index_path, self.paths.vector_metadata_path],
-            use_oldest=True,
-        )
+        index_paths = [self.paths.vector_metadata_path]
+        backend = None
+        if self.app_config is not None:
+            backend = self.app_config.valuation.retriever_backend
+        if backend == "lancedb":
+            index_paths.append(self.paths.lancedb_path)
+        else:
+            index_paths.append(self.paths.vector_index_path)
+        index_at = self._file_timestamp(index_paths, use_oldest=True)
         model_at = self._file_timestamp([self.paths.fusion_model_path], use_oldest=False)
 
         now = datetime.utcnow()

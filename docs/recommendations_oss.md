@@ -5,12 +5,13 @@ This document outlines high-impact open-source libraries and tools that could en
 ---
 
 ## 1. Orchestration & Observability (High Impact)
-**Current State**: Custom scripts in `src/workflows` + `APScheduler`. Limited visibility into run history, retries, and failure states.
+**Current State**: Preflight scripts + `APScheduler` (legacy), with Prefect flow entrypoints available for richer observability.
 
 ### **Prefect** (or Dagster)
 *   **Why**: Your pipeline involves complex dependencies (Scrape -> Normalize -> Fuse -> Augment). Prefect allows you to define these as flows with automatic retries, caching (don't re-scrape if done), and a local UI to debug failures.
 *   **Fit**: "Code as workflows" philosophy fits your Python-heavy codebase perfectly.
-*   **Migration**: Replace `src/platform/pipeline/runs.py` logic with `@task` and `@flow` decorators.
+*   **Migration**: Prefect flows wrap existing workflow steps; `pipeline_runs` still captures per-step metadata.
+*   **Status**: Implemented via `src/platform/workflows/orchestration.py` (use `python3 -m src.interfaces.cli orchestrator preflight`).
 
 ### **Pydantic Settings** (already likely used, but explicit usage)
 *   **Why**: Ensure strict validation of all `AppConfig` via `.env` files. Hydra is great for composition, but Pydantic Settings handles environment variable overrides cleaner for production.
@@ -28,11 +29,13 @@ This document outlines high-impact open-source libraries and tools that could en
 ### **Polars**
 *   **Why**: If your property dataset grows >1M rows, Pandas will slow down. Polars is a Rust-backed DataFrame library that is 10-50x faster and memory efficient.
 *   **Fit**: Drop-in replacement for many Pandas operations, especially for the "Market Evaluation" aggregation steps.
+*   **Status**: Optional backend via `dataframe.backend: polars` (defaults to pandas).
 
 ### **LanceDB**
 *   **Why**: You use `faiss-cpu`. LanceDB is a modern, embedded vector database (runs in-process like SQLite) that is optimized for multi-modal data (images + text).
 *   **Benefit**: Easier management than raw FAISS indices. Native storage of the embeddings alongside the metadata.
 *   **Fit**: Perfect for your VLM/Image-search features.
+*   **Status**: Optional backend via `valuation.retriever_backend: lancedb` and `valuation.retriever_lancedb_path`.
 
 ---
 
@@ -42,6 +45,7 @@ This document outlines high-impact open-source libraries and tools that could en
 ### **LiteLLM**
 *   **Why**: You are using `langchain-openai`. LiteLLM provides a standardized interface to ANY model (OpenAI, Anthropic, Ollama, Azure) using the OpenAI format.
 *   **Benefit**: Switch between `gpt-4o` and a local `llama3` via config without changing code. Robust cost tracking and fallback logic (e.g., "Use Local Llama, if fail -> GPT-4").
+*   **Status**: Implemented via `src/platform/utils/llm.py`; configure `llm.models` in `config/llm.yaml`.
 
 ### **Instructor**
 *   **Why**: LangChain's Pydantic extraction can be verbose. `Instructor` is a lightweight library that patches the OpenAI/LiteLLM client to return simple Pydantic objects.
@@ -77,6 +81,6 @@ This document outlines high-impact open-source libraries and tools that could en
 
 ## Recommended Action Plan
 
-1.  **Immediate Win**: Integrate **LiteLLM**. It simplifies your `src/platform/utils/llm.py` and future-proofs against model churn.
-2.  **Stability Win**: Adopt **Prefect**. Wrap `crawl_backfill` and `market-data` workflows to get visibility into crashes and scheduled runs.
+1.  **Immediate Win**: **LiteLLM** is integrated; adjust `config/llm.yaml` to change model priorities.
+2.  **Stability Win**: Use **Prefect** flows for `crawl_backfill` and `market-data` to get visibility into crashes and scheduled runs.
 3.  **Data Win**: Migrate Vector Search to **LanceDB**. Simplifies the VLM embedding persistence.

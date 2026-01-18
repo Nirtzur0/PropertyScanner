@@ -3,7 +3,6 @@ LangGraph Workflow for Cognitive Property Scanner.
 Implements a plan-executor graph with deterministic run plans.
 """
 import json
-import os
 import structlog
 from typing import Literal, Dict, Any, List, Optional, Tuple
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -23,44 +22,10 @@ from src.agentic.tools import (
     build_vector_index_workflow,
     train_model_workflow,
 )
+from src.platform.utils.llm import get_llm
 
 logger = structlog.get_logger()
 
-
-def get_llm(temperature: float = 0):
-    """
-    Get LLM instance with automatic provider detection.
-    Priority: Ollama (local, fast) > Gemini (GOOGLE_API_KEY) > OpenAI (OPENAI_API_KEY)
-    """
-    # Try Ollama first (local, no API costs)
-    try:
-        from langchain_community.llms import Ollama
-        logger.info("using_ollama_llm")
-        return Ollama(model="gpt-oss:latest", temperature=temperature)
-    except Exception as e:
-        logger.warning("ollama_init_failed", error=str(e))
-    
-    # Try Gemini
-    if os.getenv("GOOGLE_API_KEY"):
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            logger.info("using_gemini_llm")
-            # Try gemini-1.5-pro or gemini-2.0-flash-exp
-            return ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-exp",
-                temperature=temperature,
-                google_api_key=os.getenv("GOOGLE_API_KEY")
-            )
-        except Exception as e:
-            logger.warning("gemini_init_failed", error=str(e))
-    
-    # Fallback to OpenAI
-    if os.getenv("OPENAI_API_KEY"):
-        from langchain_openai import ChatOpenAI
-        logger.info("using_openai_llm")
-        return ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
-    
-    raise RuntimeError("No LLM provider available. Install Ollama, set GOOGLE_API_KEY, or set OPENAI_API_KEY")
 
 PLANNER_PROMPT = """You are the planning module for a property investment agent.
 Return a single JSON object only (no markdown, no commentary, no extra keys).

@@ -125,6 +125,6 @@ Defined in `fusion_model.py`.
 
 ## What you need to run it
 - Model artifacts: `models/fusion_model.pt` and `models/fusion_config.json`.
-- Vector index: `data/vector_index.faiss` + `data/vector_metadata.json`.
+- Vector index: `data/vector_index.faiss` or `data/vector_index.lancedb` + `data/vector_metadata.json`.
 - Market tables in `data/listings.db`: `market_indices`, `hedonic_indices`, `macro_indicators`, `area_intelligence`.
 - Optional calibrators: `models/calibration_registry.json`.

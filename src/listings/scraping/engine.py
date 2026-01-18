@@ -6,11 +6,11 @@ from typing import Any, Optional
 
 import structlog
 
-from src.listings.scraping.pydoll_engine import PydollEngine, PydollEngineConfig
+from src.listings.scraping.browser_engine import BrowserEngine, BrowserEngineConfig
 
 logger = structlog.get_logger(__name__)
 
-class PydollFetcher:
+class BrowserFetcher:
     def __init__(
         self,
         user_agent: str,
@@ -18,16 +18,16 @@ class PydollFetcher:
         headless: bool = True,
         wait_s: float = 8.0,
         max_concurrency: int = 1,
-        pydoll_config: Optional[dict[str, Any]] = None,
+        browser_config: Optional[dict[str, Any]] = None,
     ) -> None:
-        self._engine_config = PydollEngineConfig.from_dict(
-            pydoll_config,
+        self._engine_config = BrowserEngineConfig.from_dict(
+            browser_config,
             user_agent=user_agent,
             headless=headless,
             wait_s=wait_s,
             max_concurrency=max_concurrency,
         )
-        self._engine = PydollEngine(self._engine_config)
+        self._engine = BrowserEngine(self._engine_config)
         self._semaphore = (
             threading.BoundedSemaphore(max_concurrency)
             if max_concurrency and max_concurrency > 0
@@ -38,7 +38,7 @@ class PydollFetcher:
         return self._engine.is_available()
 
     @property
-    def engine(self) -> PydollEngine:
+    def engine(self) -> BrowserEngine:
         return self._engine
 
     def fetch(self, url: str, *, timeout_s: float = 30.0) -> Optional[str]:
@@ -48,7 +48,7 @@ class PydollFetcher:
                     return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
             return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
         except Exception as exc:
-            logger.warning("pydoll_fetch_failed", url=url, error=str(exc))
+            logger.warning("browser_fetch_failed", url=url, error=str(exc))
             return None
 
 

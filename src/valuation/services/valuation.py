@@ -46,7 +46,7 @@ from src.valuation.services.conformal_calibrator import StratifiedCalibratorRegi
 from src.listings.services.feature_sanitizer import sanitize_listing_features
 from src.ml.services.fusion_model import FusionModelService, FusionOutput
 from src.ml.services.encoders import MultimodalEncoder
-from src.valuation.services.retrieval import CompRetriever
+from src.valuation.services.retrieval import build_retriever
 from src.market.services.eri_signals import ERISignalsService
 from src.market.services.area_intelligence import AreaIntelligenceService
 from src.platform.settings import AppConfig, ValuationConfig
@@ -129,13 +129,18 @@ class ValuationService:
             self.config.retriever_metadata_path = retriever_cfg.get("metadata_path", self.config.retriever_metadata_path)
             self.config.retriever_model_name = retriever_cfg.get("model_name", self.config.retriever_model_name)
             self.config.retriever_vlm_policy = retriever_cfg.get("vlm_policy", self.config.retriever_vlm_policy)
+            self.config.retriever_backend = retriever_cfg.get("backend", self.config.retriever_backend)
+            self.config.retriever_lancedb_path = retriever_cfg.get("lancedb_path", self.config.retriever_lancedb_path)
 
-        self.retriever = CompRetriever(
+        self.retriever = build_retriever(
+            backend=self.config.retriever_backend,
             index_path=self.config.retriever_index_path,
             metadata_path=self.config.retriever_metadata_path,
+            lancedb_path=self.config.retriever_lancedb_path,
             model_name=self.config.retriever_model_name,
             strict_model_match=True,
-            vlm_policy=self.config.retriever_vlm_policy
+            vlm_policy=self.config.retriever_vlm_policy,
+            app_config=app_config,
         )
         if retriever_cfg:
             expected_fingerprint = retriever_cfg.get("index_fingerprint")
