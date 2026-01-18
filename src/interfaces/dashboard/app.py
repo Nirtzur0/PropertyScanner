@@ -1161,7 +1161,7 @@ df = pd.DataFrame(raw_rows)
 
 if df.empty:
     st.markdown(
-        "<div class='empty-state'><h2>No listings yet</h2><p>Run a harvest or backfill to load listings.</p></div>",
+        "<div class='empty-state'><h2>No listings yet</h2><p>Run a crawl or backfill to load listings.</p></div>",
         unsafe_allow_html=True,
     )
     st.stop()

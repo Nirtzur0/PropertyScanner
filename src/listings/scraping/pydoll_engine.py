@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
 
 PydollTask = Callable[["Tab"], Awaitable[Any]]
+PydollPreflight = Callable[[str], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,8 @@ class PydollEngineConfig:
     retry_max: int = 2
     retry_delay_s: float = 1.0
     retry_exponential_backoff: bool = True
+    maximize_stealth: bool = True
+    maximize_speed: bool = True
     network: PydollNetworkConfig = field(default_factory=PydollNetworkConfig)
 
     @classmethod
@@ -98,6 +101,8 @@ class PydollEngineConfig:
             retry_max=resolved_retry_max,
             retry_delay_s=float(payload.get("retry_delay_s", 1.0)),
             retry_exponential_backoff=bool(payload.get("retry_exponential_backoff", True)),
+            maximize_stealth=bool(payload.get("maximize_stealth", True)),
+            maximize_speed=bool(payload.get("maximize_speed", True)),
             network=PydollNetworkConfig(
                 block_resource_types=tuple(
                     network_payload.get(
@@ -170,6 +175,7 @@ class PydollEngine:
     async def fetch_with_meta(
         self, url: str, *, timeout_s: float = 30.0
     ) -> PydollFetchResult:
+        ensure_pydoll_on_path()
         from pydoll.decorators import retry
         from pydoll.exceptions import (
             ElementNotFound,
@@ -209,6 +215,7 @@ class PydollEngine:
         api_requests: Sequence[PydollApiRequest],
         timeout_s: float = 30.0,
     ) -> list["Response"]:
+        ensure_pydoll_on_path()
         from pydoll.decorators import retry
         from pydoll.exceptions import NetworkError, PageLoadTimeout, WaitElementTimeout
 
@@ -241,26 +248,37 @@ class PydollEngine:
 
         return await run()
 
-    async def run_concurrent(self, tasks: Sequence[PydollTask]) -> list[Any]:
+    async def run_concurrent(
+        self, tasks: Sequence[PydollTask], *, max_concurrency: Optional[int] = None
+    ) -> list[Any]:
         if not tasks:
             return []
-        return await self._run_concurrent(tasks)
+        return await self._run_concurrent(tasks, max_concurrency=max_concurrency)
 
     async def fetch_many(
-        self, urls: Sequence[str], *, timeout_s: float = 30.0
+        self,
+        urls: Sequence[str],
+        *,
+        timeout_s: float = 30.0,
+        max_concurrency: Optional[int] = None,
+        preflight: Optional[PydollPreflight] = None,
     ) -> list[PydollFetchResult]:
         if not urls:
             return []
 
         def build_task(url: str) -> Callable[["Tab"], Awaitable[PydollFetchResult]]:
             async def task(tab: "Tab") -> PydollFetchResult:
+                if preflight:
+                    allowed = await preflight(url)
+                    if not allowed:
+                        return PydollFetchResult(url=url, html=None)
                 html = await self._navigate_and_extract(tab, url, timeout_s=timeout_s)
                 return PydollFetchResult(url=url, html=html)
 
             return task
 
         tasks = [build_task(url) for url in urls]
-        results = await self._run_concurrent(tasks)
+        results = await self._run_concurrent(tasks, max_concurrency=max_concurrency)
         return [result for result in results if isinstance(result, PydollFetchResult)]
 
     async def _fetch_once(
@@ -318,9 +336,18 @@ class PydollEngine:
                 await browser.delete_browser_context(context_id)
             await self._shutdown_browser(browser, is_remote)
 
-    async def _run_concurrent(self, tasks: Sequence[PydollTask]) -> list[Any]:
+    async def _run_concurrent(
+        self, tasks: Sequence[PydollTask], *, max_concurrency: Optional[int] = None
+    ) -> list[Any]:
         browser, initial_tab, is_remote = await self._launch_browser()
-        semaphore = asyncio.Semaphore(self.config.max_concurrency)
+        resolved = (
+            int(max_concurrency)
+            if max_concurrency is not None
+            else int(self.config.max_concurrency)
+        )
+        if resolved < 1:
+            resolved = 1
+        semaphore = asyncio.Semaphore(resolved)
         results: list[Any] = [None] * len(tasks)
         if initial_tab and not is_remote:
             await initial_tab.close()
@@ -372,20 +399,91 @@ class PydollEngine:
         from pydoll.browser.options import ChromiumOptions
 
         options = ChromiumOptions()
-        options.headless = self.config.headless
+        
+        # Headless Configuration
+        # "new" headless mode is more stealthy than traditional headless
+        # Pydoll's .headless property only supports boolean flag for old headless
+        options.headless = False 
+        if self.config.headless:
+            try:
+                options.add_argument("--headless=new")
+            except Exception:
+                pass
+
         if self.config.user_agent:
             try:
                 options.add_argument(f"--user-agent={self.config.user_agent}")
             except Exception:
                 pass
+        
         if self.config.accept_languages:
             options.set_accept_languages(str(self.config.accept_languages))
+
+        # --- STEALTH OPTIMIZATIONS ---
+        if self.config.maximize_stealth:
+            # 1. Disable AutomationControlled (essential)
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            # 2. Exclude automation switch to prevent detection via navigator.webdriver
+            # Pydoll's ChromiumOptions might handles exclusions, but we add if API supports or use raw args
+            # Using raw argument style or if library supports exclude_switches
+            if hasattr(options, "exclude_switches"):
+                 options.exclude_switches.extend(["enable-automation", "enable-logging"])
+            else:
+                 # Fallback if specific API not available (try common approach or skip)
+                 pass
+
+            # 3. Base Stealth Preferences (look human)
+            base_stealth_prefs = {
+                "safebrowsing": {"enabled": True}, # Real users have this ON
+                "profile": {
+                    "password_manager_enabled": False, # But bots don't save passwords
+                    "default_content_setting_values": {"notifications": 2} # Block notifications (annoying & detectable behavior if handled poorly)
+                },
+                "search": {"suggest_enabled": True}, # Real users interpret this
+                "translate": {"enabled": False}, # Common bot pattern
+            }
+            # Merge into options.browser_preferences
+            self._merge_prefs(options, base_stealth_prefs)
+
+        # --- SPEED OPTIMIZATIONS ---
+        if self.config.maximize_speed:
+            speed_prefs = {
+                 # Note: We do NOT block images by default anymore as it helps with stealth
+                 # and is required for VLM/screenshot workflows.
+                 # "profile": {"default_content_setting_values": {"images": 2}},
+                 
+                 # Disable heavy features
+                 "webkit": {"webprefs": {"plugins_enabled": False}},
+                 "browser": {"enable_spellchecking": False},
+                 # Disable network prediction (saves bandwidth/CPU)
+                 "net": {"network_prediction_options": 2}, 
+            }
+            self._merge_prefs(options, speed_prefs)
+
+        # User overrides apply last
         if self.config.browser_preferences:
             try:
-                options.browser_preferences = dict(self.config.browser_preferences)
+                self._merge_prefs(options, self.config.browser_preferences)
             except Exception:
                 pass
+        
         return options
+
+    def _merge_prefs(self, options, new_prefs: dict):
+        """Helper to deeply merge preferences into options."""
+        current = getattr(options, "browser_preferences", {}) or {}
+        
+        def deep_update(d, u):
+            for k, v in u.items():
+                if isinstance(v, dict):
+                    d[k] = deep_update(d.get(k, {}), v)
+                else:
+                    d[k] = v
+            return d
+
+        merged = deep_update(current, new_prefs)
+        options.browser_preferences = merged
 
     async def _select_tab(
         self,

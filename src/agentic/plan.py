@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 DEFAULT_MAX_STEPS = 16
 DEFAULT_ACTION_BUDGETS: Dict[str, int] = {
     "preflight": 1,
-    "harvest": 2,
     "build_market_data": 1,
     "build_index": 1,
     "train_model": 1,
@@ -24,7 +23,6 @@ DEFAULT_ACTION_BUDGETS: Dict[str, int] = {
 
 class ActionType(str, Enum):
     PREFLIGHT = "preflight"
-    HARVEST = "harvest"
     BUILD_MARKET_DATA = "build_market_data"
     BUILD_INDEX = "build_index"
     TRAIN_MODEL = "train_model"
@@ -64,9 +62,9 @@ def _pipeline_steps(pipeline_status: Optional[Dict[str, Any]]) -> List[PlanStep]
         return []
 
     steps: List[PlanStep] = []
-    if pipeline_status.get("needs_harvest"):
-        steps.append(PlanStep(action=ActionType.HARVEST, params={"mode": "sale"}))
-        steps.append(PlanStep(action=ActionType.HARVEST, params={"mode": "rent"}))
+    if pipeline_status.get("needs_crawl"):
+        steps.append(PlanStep(action=ActionType.PREFLIGHT))
+        return steps
     if pipeline_status.get("needs_market_data"):
         steps.append(PlanStep(action=ActionType.BUILD_MARKET_DATA))
     if pipeline_status.get("needs_index"):
@@ -120,9 +118,9 @@ def _ensure_pipeline_steps(plan: AgentPlan, pipeline_status: Optional[Dict[str, 
         return plan
 
     required_steps: List[PlanStep] = []
-    if pipeline_status.get("needs_harvest") and not _plan_has_action(plan, ActionType.HARVEST):
-        required_steps.append(PlanStep(action=ActionType.HARVEST, params={"mode": "sale"}))
-        required_steps.append(PlanStep(action=ActionType.HARVEST, params={"mode": "rent"}))
+    if pipeline_status.get("needs_crawl"):
+        required_steps.append(PlanStep(action=ActionType.PREFLIGHT))
+        return plan.model_copy(update={"steps": required_steps + plan.steps})
     if pipeline_status.get("needs_market_data") and not _plan_has_action(plan, ActionType.BUILD_MARKET_DATA):
         required_steps.append(PlanStep(action=ActionType.BUILD_MARKET_DATA))
     if pipeline_status.get("needs_index") and not _plan_has_action(plan, ActionType.BUILD_INDEX):

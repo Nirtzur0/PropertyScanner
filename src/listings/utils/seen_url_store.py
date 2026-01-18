@@ -2,18 +2,18 @@ import os
 import sqlite3
 import time
 from typing import Iterable, List
-from src.platform.config import HARVEST_SEEN_URLS_DB
+from src.platform.config import SEEN_URLS_DB
 
 
 class SeenUrlStore:
     """
-    Disk-backed de-duplication for harvested URLs.
+    Disk-backed de-duplication for crawled URLs.
 
     Using SQLite keeps memory usage flat even with very large crawls, and
     provides stable resume behavior across runs.
     """
 
-    def __init__(self, path: str = str(HARVEST_SEEN_URLS_DB)):
+    def __init__(self, path: str = str(SEEN_URLS_DB)):
         self.path = path
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.conn = sqlite3.connect(path)

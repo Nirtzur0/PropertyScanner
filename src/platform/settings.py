@@ -13,11 +13,6 @@ from src.platform.config import (
     DEFAULT_DB_URL,
     FUSION_CONFIG_PATH,
     FUSION_MODEL_PATH,
-    HARVEST_SEEN_URLS_DB,
-    HARVEST_STATE_RENT,
-    HARVEST_STATE_SALE,
-    HARVEST_URLS_RENT,
-    HARVEST_URLS_SALE,
     MODELS_DIR,
     SNAPSHOTS_DIR,
     TFT_MODEL_PATH,
@@ -47,12 +42,6 @@ class PathsConfig(BaseConfigModel):
     fusion_config_path: Path = Field(default=FUSION_CONFIG_PATH)
     calibration_path: Path = Field(default=CALIBRATION_PATH)
     tft_model_path: Path = Field(default=TFT_MODEL_PATH)
-
-    harvest_seen_urls_db: Path = Field(default=HARVEST_SEEN_URLS_DB)
-    harvest_urls_sale: Path = Field(default=HARVEST_URLS_SALE)
-    harvest_urls_rent: Path = Field(default=HARVEST_URLS_RENT)
-    harvest_state_sale: Path = Field(default=HARVEST_STATE_SALE)
-    harvest_state_rent: Path = Field(default=HARVEST_STATE_RENT)
 
     transactions_path: Path = Field(default=TRANSACTIONS_PATH)
 

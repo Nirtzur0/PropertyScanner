@@ -25,9 +25,7 @@ class CasaItCrawlerAgent(BaseAgent):
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
         max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
-        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
-        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
         
         self.scrape_client = ScrapeClient(
             source_id="casa_it",
@@ -35,16 +33,9 @@ class CasaItCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 10)),
-            prefer_browser=bool(config.get("prefer_browser", True)),
-            prefer_playwright=prefer_playwright,
-            enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
-            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
-            playwright_headless=bool(config.get("playwright_headless", True)),
-            engine_order=config.get("engine_order"),
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
-            playwright_max_concurrency=playwright_max_concurrency,
             pydoll_config=config.get("pydoll_config"),
         )
 

@@ -338,9 +338,10 @@ def _apply_sharding(
     return sharded
 
 
-def _plans_from_config(
-    config_loader: ConfigLoader,
+def plans_from_config(
     *,
+    config_loader: Optional[ConfigLoader] = None,
+    app_config: Optional[AppConfig] = None,
     source_ids: Optional[List[str]],
     search_urls: Optional[List[str]],
     search_path: Optional[str],
@@ -351,10 +352,16 @@ def _plans_from_config(
     page_size: int,
     crawler_config: Dict[str, Any],
 ) -> List[UnifiedSourcePlan]:
+    if app_config is None:
+        config_loader = config_loader or ConfigLoader()
+        sources = config_loader.sources.sources
+    else:
+        sources = app_config.sources.sources
+
     if source_ids:
         selected = source_ids
     else:
-        selected = [s.id for s in config_loader.sources.sources if s.enabled]
+        selected = [s.id for s in sources if s.enabled]
 
     plans = []
     for source_id in selected:
@@ -372,6 +379,67 @@ def _plans_from_config(
             )
         )
     return plans
+
+
+def run_backfill(
+    *,
+    source_ids: Optional[List[str]] = None,
+    search_urls: Optional[List[str]] = None,
+    search_path: Optional[str] = None,
+    listing_urls: Optional[List[str]] = None,
+    listing_ids: Optional[List[str]] = None,
+    max_listings: int = 0,
+    max_pages: int = 1,
+    page_size: int = 24,
+    source_workers: int = 2,
+    fusion_workers: int = 4,
+    vlm_concurrency: int = 1,
+    run_vlm: bool = True,
+    enable_fusion: bool = True,
+    enable_augment: bool = True,
+    dedupe: bool = True,
+    crawler_config: Optional[Dict[str, Any]] = None,
+    app_config: Optional[AppConfig] = None,
+    seen_urls_db: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    config_loader = None
+    if app_config is None:
+        config_loader = ConfigLoader()
+        app_config = config_loader.app
+
+    plans = plans_from_config(
+        config_loader=config_loader,
+        app_config=app_config,
+        source_ids=source_ids,
+        search_urls=search_urls,
+        search_path=search_path,
+        listing_urls=listing_urls,
+        listing_ids=listing_ids,
+        max_listings=max_listings,
+        max_pages=max_pages,
+        page_size=page_size,
+        crawler_config=crawler_config or {},
+    )
+
+    settings = UnifiedCrawlSettings(
+        source_workers=source_workers,
+        fusion_workers=fusion_workers,
+        vlm_concurrency=vlm_concurrency,
+        run_vlm=run_vlm,
+        enable_fusion=enable_fusion,
+        enable_augment=enable_augment,
+        dedupe=dedupe,
+    )
+
+    runner = UnifiedCrawlRunner(
+        app_config=app_config,
+        settings=settings,
+        seen_urls_db=seen_urls_db,
+    )
+    try:
+        return runner.run(plans)
+    finally:
+        runner.close()
 
 
 def _load_plan_file(path: str) -> tuple[List[UnifiedSourcePlan], UnifiedCrawlSettings]:
@@ -420,7 +488,7 @@ def _load_plan_file(path: str) -> tuple[List[UnifiedSourcePlan], UnifiedCrawlSet
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Unified crawl runner for multi-source harvesting.")
+    parser = argparse.ArgumentParser(description="Unified crawl runner for multi-source crawling.")
     parser.add_argument("--plan", help="Path to JSON crawl plan file")
     parser.add_argument("--source", action="append", help="Source id (repeatable)")
     parser.add_argument("--search-url", action="append", help="Search URL (repeatable)")
@@ -464,8 +532,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             settings.vlm_concurrency = args.vlm_concurrency
     else:
         crawler_config = _parse_json_arg(args.crawler_config)
-        plans = _plans_from_config(
-            config_loader,
+        plans = plans_from_config(
+            config_loader=config_loader,
             source_ids=args.source,
             search_urls=args.search_url,
             search_path=args.search_path,

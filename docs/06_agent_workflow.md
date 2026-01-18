@@ -13,7 +13,6 @@ flowchart LR
 
     subgraph "Agent tool stack"
         Preflight["Preflight workflow"]
-        Harvest["Harvest workflow"]
         Market["Market data workflow"]
         Index["Vector index workflow"]
         Train["Training workflow"]
@@ -27,7 +26,6 @@ flowchart LR
 
     Planner --> Execute
     Execute --> Preflight
-    Execute --> Harvest
     Execute --> Market
     Execute --> Index
     Execute --> Train

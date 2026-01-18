@@ -55,17 +55,10 @@ class PipelineStatusInput(BaseModel):
 
 class PreflightInput(BaseModel):
     """Input for preflight tool."""
-    skip_harvest: bool = Field(default=False, description="Skip harvesting listings")
+    skip_crawl: bool = Field(default=False, description="Skip crawl backfill")
     skip_market_data: bool = Field(default=False, description="Skip market data rebuild")
     skip_index: bool = Field(default=False, description="Skip vector index rebuild")
     skip_training: bool = Field(default=False, description="Skip model training")
-
-
-class HarvestWorkflowInput(BaseModel):
-    """Input for harvest workflow tool."""
-    mode: str = Field(default="sale", description="Harvest mode: sale or rent")
-    target_count: int = Field(default=0, description="Target listings to harvest (0 uses default)")
-    no_vlm: bool = Field(default=False, description="Disable VLM during harvest")
 
 
 class MarketDataWorkflowInput(BaseModel):
@@ -418,7 +411,7 @@ def pipeline_status() -> Dict[str, Any]:
 
 @tool(args_schema=PreflightInput)
 def preflight_pipeline(
-    skip_harvest: bool = False,
+    skip_crawl: bool = False,
     skip_market_data: bool = False,
     skip_index: bool = False,
     skip_training: bool = False,
@@ -429,7 +422,7 @@ def preflight_pipeline(
     try:
         api = get_pipeline_api()
         result = api.preflight(
-            skip_harvest=skip_harvest,
+            skip_crawl=skip_crawl,
             skip_market_data=skip_market_data,
             skip_index=skip_index,
             skip_training=skip_training,
@@ -437,20 +430,6 @@ def preflight_pipeline(
         return {"status": "success", "data": result}
     except Exception as e:
         logger.error("preflight_failed", error=str(e))
-        return {"status": "failure", "error": str(e)}
-
-
-@tool(args_schema=HarvestWorkflowInput)
-def harvest_pipeline(mode: str = "sale", target_count: int = 0, no_vlm: bool = False) -> Dict[str, Any]:
-    """
-    Run the listing harvester workflow.
-    """
-    try:
-        api = get_pipeline_api()
-        api.harvest(mode=mode, target_count=target_count, run_vlm=not no_vlm)
-        return {"status": "success", "mode": mode, "target_count": target_count}
-    except Exception as e:
-        logger.error("harvest_workflow_failed", error=str(e))
         return {"status": "failure", "error": str(e)}
 
 
@@ -524,7 +503,6 @@ TOOLS = [
     retrieve_comparables,
     pipeline_status,
     preflight_pipeline,
-    harvest_pipeline,
     build_market_data_workflow,
     build_vector_index_workflow,
     train_model_workflow,

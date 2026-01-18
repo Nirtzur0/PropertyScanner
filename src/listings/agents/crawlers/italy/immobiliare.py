@@ -29,25 +29,16 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
         max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
-        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
-        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "immobiliare_it"),
             base_url=self.base_url,
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
-            prefer_browser=bool(config.get("prefer_browser", True)),
-            prefer_playwright=prefer_playwright,
-            enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
-            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
-            playwright_headless=bool(config.get("playwright_headless", True)),
-            engine_order=config.get("engine_order"),
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
-            playwright_max_concurrency=playwright_max_concurrency,
             pydoll_config=config.get("pydoll_config"),
         )
 
@@ -62,8 +53,15 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         source_id = self.config.get("id", "immobiliare_it")
         start_url = input_payload.get("start_url")
         if not start_url:
-            city = input_payload.get("city", "milano")
-            start_url = f"{self.base_url}/vendita-case/{city}/"
+            search_path = input_payload.get("search_path")
+            if search_path:
+                if str(search_path).startswith("http"):
+                    start_url = str(search_path)
+                else:
+                    start_url = urljoin(self.base_url, str(search_path))
+            else:
+                city = input_payload.get("city", "milano")
+                start_url = f"{self.base_url}/vendita-case/{city}/"
 
         target_urls = list(input_payload.get("target_urls") or [])
         listing_url = input_payload.get("listing_url")
@@ -85,12 +83,15 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         target_urls = normalized_targets
 
         listing_urls = []
+        errors: List[str] = []
         if target_urls:
             listing_urls = target_urls
         else:
             # Search Page
             html = self._fetch_url(start_url)
-            if html:
+            if not html:
+                errors.append("fetch_failed:search")
+            else:
                 listing_urls = self.scrape_client.extract_links(
                     html,
                     LinkExtractorSpec(
@@ -104,7 +105,6 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                 )
                         
         listings = []
-        errors = []
         
         listing_urls = list(set(listing_urls))
         
@@ -112,6 +112,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             full_url = result.url if result.url.startswith("http") else urljoin(self.base_url, result.url)
             html = result.html
             if not html:
+                errors.append(f"fetch_failed:{full_url}")
                 continue
             
             try:
@@ -134,6 +135,11 @@ class ImmobiliareCrawlerAgent(BaseAgent):
                 fetched_at=datetime.now()
             )
             listings.append(raw)
+
+        if not listing_urls and "fetch_failed:search" not in errors:
+            errors.append("no_listings_found")
+        if not listings and not errors:
+            errors.append("no_listings_found")
              
         status = "success" if listings else "failure"
         return AgentResponse(status=status, data=listings, errors=errors)

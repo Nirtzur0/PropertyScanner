@@ -30,25 +30,16 @@ class ZooplaCrawlerAgent(BaseAgent):
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
         max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", 1))
-        playwright_max_concurrency = int(config.get("playwright_max_concurrency", 1))
-        prefer_playwright = bool(config.get("prefer_playwright", config.get("use_playwright", False)))
+        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "zoopla_uk"),
             base_url=self.base_url,
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
-            prefer_browser=bool(config.get("prefer_browser", True)),
-            prefer_playwright=prefer_playwright,
-            enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
-            playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
-            playwright_headless=bool(config.get("playwright_headless", True)),
-            engine_order=config.get("engine_order"),
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
-            playwright_max_concurrency=playwright_max_concurrency,
             pydoll_config=config.get("pydoll_config"),
         )
 
@@ -135,6 +126,7 @@ class ZooplaCrawlerAgent(BaseAgent):
             for search_url in start_urls:
                 html = self._fetch_url(search_url)
                 if not html:
+                    errors.append(f"fetch_failed:{search_url}")
                     continue
                 listing_urls.extend(self._extract_listing_urls(html))
             listing_urls = list(dict.fromkeys(listing_urls))
@@ -144,7 +136,9 @@ class ZooplaCrawlerAgent(BaseAgent):
             listing_urls = listing_urls[:max_listings]
 
         if not listing_urls:
-            return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
+            if not errors:
+                errors.append("no_listings_found")
+            return AgentResponse(status="failure", data=[], errors=errors)
 
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
             if not result.html:

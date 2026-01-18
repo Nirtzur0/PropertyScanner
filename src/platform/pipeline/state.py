@@ -25,7 +25,7 @@ class PipelineState:
     market_data_at: Optional[datetime]
     index_at: Optional[datetime]
     model_at: Optional[datetime]
-    needs_harvest: bool
+    needs_crawl: bool
     needs_market_data: bool
     needs_index: bool
     needs_training: bool
@@ -39,7 +39,7 @@ class PipelineState:
             "market_data_at": self._serialize_dt(self.market_data_at),
             "index_at": self._serialize_dt(self.index_at),
             "model_at": self._serialize_dt(self.model_at),
-            "needs_harvest": self.needs_harvest,
+            "needs_crawl": self.needs_crawl,
             "needs_market_data": self.needs_market_data,
             "needs_index": self.needs_index,
             "needs_training": self.needs_training,
@@ -89,11 +89,11 @@ class PipelineStateService:
         now = datetime.utcnow()
         reasons: List[str] = []
 
-        needs_harvest = listings_count == 0
-        if listings_last_seen and not needs_harvest:
+        needs_crawl = listings_count == 0
+        if listings_last_seen and not needs_crawl:
             age_days = (now - listings_last_seen).days
             if age_days > self.policy.max_listing_age_days:
-                needs_harvest = True
+                needs_crawl = True
                 reasons.append("listings_stale")
         if listings_count == 0:
             reasons.append("no_listings")
@@ -129,7 +129,7 @@ class PipelineStateService:
         else:
             reasons.append("insufficient_listings_for_training")
 
-        needs_refresh = any([needs_harvest, needs_market_data, needs_index, needs_training])
+        needs_refresh = any([needs_crawl, needs_market_data, needs_index, needs_training])
 
         return PipelineState(
             listings_count=listings_count,
@@ -137,7 +137,7 @@ class PipelineStateService:
             market_data_at=market_data_at,
             index_at=index_at,
             model_at=model_at,
-            needs_harvest=needs_harvest,
+            needs_crawl=needs_crawl,
             needs_market_data=needs_market_data,
             needs_index=needs_index,
             needs_training=needs_training,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 from urllib.parse import urljoin
@@ -9,13 +9,7 @@ from urllib.parse import urljoin
 import structlog
 from bs4 import BeautifulSoup
 
-from src.listings.scraping.engine import (
-    HttpFetcher,
-    PlaywrightFetcher,
-    PydollFetcher,
-    ScrapeEngine,
-    resolve_engine_order,
-)
+from src.listings.scraping.engine import PydollFetcher, _run_async
 from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
 
@@ -47,18 +41,9 @@ class ScrapeClient:
         compliance_manager: ComplianceManager,
         user_agent: str,
         rate_limit_seconds: float,
-        prefer_browser: bool = True,
-        prefer_playwright: bool = False,
-        enable_browser: bool = True,
-        enable_playwright: bool = True,
         browser_wait_s: float = 8.0,
-        playwright_wait_s: float = 2.0,
-        playwright_headless: bool = True,
-        engine_order: Optional[Iterable[str]] = None,
         max_workers: int = 4,
-        browser_max_concurrency: int = 1,
-        playwright_max_concurrency: int = 1,
-        allow_fallback: bool = True,
+        browser_max_concurrency: Optional[int] = None,
         pydoll_config: Optional[dict[str, Any]] = None,
     ) -> None:
         self.source_id = source_id
@@ -67,47 +52,15 @@ class ScrapeClient:
         self.rate_limit_seconds = rate_limit_seconds
         self.snapshot_service = SnapshotService()
         self.max_workers = max(1, int(max_workers))
+        resolved_concurrency = max(1, int(browser_max_concurrency or self.max_workers))
 
-        http_fetcher = HttpFetcher(user_agent)
-        pydoll_fetcher = (
-            PydollFetcher(
-                user_agent,
-                wait_s=browser_wait_s,
-                max_concurrency=browser_max_concurrency,
-                pydoll_config=pydoll_config,
-            )
-            if enable_browser
-            else None
+        self.pydoll_fetcher = PydollFetcher(
+            user_agent,
+            wait_s=browser_wait_s,
+            max_concurrency=resolved_concurrency,
+            pydoll_config=pydoll_config,
         )
-        playwright_fetcher = (
-            PlaywrightFetcher(
-                user_agent,
-                headless=playwright_headless,
-                wait_s=playwright_wait_s,
-                max_concurrency=playwright_max_concurrency,
-            )
-            if enable_playwright
-            else None
-        )
-
-        order = resolve_engine_order(
-            engine_order=engine_order,
-            prefer_browser=prefer_browser,
-            prefer_playwright=prefer_playwright,
-            enable_browser=enable_browser,
-            enable_playwright=enable_playwright,
-        )
-        self.engine = ScrapeEngine(
-            fetchers={
-                "http": http_fetcher,
-                "pydoll": pydoll_fetcher,
-                "playwright": playwright_fetcher,
-            },
-            order=order,
-            allow_fallback=allow_fallback,
-        )
-        self.pydoll_fetcher = pydoll_fetcher
-        self.pydoll_engine = pydoll_fetcher.engine if pydoll_fetcher else None
+        self.pydoll_engine = self.pydoll_fetcher.engine
 
     def fetch_html(
         self,
@@ -124,7 +77,7 @@ class ScrapeClient:
             return None
 
         for attempt in range(retries):
-            html = self.engine.fetch(url, timeout_s=timeout_s)
+            html = self.pydoll_fetcher.fetch(url, timeout_s=timeout_s)
             if html:
                 return html
             time.sleep(backoff_base ** attempt)
@@ -155,22 +108,29 @@ class ScrapeClient:
                 results.append(FetchResult(url=url, html=html))
             return results
 
-        results: list[FetchResult] = []
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map = {
-                executor.submit(self.fetch_html, url, retries=retries, timeout_s=timeout_s): url
-                for url in deduped
-            }
-            for future in as_completed(future_map):
-                url = future_map[future]
-                try:
-                    html = future.result()
-                    results.append(FetchResult(url=url, html=html))
-                except Exception as exc:
-                    results.append(FetchResult(url=url, html=None, error=str(exc)))
+        async def preflight(url: str) -> bool:
+            return await asyncio.to_thread(
+                self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
+            )
 
-        index = {url: i for i, url in enumerate(deduped)}
-        results.sort(key=lambda item: index.get(item.url, 0))
+        try:
+            pydoll_results = _run_async(
+                self.pydoll_engine.fetch_many(
+                    deduped,
+                    timeout_s=timeout_s,
+                    max_concurrency=worker_count,
+                    preflight=preflight,
+                )
+            )
+        except Exception as exc:
+            logger.warning("pydoll_batch_failed", error=str(exc))
+            results = []
+            for url in deduped:
+                html = self.fetch_html(url, retries=retries, timeout_s=timeout_s)
+                results.append(FetchResult(url=url, html=html, error=str(exc)))
+            return results
+
+        results = [FetchResult(url=item.url, html=item.html) for item in pydoll_results]
         return results
 
     def extract_links(self, html: str, spec: LinkExtractorSpec) -> list[str]:

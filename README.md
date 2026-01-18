@@ -2,7 +2,7 @@
 
 > **"Comparable sales tell you the price. The Scout V2 tells you the value."**
 
-The Scout V2 is a local-first property intelligence stack. It harvests listings, enriches them with multimodal signals, and produces investment-grade valuations that blend comps, income potential, and area intelligence.
+The Scout V2 is a local-first property intelligence stack. It crawls listings, enriches them with multimodal signals, and produces investment-grade valuations that blend comps, income potential, and area intelligence.
 
 ---
 
@@ -24,12 +24,12 @@ The dashboard is the primary interface. It is designed as a premium intelligence
 - **Area intelligence** adds sentiment/development signals with credibility and freshness scaling.
 - **Sold-price training labels** prefer transaction prices; rent labels normalize to rent indices.
 - **Preflight orchestration** is the canonical entry point; it checks freshness and runs only what is stale.
-- **Quality gates** stop bad harvests before they pollute the lake, with run logs in `pipeline_runs`.
+- **Quality gates** stop bad crawls before they pollute the lake, with run logs in `pipeline_runs`.
 
 ---
 
 ## How It Works (High Level)
-1) **Harvest**: crawl, normalize, fuse, and augment listings.
+1) **Crawl backfill**: crawl, normalize, fuse, and augment listings.
 2) **Transactions**: ingest sold/registry data to ground truth sales labels.
 3) **Market data**: build macro, market indices, hedonic indices, and area intelligence.
 4) **Vector index**: build FAISS for time-safe comps.
@@ -74,7 +74,7 @@ All commands run from the project root.
 ```bash
 python3 -m src.interfaces.cli preflight                 # Refresh stale data and artifacts
 python3 -m src.interfaces.cli schedule                  # Scheduled preflight refreshes
-python3 -m src.interfaces.cli harvest -- --mode sale     # Harvest listings
+python3 -m src.interfaces.cli unified-crawl              # Crawl listings via unified runner
 python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
 python3 -m src.interfaces.cli build-market               # Macro + market + hedonic data
 python3 -m src.interfaces.cli build-index                # Build vector index for comps
@@ -134,7 +134,7 @@ from src.interfaces.api import PipelineAPI
 
 api = PipelineAPI()
 api.preflight()
-api.harvest(mode="sale", target_count=1000)
+api.crawl_backfill(max_pages=1)
 api.ingest_transactions(path="data/transactions.jsonl")
 api.build_market_data()
 api.build_vector_index(listing_type="sale")
@@ -146,7 +146,7 @@ analysis = api.evaluate_listing_id("listing-id", persist=True)
 ## System components
 - **Interfaces**: CLI, API, and dashboard entry points live in `src/interfaces/`.
 - **Agents**: LangGraph tools, the orchestrator, and analyst agents live in `src/agentic/`.
-- **Listings**: Crawlers, normalizers, listing services, and harvest workflows live in `src/listings/`.
+- **Listings**: Crawlers, normalizers, listing services, and crawl workflows live in `src/listings/`.
 - **Market**: Macro/indices/registry signals live in `src/market/`.
 - **Valuation**: Retrieval + valuation services/workflows live in `src/valuation/`.
 - **ML**: Models/encoders and training pipelines live in `src/ml/`.

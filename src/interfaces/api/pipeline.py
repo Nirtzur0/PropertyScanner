@@ -16,7 +16,7 @@ from src.valuation.services.valuation import ValuationService
 from src.valuation.services.valuation_persister import ValuationPersister
 from src.ml.training.train import train_model as train_model_workflow
 from src.market.services.transactions import TransactionsIngestService
-from src.listings.workflows.harvest import Harvester, DEFAULT_TARGET_COUNT
+from src.listings.workflows.unified_crawl import run_backfill
 from src.valuation.workflows.indexing import build_vector_index as build_vector_index_workflow
 from src.market.workflows.market_data import build_market_data as build_market_data_workflow
 from src.platform.workflows.preflight import run_preflight as run_preflight_workflow
@@ -27,12 +27,12 @@ logger = structlog.get_logger(__name__)
 
 class PipelineAPI:
     """
-    Public API surface for harvesting, market builds, indexing, and valuation.
+    Public API surface for crawling, market builds, indexing, and valuation.
 
     Example:
         api = PipelineAPI()
         api.preflight()
-        api.harvest(mode="sale", target_count=1000)
+        api.crawl_backfill(max_pages=1)
         api.build_market_data()
         api.build_vector_index(listing_type="sale")
         analysis = api.evaluate_listing_id("listing-id", persist=True)
@@ -93,22 +93,40 @@ class PipelineAPI:
         db_path = kwargs.pop("db_path", self.config.db_path)
         return run_preflight_workflow(db_path=db_path, app_config=self.app_config, **kwargs)
 
-    def harvest(
+    def crawl_backfill(
         self,
         *,
-        mode: str = "sale",
-        target_count: int = 0,
-        start_urls: Optional[List[str]] = None,
+        source_ids: Optional[List[str]] = None,
+        search_urls: Optional[List[str]] = None,
+        search_path: Optional[str] = None,
+        listing_urls: Optional[List[str]] = None,
+        listing_ids: Optional[List[str]] = None,
+        max_listings: int = 0,
+        max_pages: int = 1,
+        page_size: int = 24,
         run_vlm: bool = True,
-    ) -> None:
-        """Harvest listings via the workflow harvester."""
-        Harvester(
-            mode=mode,
-            target_count=target_count or DEFAULT_TARGET_COUNT,
-            start_urls=start_urls,
+        enable_fusion: bool = True,
+        enable_augment: bool = True,
+        dedupe: bool = True,
+        crawler_config: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Crawl listings via the unified crawler backfill."""
+        return run_backfill(
+            source_ids=source_ids,
+            search_urls=search_urls,
+            search_path=search_path,
+            listing_urls=listing_urls,
+            listing_ids=listing_ids,
+            max_listings=max_listings,
+            max_pages=max_pages,
+            page_size=page_size,
             run_vlm=run_vlm,
+            enable_fusion=enable_fusion,
+            enable_augment=enable_augment,
+            dedupe=dedupe,
+            crawler_config=crawler_config,
             app_config=self.app_config,
-        ).run()
+        )
 
     def build_market_data(self, **kwargs: Any) -> None:
         """Build macro data + market/hedonic indices."""

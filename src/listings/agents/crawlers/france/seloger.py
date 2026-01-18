@@ -26,6 +26,7 @@ class SeLogerCrawlerAgent(BaseAgent):
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
         max_workers = int(config.get("max_workers", 4)) # Lower concurrency for tough sites
+        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
         
         self.scrape_client = ScrapeClient(
             source_id="seloger",
@@ -33,14 +34,9 @@ class SeLogerCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 30)), # Slower pace
-            prefer_browser=bool(config.get("prefer_browser", True)), # Defult to browser
-            prefer_playwright=bool(config.get("prefer_playwright", True)), 
-            enable_playwright=True,
             browser_wait_s=float(config.get("browser_wait_s", 10.0)),
-            playwright_wait_s=float(config.get("playwright_wait_s", 5.0)),
-            playwright_headless=bool(config.get("playwright_headless", True)), 
-            engine_order=config.get("engine_order"),
             max_workers=max_workers,
+            browser_max_concurrency=browser_max_concurrency,
             pydoll_config=config.get("pydoll_config"),
         )
 

@@ -8,7 +8,7 @@ from src.platform.db.base import resolve_db_url
 from src.platform.pipeline.runs import PipelineRunTracker
 from src.platform.pipeline.state import PipelinePolicy, PipelineStateService
 from src.ml.training.train import train_model
-from src.listings.workflows.harvest import Harvester
+from src.listings.workflows.unified_crawl import run_backfill
 from src.valuation.workflows.indexing import build_vector_index
 from src.market.workflows.market_data import build_market_data
 from src.platform.utils.config import load_app_config_safe
@@ -32,14 +32,16 @@ def _run_step(tracker: PipelineRunTracker, step_name: str, func, metadata: Dict[
 def run_preflight(
     *,
     db_path: Optional[str] = None,
-    harvest_modes: Optional[List[str]] = None,
-    target_count: int = 0,
+    crawl_sources: Optional[List[str]] = None,
+    max_listings: int = 0,
+    max_pages: int = 1,
+    page_size: int = 24,
     run_vlm: bool = True,
     max_listing_age_days: int = 7,
     max_market_data_age_days: int = 30,
     min_listings_for_training: int = 200,
     train_epochs: int = 50,
-    skip_harvest: bool = False,
+    skip_crawl: bool = False,
     skip_market_data: bool = False,
     skip_index: bool = False,
     skip_training: bool = False,
@@ -64,36 +66,34 @@ def run_preflight(
         "steps": [],
     }
 
-    modes = harvest_modes or ["sale", "rent"]
-
-    if not skip_harvest:
+    if not skip_crawl:
         state = state_service.snapshot()
-        if state.needs_harvest:
-            for mode in modes:
-                logger.info("preflight_harvest", mode=mode)
+        if state.needs_crawl:
+            logger.info("preflight_crawl_backfill")
 
-                def _harvest_run(target_mode: str = mode) -> None:
-                    if target_count > 0:
-                        Harvester(
-                            mode=target_mode,
-                            target_count=target_count,
-                            run_vlm=run_vlm,
-                            app_config=app_config,
-                        ).run()
-                    else:
-                        Harvester(
-                            mode=target_mode,
-                            run_vlm=run_vlm,
-                            app_config=app_config,
-                        ).run()
-
-                _run_step(
-                    tracker,
-                    step_name=f"harvest_{mode}",
-                    func=_harvest_run,
-                    metadata={"mode": mode, "target_count": target_count, "run_vlm": run_vlm},
+            def _crawl_run() -> None:
+                run_backfill(
+                    source_ids=crawl_sources,
+                    max_listings=max_listings,
+                    max_pages=max_pages,
+                    page_size=page_size,
+                    run_vlm=run_vlm,
+                    app_config=app_config,
                 )
-                results["steps"].append(f"harvest_{mode}")
+
+            _run_step(
+                tracker,
+                step_name="crawl_backfill",
+                func=_crawl_run,
+                metadata={
+                    "sources": crawl_sources,
+                    "max_listings": max_listings,
+                    "max_pages": max_pages,
+                    "page_size": page_size,
+                    "run_vlm": run_vlm,
+                },
+            )
+            results["steps"].append("crawl_backfill")
 
     if not skip_transactions:
         try:
@@ -178,14 +178,16 @@ def add_preflight_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         default=str(defaults.pipeline.db_path),
         help="SQLite DB path",
     )
-    parser.add_argument("--mode", action="append", choices=["sale", "rent"], help="Harvest mode(s)")
-    parser.add_argument("--target-count", type=int, default=0, help="Target count per harvest run (0 = default)")
-    parser.add_argument("--no-vlm", action="store_true", help="Disable VLM during harvest")
+    parser.add_argument("--crawl-source", action="append", help="Source id for crawl backfill (repeatable)")
+    parser.add_argument("--max-listings", type=int, default=0, help="Max listings per source (0 = default)")
+    parser.add_argument("--max-pages", type=int, default=1, help="Max pages per source (where supported)")
+    parser.add_argument("--page-size", type=int, default=24, help="Search page size (where supported)")
+    parser.add_argument("--no-vlm", action="store_true", help="Disable VLM during crawl backfill")
     parser.add_argument("--max-listing-age-days", type=int, default=7)
     parser.add_argument("--max-market-data-age-days", type=int, default=30)
     parser.add_argument("--min-listings-for-training", type=int, default=200)
     parser.add_argument("--train-epochs", type=int, default=50)
-    parser.add_argument("--skip-harvest", action="store_true")
+    parser.add_argument("--skip-crawl", action="store_true")
     parser.add_argument("--skip-market-data", action="store_true")
     parser.add_argument("--skip-index", action="store_true")
     parser.add_argument("--skip-training", action="store_true")
@@ -207,14 +209,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     run_preflight(
         db_path=args.db,
-        harvest_modes=args.mode,
-        target_count=args.target_count,
+        crawl_sources=args.crawl_source,
+        max_listings=args.max_listings,
+        max_pages=args.max_pages,
+        page_size=args.page_size,
         run_vlm=not args.no_vlm,
         max_listing_age_days=args.max_listing_age_days,
         max_market_data_age_days=args.max_market_data_age_days,
         min_listings_for_training=args.min_listings_for_training,
         train_epochs=args.train_epochs,
-        skip_harvest=args.skip_harvest,
+        skip_crawl=args.skip_crawl,
         skip_market_data=args.skip_market_data,
         skip_index=args.skip_index,
         skip_training=args.skip_training,

@@ -88,7 +88,7 @@ def _humanize_reason(reason: str) -> str:
     if not reason:
         return ""
     mapping = {
-        "needs_harvest": "new listings needed",
+        "needs_crawl": "new listings needed",
         "needs_market_data": "market data stale",
         "needs_index": "search index stale",
         "needs_training": "model refresh needed",

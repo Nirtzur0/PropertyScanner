@@ -5,7 +5,7 @@ This document lays out a pragmatic path from today's local-first beta to a produ
 ## 0) What "production" means here
 Production is not just uptime. It is a set of guarantees we commit to:
 - Reliability: scheduled runs complete, failures are visible, retries are safe.
-- Data quality: malformed or empty harvests are blocked before they pollute downstream artifacts.
+- Data quality: malformed or empty crawls are blocked before they pollute downstream artifacts.
 - Predictability: identical inputs yield identical outputs (idempotent runs).
 - Traceability: every model output can be traced to its data inputs and model version.
 - Compliance: source usage is respectful of terms, robots, and regional policy.
@@ -15,7 +15,7 @@ Production is not just uptime. It is a set of guarantees we commit to:
 The product story is weaker without a single, explicit system spine.
 - Single orchestration stack: agentic runs already use a plan-executor; batch workflows still run through preflight. Unify these under one run plan and shared budgets.
 - Canonical data access: prohibit raw SQL in services; data access lives behind repository classes with a stable API.
-- Clean library surface: `PipelineAPI` already exposes harvest/index/market/valuation for CLI, agent, and dashboard; keep it as the single surface.
+- Clean library surface: `PipelineAPI` already exposes crawl/index/market/valuation for CLI, agent, and dashboard; keep it as the single surface.
 
 Decision points:
 - Orchestrator selection (Airflow vs Prefect vs Dagster) based on local-first dev, scheduling complexity, and operational overhead.
@@ -35,14 +35,14 @@ Risks:
 
 Success metrics:
 - Parse success rate > 90% for golden queries.
-- Less than 2% invalid listings per harvest after gating.
+- Less than 2% invalid listings per crawl after gating.
 
 ## 3) Data lifecycle: idempotency, history, and truth
 Training and analytics are only as good as the data lifecycle model.
 - Idempotent runs: every run and backfill is safe to repeat without data duplication.
 - Snapshot vs event data: choose a truth model (daily snapshots vs event history vs both) and enforce it across storage and analytics.
 - Tombstones for removals: disappearing listings are data, not silent drops.
-- Lineage and provenance: store source URL, harvest timestamp, parser version, and normalizer version for every record.
+- Lineage and provenance: store source URL, crawl timestamp, parser version, and normalizer version for every record.
 
 Decision points:
 - Whether to move from local SQLite to a production-grade database (PostgreSQL) when concurrency and indexing become limiting.
@@ -55,7 +55,7 @@ Production trust is earned by early detection.
 - Drift detection: monitor changes in distributions (price, area, listing count) and source HTML structure.
 
 Success metrics:
-- Automatic alerting on harvest anomalies within one run.
+- Automatic alerting on crawl anomalies within one run.
 - Freshness dashboards for indices and embeddings.
 
 ## 5) Model and label strategy
@@ -92,7 +92,7 @@ Phase 1: Reliability Baseline
 - Exit criteria: no silent data failures for two weeks; reproducible valuations.
 
 Phase 2: Scale and Observability
-- Goals: distributed harvesting, contract tests, monitoring dashboards, canary detection.
+- Goals: distributed crawling, contract tests, monitoring dashboards, canary detection.
 - Exit criteria: stable yield under variable source changes; alerting within minutes.
 
 Phase 3: Productization

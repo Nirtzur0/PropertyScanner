@@ -19,7 +19,6 @@ from src.agentic.tools import (
     enrich_listings,
     filter_listings,
     preflight_pipeline,
-    harvest_pipeline,
     build_market_data_workflow,
     build_vector_index_workflow,
     train_model_workflow,
@@ -80,12 +79,12 @@ Schema:
 }
 
 Actions (use only these):
-preflight, harvest, build_market_data, build_index, train_model,
+preflight, build_market_data, build_index, train_model,
 crawl, normalize, enrich, filter, evaluate, report
 
 Rules:
 - deterministic must be true.
-- If pipeline_status indicates needs_refresh, needs_harvest, needs_market_data,
+- If pipeline_status indicates needs_refresh, needs_crawl, needs_market_data,
   needs_index, or needs_training, include the required pipeline steps first.
 - If pipeline_status contains an error, start with preflight.
 - End with report.
@@ -410,7 +409,7 @@ def preflight_node(state: AgentState) -> Dict[str, Any]:
     try:
         result = preflight_pipeline.invoke(
             {
-                "skip_harvest": False,
+                "skip_crawl": False,
                 "skip_market_data": False,
                 "skip_index": False,
                 "skip_training": False,
@@ -561,7 +560,7 @@ def _run_workflow_action(
 
 def _run_preflight_action(state: AgentState, params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
     payload = {
-        "skip_harvest": False,
+        "skip_crawl": False,
         "skip_market_data": False,
         "skip_index": False,
         "skip_training": False,
@@ -655,7 +654,6 @@ def executor_node(state: AgentState) -> Dict[str, Any]:
 
 ACTION_RUNNERS = {
     ActionType.PREFLIGHT.value: _run_preflight_action,
-    ActionType.HARVEST.value: lambda state, params: _run_workflow_action(state, harvest_pipeline, "harvest", params),
     ActionType.BUILD_MARKET_DATA.value: lambda state, params: _run_workflow_action(
         state, build_market_data_workflow, "build_market_data", params
     ),

@@ -22,7 +22,6 @@ def main(argv: List[str] = None) -> int:
         p = subparsers.add_parser(name, help=help_text)
         p.add_argument("args", nargs=argparse.REMAINDER)
 
-    passthrough("harvest", "Run the listing harvester (wraps src.listings.workflows.harvest)")
     passthrough("market-data", "Build market/hedonic indices & ingest registries (wraps src.market.workflows.market_data)")
     passthrough("build-index", "Build FAISS vector index (wraps src.valuation.workflows.indexing)")
     passthrough("train", "Train the fusion model (wraps src.ml.training.train)")
@@ -46,7 +45,6 @@ def main(argv: List[str] = None) -> int:
         cmd_args = []
 
     module_map = {
-        "harvest": "src.listings.workflows.harvest",
         "market-data": "src.market.workflows.market_data", # Renamed from build-market
         "build-index": "src.valuation.workflows.indexing",
         "train": "src.ml.training.train",

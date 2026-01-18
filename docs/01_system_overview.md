@@ -1,6 +1,6 @@
 # System Architecture Overview
 
-Property Scanner is a local-first pipeline that harvests listings, enriches them, and produces valuations, projections, and recommendations with strict data and freshness requirements.
+Property Scanner is a local-first pipeline that crawls listings, enriches them, and produces valuations, projections, and recommendations with strict data and freshness requirements.
 
 ## System Map
 
@@ -22,7 +22,7 @@ flowchart LR
     end
 
     subgraph Listings
-        Harvest["Harvest workflow"]
+        CrawlBackfill["Crawl backfill workflow"]
         Norm["Normalizer agents"]
         Fusion["Feature fusion (VLM + sentiment)"]
         Aug["Listing augmentor"]
@@ -52,8 +52,7 @@ flowchart LR
 
     subgraph Data
         ListingsDB[("SQLite: data/listings.db")]
-        Seen[("harvest_seen_urls.sqlite3")]
-        State["harvest_state_*.json"]
+        Seen[("unified_seen_urls.sqlite3")]
         VectorIndex[("vector_index.faiss + metadata")]
         MarketTables[("market/hedonic/macro/area tables")]
         GovData[("ine_ipv + eri_metrics")]
@@ -68,16 +67,15 @@ flowchart LR
     Scheduler --> Preflight
     Agent --> Preflight
 
-    Preflight --> Harvest
+    Preflight --> CrawlBackfill
     Preflight --> Transactions
     Preflight --> MarketData
     Preflight --> Index
     Preflight --> Train
     Preflight --> Runs
 
-    Harvest --> Seen
-    Harvest --> State
-    Harvest --> Norm --> Fusion --> Aug --> Store --> ListingsDB
+    CrawlBackfill --> Seen
+    CrawlBackfill --> Norm --> Fusion --> Aug --> Store --> ListingsDB
     Transactions --> ListingsDB
 
     ListingsDB --> MarketData --> MarketTables
@@ -98,7 +96,7 @@ flowchart LR
 ```
 
 ## System components at a glance
-- Acquisition: Harvest workflow plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
+- Acquisition: Crawl backfill workflow plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
 - Processing: Normalize listings, fuse VLM signals, ingest sold transactions, then persist via StorageService.
 - Data: SQLite is the system of record; `pipeline_runs` tracks operational health.
 - Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
@@ -108,7 +106,7 @@ flowchart LR
 ## Module boundaries (what lives where)
 - Interfaces: CLI, API, and dashboard entry points.
 - Agents: LangGraph tools, the orchestrator, and analyst agents.
-- Listings: Crawl/normalize/enrich listings, listing repos, harvest workflows.
+- Listings: Crawl/normalize/enrich listings, listing repos, crawl workflows.
 - Market: Macro/indices/registry signals, market repos, market workflows.
 - Valuation: Retrieval + valuation services, calibration/backfill/indexing workflows.
 - ML: Models/encoders and training pipelines.

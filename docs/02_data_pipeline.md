@@ -11,7 +11,7 @@ flowchart LR
     CLI["CLI"] --> Preflight["Preflight workflow"]
     Dash["Dashboard"] --> Preflight
     Scheduler["Scheduler workflow"] --> Preflight
-    Preflight --> Harvest["Harvest workflow"]
+    Preflight --> Crawl["Crawl backfill workflow"]
     Preflight --> Transactions["Transactions ingest"]
     Preflight --> MarketData["Market data workflow"]
     Preflight --> Index["Vector index workflow"]
@@ -24,14 +24,13 @@ flowchart LR
 - Preflight uses `PipelineStateService` to compare listing freshness against market data, index files, and model artifacts.
 - Preflight ingests transactions from config defaults unless `--skip-transactions` is set; `--transactions-path` overrides the default. Transactions run before market data and training.
 
-## 1. Ingestion: harvesting with quality gates
+## 1. Ingestion: crawl backfill with quality gates
 
 ```mermaid
 flowchart LR
-    Portal["Source portals"] --> Harvest["Harvest workflow"]
-    Harvest --> Seen[("harvest_seen_urls.sqlite3")]
-    Harvest --> State["harvest_state_*.json"]
-    Harvest --> Gate["ListingQualityGate"]
+    Portal["Source portals"] --> Crawl["Crawl backfill workflow"]
+    Crawl --> Seen[("unified_seen_urls.sqlite3")]
+    Crawl --> Gate["ListingQualityGate"]
     Gate --> Norm["Normalizer agents"]
     Norm --> Fusion["Feature fusion"]
     Fusion --> Aug["Listing augmentor"]
@@ -40,8 +39,8 @@ flowchart LR
     Gate --> Runs[("pipeline_runs")]
 ```
 
-- URL de-dupe and resume are handled by `SeenUrlStore` and `HarvestState`.
-- Listings are validated before persistence. If the invalid ratio exceeds the threshold, the harvest stops.
+- URL de-dupe is handled by `SeenUrlStore`.
+- Listings are validated before persistence. If the invalid ratio exceeds the threshold, the crawl stops.
 
 ## 1.5 Transactions: sold/registry ingest
 
@@ -79,7 +78,7 @@ flowchart LR
 ```
 
 Recommended manual order:
-1) Harvest + normalize + store
+1) Crawl backfill + normalize + store
 2) Ingest transactions (sold/registry data)
 3) Build market data (macro + indices)
 4) Build vector index
@@ -104,9 +103,7 @@ Recommended manual order:
 | `data/listings.db` (pipeline_runs) | Operational logs | `PipelineRunTracker` | Run metadata |
 | `data/vector_index.faiss` | Dense comp index | Indexing workflow | Required for comps |
 | `data/vector_metadata.json` | Comp metadata | Indexing workflow | Encoder + policy lock |
-| `data/harvest_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |
-| `data/harvest_state_*.json` | Resume state | `HarvestState` | Safe to delete to restart |
-| `data/harvest_urls_*.json` | URL checkpoint | Harvester | Optional safety net |
+| `data/unified_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |
 | `models/fusion_model.pt` | Trained fusion model | Training workflow | Required for valuation |
 | `models/fusion_config.json` | Fusion model config | Training workflow | Required for valuation |
 | `models/comp_cache.json` | Comp cache (optional) | Training workflow | Persisted comps when using retriever |

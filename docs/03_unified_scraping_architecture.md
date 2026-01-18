@@ -1,50 +1,105 @@
-# Architecture Review: Unified Scraper Architecture
+# Unified Scraping Architecture
 
-## Executive Summary
-The current architecture is a **hybrid**:
-1.  **Stealth Requests**: acts as a **Utility Patch**. It fixes a specific problem (TLS fingerprinting) but does not abstract the *decision* of how to scrape.
-2.  **Agent Factory**: acts as a **Pattern**. It standardizes creation but leaves execution logic inside each agent.
+## Overview
 
-## Is it a "Layer" or a "Patch"?
-Honest Verdict: **It is currently more of a "Patch" (Utility Wrapper).**
+The **Unified Scraping Architecture** is designed to abstract the complexity of fetching content from modern, protected websites. It provides a single, consistent interface for agents (`ScrapeClient`) while managing the underlying `Pydoll` engine.
 
-While it standardizes *how* requests are made (stealthily), it does not abstract *scraping execution*.
-- **Evidence**: In `immobiliare.py`, the agent itself decides:
-  ```python
-  if use_playwright:
-      html = self._fetch_with_playwright(url)
-  else:
-      html = self.toolbox.fetch_html(url)
-  ```
-  This means every agent re-invents the "Browser vs Request" logic. A true **Scraping Layer** would hide this complexity.
+### Core Design Philosophy
+*   **Abstraction**: Agents (e.g., Idealista, Pisos) request *content*, not *browsers*.
+*   **Resilience**: Automatic retries and recovery strategies inside the browser engine.
+*   **Stealth**: Centralized anti-fingerprinting and behavioral evasion.
+*   **Performance**: Concurrency management and connection pooling.
 
-## Proposed Evolution: The "Scraping Engine" (True Abstraction)
-To move from "patch" to "layer", you need a `ScrapingEngine` that handles the *execution strategy* centrally.
+---
 
-### New Component: `ScrapingEngine`
-Instead of agents calling `stealth_requests` directly, they would ask the engine for content.
+## Architecture Diagram
 
-```python
-# Abstraction Interface
-class ScrapingEngine:
-    def fetch(self, url: str, strategy: Strategy = Strategy.HYBRID) -> str:
-        """
-        Centrally manages:
-        1. Choice of Playwright vs Requests (based on strategy)
-        2. Automatic retry with different methods (Requests -> fail -> Playwright)
-        3. Proxy rotation
-        4. Robots.txt compliance
-        """
-        pass
+```mermaid
+graph TD
+    A[Crawler Agent\n(e.g., Idealista, Rightmove)] -->|Request URLs| B(ScrapeClient)
+    B -->|Check Compliance| C{ComplianceManager}
+    C -- Allowed --> D[PydollEngine]
+    C -- Blocked --> E[Wait / Skip]
 
-# Agent Code Becomes Clean
-class IdealistaCrawler(BaseAgent):
-    def run(self, payload):
-        # agent doesn't care if it's curl_cffi or playwright
-        html = self.engine.fetch(payload['url'], strategy=Strategy.STEALTH)
-        return self.parse(html)
+    D -->|Connection Pool| F[Chrome Instances]
+    F -->|CDP Commands| G[Target Website]
 ```
 
-## Recommendation
-1.  **Keep Current Patch**: reliable for now.
-2.  **Build `ScrapingEngine`**: Step-by-step refactor to move `_fetch_with_playwright` logic out of agents and into `src/platform/engine.py`.
+---
+
+## Component Deep Dive
+
+### 1. `ScrapeClient`
+The high-level orchestrator used by all Agents.
+*   **Role**: Manages batching (`fetch_html_batch`), concurrency limits, and compliance checks (Robots.txt, rate limits).
+*   **Usage**: `client.fetch_html(url)` or `client.fetch_html_batch([urls])`.
+
+### 2. `PydollEngine`
+The primary browser engine used by `ScrapeClient`.
+
+*   **Technology**: Direct Chrome DevTools Protocol (CDP) control.
+*   **Stealth**:
+    *   **`--headless=new`**: Modern headless mode.
+    *   **`AutomationControlled`**: Flag disabled to hide `navigator.webdriver`.
+    *   **Human Profile**: Adds human-like preferences (SafeBrowsing, Search Suggestions) to blend in.
+*   **Speed**:
+    *   **Resource Blocking**: Blocks plugins, fonts (configurable). *Images enabled by default for stealth/VLM compatibility.*
+    *   **Connection Pooling**: Reuses browser instances for multiple requests, avoiding expensive startup costs.
+
+---
+
+## Pydoll Mechanics: How We Crawl
+
+We emphasize **Stealth via Pydoll**. Unlike standard Selenium/Playwright which often leak "automation" signals, Pydoll operates at the network prototype layer.
+
+### Crawl Flow (Sequence)
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Client as ScrapeClient
+    participant Pydoll as PydollEngine
+    participant Chrome as Chrome Instance
+    participant Site as Target Website
+
+    Agent->>Client: fetch_html_batch([url1, url2])
+    Client->>Client: Check Rate Limits / Robots
+    Client->>Pydoll: fetch_html(url1)
+    
+    Note over Pydoll: Apply Stealth Configs
+    Pydoll->>Chrome: Launch/Connect (CDP)
+    Chrome->>Chrome: Set Prefs (No Webdriver flag, Human UA)
+    
+    Pydoll->>Chrome: Page.navigate(url1)
+    Chrome->>Site: HTTP GET (Clean Fingerprint)
+    Site-->>Chrome: 200 OK (HTML + JS)
+    
+    Note over Chrome: Execute JS (Bot checks pass)
+    Chrome-->>Pydoll: DOM Content
+    Pydoll-->>Client: HTML String
+    Client-->>Agent: Result
+```
+
+### Key Optimizations
+1.  **Event-Driven**: We wait for specific network idle states or DOM content, not arbitrary sleep timers.
+2.  **Fingerprint rotation**: Startups can rotate User-Agents and Viewport sizes.
+3.  **Bypass logic**: Integrated Cloudflare/Antibot logic (via CDP overrides) handles common challenges automatically.
+
+---
+
+## Workflows
+
+### Batch Ingestion (`unified_crawl.py`)
+*   **Strategy**: "Wide and Shallow".
+*   **Process**:
+    1.  Loads a plan (List of sources/URLs).
+    2.  Spins up `ScrapeClient` for each source.
+    3.  Uses `PydollFetcher` with a thread pool to fetch N pages concurrently.
+    4.  Aggregates results, deduplicates, and fuses data.
+
+### Backfill Plans (`unified_crawl.py`)
+*   **Strategy**: "Plan-driven and repeatable".
+*   **Process**:
+    1.  Define source + search URLs in a crawl plan JSON (or use enabled sources from config).
+    2.  Run the unified crawler with `SeenUrlStore` de-dupe.
+    3.  Normalize, fuse, and persist in the same pass.
