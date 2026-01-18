@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from src.listings.agents.crawlers.rightmove import RightmoveCrawlerAgent
-from src.listings.agents.crawlers.zoopla import ZooplaCrawlerAgent
-from src.listings.agents.crawlers.immobiliare import ImmobiliareCrawlerAgent
+from src.listings.agents.crawlers.uk.rightmove import RightmoveCrawlerAgent
+from src.listings.agents.crawlers.uk.zoopla import ZooplaCrawlerAgent
+from src.listings.agents.crawlers.italy.immobiliare import ImmobiliareCrawlerAgent
 from src.listings.agents.processors.rightmove import RightmoveNormalizerAgent
 from src.listings.agents.processors.zoopla import ZooplaNormalizerAgent
 from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
@@ -208,7 +208,7 @@ def test_immobiliare_crawler_normalizer_storage(tmp_path, monkeypatch):
         def apply_stealth_sync(self, page):
             return None
 
-    import src.listings.agents.crawlers.immobiliare as immobiliare_module
+    import src.listings.agents.crawlers.italy.immobiliare as immobiliare_module
 
     monkeypatch.setattr(
         immobiliare_module,

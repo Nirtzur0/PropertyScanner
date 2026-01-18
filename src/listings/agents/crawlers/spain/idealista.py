@@ -17,9 +17,9 @@ class IdealistaCrawlerAgent(BaseAgent):
     """
     Crawls Idealista using curl_cffi to bypass TLS fingerprinting protections.
     """
-    def __init__(self, config: Dict[str, Any], compliance: ComplianceManager):
+    def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="IdealistaCrawler", config=config)
-        self.compliance = compliance
+        self.compliance_manager = compliance_manager
         self.base_url = config.get("base_url", "https://www.idealista.com")
         self.user_agent = config.get(
             "user_agent",
@@ -32,7 +32,7 @@ class IdealistaCrawlerAgent(BaseAgent):
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "idealista"),
             base_url=self.base_url,
-            compliance_manager=self.compliance,
+            compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 10)),
             prefer_browser=bool(config.get("prefer_browser", False)),

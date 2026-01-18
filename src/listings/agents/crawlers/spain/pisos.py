@@ -16,9 +16,9 @@ class PisosCrawlerAgent(BaseAgent):
     """
     Crawls Pisos.com using ScrapeClient.
     """
-    def __init__(self, config: Dict[str, Any], compliance: ComplianceManager):
+    def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="PisosCrawler", config=config)
-        self.compliance = compliance
+        self.compliance_manager = compliance_manager
         self.base_url = config.get("base_url", "https://www.pisos.com")
         self.user_agent = config.get(
             "user_agent",
@@ -29,7 +29,7 @@ class PisosCrawlerAgent(BaseAgent):
         self.scrape_client = ScrapeClient(
             source_id="pisos",
             base_url=self.base_url,
-            compliance_manager=self.compliance,
+            compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 3)),
             prefer_browser=bool(config.get("prefer_browser", True)),

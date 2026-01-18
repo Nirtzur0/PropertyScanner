@@ -13,7 +13,7 @@ from src.listings.services.listing_augmenter import ListingAugmentor
 from src.platform.domain.schema import CanonicalListing
 from typing import List, Dict, Optional
 
-from src.listings.agents.crawlers.pisos import PisosCrawlerAgent
+from src.listings.agents.crawlers.spain.pisos import PisosCrawlerAgent
 from src.listings.agents.processors.pisos import PisosNormalizerAgent
 from src.platform.utils.compliance import ComplianceManager
 from src.platform.utils.config import load_app_config_safe
