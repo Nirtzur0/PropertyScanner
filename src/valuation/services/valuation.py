@@ -1733,6 +1733,46 @@ class ValuationService:
 
         return None
 
+    def _resolve_geohash_prefix(self, listing: CanonicalListing, precision: int = 6) -> Optional[str]:
+        geohash = None
+        listing_id = getattr(listing, "id", None)
+        stored = self._fetch_listing_location(listing_id) if listing_id else {}
+        if stored.get("geohash"):
+            geohash = stored.get("geohash")
+        if not geohash and stored.get("lat") is not None and stored.get("lon") is not None:
+            try:
+                geohash = geolib.geohash.encode(stored["lat"], stored["lon"], precision)
+            except Exception:
+                geohash = None
+        if not geohash and listing.location:
+            lat = getattr(listing.location, "lat", None)
+            lon = getattr(listing.location, "lon", None)
+            if lat is not None and lon is not None:
+                try:
+                    geohash = geolib.geohash.encode(lat, lon, precision)
+                except Exception:
+                    geohash = None
+        if not geohash:
+            return None
+        text = str(geohash).strip().lower()
+        if not text:
+            return None
+        return text[:precision]
+
+    def _get_geohash_area_data(self, listing: CanonicalListing) -> Optional[Dict[str, Any]]:
+        geohash = self._resolve_geohash_prefix(listing)
+        if not geohash:
+            return None
+        area_id = f"geo:{geohash}"
+        area_data = self.area_intel.get_area_indicators(
+            area_id,
+            country_code=listing.location.country if listing.location else None,
+        )
+        sources = area_data.get("source_urls") or []
+        if "internal:listings" not in sources:
+            return None
+        return area_data
+
     def _fetch_listing_location(self, listing_id: str) -> Dict[str, Optional[object]]:
         query = text(
             """
@@ -2075,14 +2115,33 @@ class ValuationService:
             region_id,
             country_code=listing.location.country if listing.location else None,
         )
+        area_sentiment = float(area_data.get("sentiment_score", 0.5))
+        area_development = float(area_data.get("future_development_score", 0.5))
+        area_confidence = area_data.get("area_confidence")
+
+        geo_data = self._get_geohash_area_data(listing)
+        geo_confidence = None
+        if geo_data:
+            geo_sentiment = float(geo_data.get("sentiment_score", area_sentiment))
+            geo_confidence = geo_data.get("area_confidence")
+            geo_weight = 0.0
+            if geo_confidence is not None:
+                geo_weight = min(0.35, 0.35 * float(geo_confidence))
+            if geo_weight > 0:
+                area_sentiment = (area_sentiment * (1 - geo_weight)) + (geo_sentiment * geo_weight)
+            if geo_confidence is not None:
+                if area_confidence is None:
+                    area_confidence = float(geo_confidence)
+                else:
+                    area_confidence = max(float(area_confidence), float(geo_confidence))
 
         signals = {
             "momentum": profile.momentum_score,
             "liquidity": profile.liquidity_score,
             "catchup": profile.catchup_potential,
             "market_yield": market_yield,
-            "area_sentiment": float(area_data.get("sentiment_score", 0.5)),
-            "area_development": float(area_data.get("future_development_score", 0.5)),
+            "area_sentiment": float(area_sentiment),
+            "area_development": float(area_development),
         }
         if yield_stats:
             if yield_stats.get("yield_p10") is not None:
@@ -2093,7 +2152,6 @@ class ValuationService:
                 signals["market_yield_std"] = float(yield_stats["yield_std"])
             if yield_stats.get("yield_samples") is not None:
                 signals["market_yield_samples"] = float(yield_stats["yield_samples"])
-        area_confidence = area_data.get("area_confidence")
         if area_confidence is not None:
             signals["area_confidence"] = float(area_confidence)
         for key, out_key in (
@@ -2105,6 +2163,13 @@ class ValuationService:
             value = area_data.get(key)
             if value is not None:
                 signals[out_key] = float(value)
+        if geo_data:
+            signals["geo_area_sentiment"] = float(geo_data.get("sentiment_score", area_sentiment))
+            if geo_confidence is not None:
+                signals["geo_area_confidence"] = float(geo_confidence)
+            geo_sent_cred = geo_data.get("sentiment_credibility")
+            if geo_sent_cred is not None:
+                signals["geo_area_sentiment_credibility"] = float(geo_sent_cred)
         return signals
 
     def _adjust_rent_price(

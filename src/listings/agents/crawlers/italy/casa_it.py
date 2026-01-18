@@ -35,7 +35,7 @@ class CasaItCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 10)),
-            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_browser=bool(config.get("prefer_browser", True)),
             prefer_playwright=prefer_playwright,
             enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
@@ -45,6 +45,7 @@ class CasaItCrawlerAgent(BaseAgent):
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             playwright_max_concurrency=playwright_max_concurrency,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:

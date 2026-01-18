@@ -38,4 +38,67 @@ registry:
   #     price_column: "price_sqm"
   #     price_yoy_column: null
   #     price_qoq_column: null
-  sources: []
+  sources:
+    # 1. UK Land Registry (Headless CSV)
+    - provider_id: "uk_land_registry"
+      country_code: "GB"
+      enabled: true
+      kind: "csv"
+      csv_urls:
+        [
+          "http://prod.publicdata.landregistry.gov.uk.s3-website-eu-west-1.amazonaws.com/ppd/pp-monthly-update-new-version.csv",
+        ]
+      has_header: false
+      column_names:
+        [
+          "id",
+          "price",
+          "transfer_date",
+          "postcode",
+          "type",
+          "old_new",
+          "duration",
+          "paon",
+          "saon",
+          "street",
+          "locality",
+          "city",
+          "district",
+          "county",
+          "ppd_cat",
+          "status",
+        ]
+      region_column: "city"
+      date_column: "transfer_date"
+      price_column: "price"
+      txn_column: "id"
+      date_format: "%Y-%m-%d %H:%M"
+
+    # 2. Spain INE (Housing Price Index)
+    - provider_id: "ine_ipv"
+      country_code: "ES"
+      enabled: true
+      kind: "csv"
+      # Permalink for IPV HPI 25171 table
+      csv_urls:
+        ["https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/25171.csv?nocab=1"]
+      has_header: true
+      delimiter: ";"
+      encoding: "ISO-8859-15" # INE often uses this
+      region_column: "Comunidades y Ciudades Autónomas"
+      date_column: "Periodo"
+      price_column: "Índice"
+
+    # 3. Italy OMI (Quotazioni via OnData Github)
+    # NOTE: OMI data is typically in .7z archives or requires multi-step processing.
+    # Disabling automatic download for now.
+    - provider_id: "it_omi_registry"
+      country_code: "IT"
+      enabled: false
+      kind: "csv"
+      csv_urls: []
+      has_header: true
+      delimiter: ";"
+      region_column: "Comune_Description"
+      date_column: "Periodo" # We might need to map this if the CSV differs
+      price_column: "Valore_Medio" # Requires check if this column exists in OnData

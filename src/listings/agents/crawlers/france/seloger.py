@@ -41,6 +41,7 @@ class SeLogerCrawlerAgent(BaseAgent):
             playwright_headless=bool(config.get("playwright_headless", True)), 
             engine_order=config.get("engine_order"),
             max_workers=max_workers,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:

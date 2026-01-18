@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 import re
 from typing import List, Optional
 
@@ -14,6 +15,7 @@ from src.platform.utils.config import load_app_config_safe
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.it_registry_metrics import ItalyRegistryMetricsRepository
 from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
+from src.market.repositories.ine_ipv import IneIpvRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +39,7 @@ class RegistryIngestService:
             "eri_es": ERIMetricsRepository(db_url=self.db_url),
             "uk_land_registry": UKRegistryMetricsRepository(db_url=self.db_url),
             "it_omi_registry": ItalyRegistryMetricsRepository(db_url=self.db_url),
+            "ine_ipv": IneIpvRepository(db_url=self.db_url),
         }
 
     def run(self) -> int:
@@ -65,6 +68,11 @@ class RegistryIngestService:
         if repo is None:
             logger.warning("registry_provider_unknown", provider_id=source.provider_id)
             return 0
+        
+        # Specialized path for INE IPV due to different schema
+        if source.provider_id == "ine_ipv":
+            return self._ingest_ine_source(source, repo)
+
         if source.kind.lower() != "csv":
             logger.warning(
                 "registry_source_kind_unsupported",
@@ -78,7 +86,7 @@ class RegistryIngestService:
             frames.append(self._load_csv(path, source))
         for url in source.csv_urls or []:
             frames.append(self._load_csv(url, source))
-
+        
         if not frames:
             logger.info("registry_source_no_inputs", provider_id=source.provider_id)
             return 0
@@ -99,9 +107,106 @@ class RegistryIngestService:
         logger.info("registry_source_saved", provider_id=source.provider_id, count=saved)
         return saved
 
+    def _ingest_ine_source(self, source: RegistrySourceConfig, repo: IneIpvRepository) -> int:
+        frames = []
+        for path in source.csv_paths or []:
+            frames.append(self._load_csv(path, source))
+        
+        if not frames:
+            return 0
+            
+        df = pd.concat(frames, ignore_index=True)
+        if df.empty:
+            return 0
+            
+        # Normalize columns manually for INE
+        df = df.copy()
+        df.columns = [self._normalize_column(col) for col in df.columns]
+        
+        region_col = self._normalize_column(source.region_column)
+        date_col = self._normalize_column(source.date_column)
+        value_col = self._normalize_column(source.price_column) # Map 'value' to price_column config
+        
+        if not all(c in df.columns for c in [region_col, date_col, value_col]):
+            return 0
+            
+        records = []
+        for row in df.to_dict("records"):
+            region = row.get(region_col)
+            period = row.get(date_col)
+            val = row.get(value_col)
+            
+            if not region or not period or val is None:
+                continue
+                
+            norm_region = region.strip() # INE regions don't always need canonicalization if we trust them, but we should strip.
+            # INE Period format is typically "2023T3" or "2023Q3"
+            norm_period = str(period).strip().replace("T", "Q")
+            
+            try:
+                numeric_val = float(val)
+            except (ValueError, TypeError):
+                continue
+                
+            # Default to "general" type and "yoy" metric if not specified in config
+            #Ideally config should support mapping these, but for now we assume Index = Value (metric=index or yoy?)
+            # Usually INE IPV table is "Index". 
+            # We'll store it as metric="index" if values are ~100+, or "yoy" if small.
+            # Let's assume metric="index" by default for IPV.
+            records.append((norm_period, norm_region, "general", "index", numeric_val))
+            
+        saved = repo.upsert_records(records)
+        logger.info("registry_ine_saved", count=saved)
+        return saved
+
     def _load_csv(self, location: str, source: RegistrySourceConfig) -> pd.DataFrame:
         logger.info("registry_source_load", provider_id=source.provider_id, location=location)
-        return pd.read_csv(location, sep=source.delimiter, encoding=source.encoding)
+        
+        # Check if location is a URL
+        if location.startswith("http://") or location.startswith("https://"):
+            return self._download_and_read_csv(location, source)
+
+        if source.has_header:
+            return pd.read_csv(location, sep=source.delimiter, encoding=source.encoding)
+        
+        names = source.column_names if source.column_names else None
+        return pd.read_csv(
+            location,
+            sep=source.delimiter,
+            encoding=source.encoding,
+            header=None,
+            names=names
+        )
+
+    def _download_and_read_csv(self, url: str, source: RegistrySourceConfig) -> pd.DataFrame:
+        import requests
+        import io
+        from src.platform.settings import AgentDefaultsConfig
+
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        
+        logger.info("registry_downloading", url=url)
+        try:
+            with requests.get(url, headers=headers, stream=True) as r:
+                r.raise_for_status()
+                # For large files, we might want to save to disk first, 
+                # but for simplicity and memory (these are <500MB usually for updates), memory might work.
+                # However, UK full dump is huge. The monthly update is small.
+                # Let's write to a temp file to be safe.
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        tmp.write(chunk)
+                    tmp_path = tmp.name
+            
+            logger.info("registry_downloaded", path=tmp_path)
+            # Now read from the temp file
+            df = self._load_csv(tmp_path, source)
+            os.unlink(tmp_path) # Clean up
+            return df
+        except Exception as e:
+            logger.error("registry_download_failed", url=url, error=str(e))
+            return pd.DataFrame()
 
     def _normalize_frame(self, df: pd.DataFrame, source: RegistrySourceConfig) -> pd.DataFrame:
         df = df.copy()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import urljoin
 
 import structlog
@@ -47,7 +47,7 @@ class ScrapeClient:
         compliance_manager: ComplianceManager,
         user_agent: str,
         rate_limit_seconds: float,
-        prefer_browser: bool = False,
+        prefer_browser: bool = True,
         prefer_playwright: bool = False,
         enable_browser: bool = True,
         enable_playwright: bool = True,
@@ -59,6 +59,7 @@ class ScrapeClient:
         browser_max_concurrency: int = 1,
         playwright_max_concurrency: int = 1,
         allow_fallback: bool = True,
+        pydoll_config: Optional[dict[str, Any]] = None,
     ) -> None:
         self.source_id = source_id
         self.base_url = base_url
@@ -73,6 +74,7 @@ class ScrapeClient:
                 user_agent,
                 wait_s=browser_wait_s,
                 max_concurrency=browser_max_concurrency,
+                pydoll_config=pydoll_config,
             )
             if enable_browser
             else None
@@ -104,6 +106,8 @@ class ScrapeClient:
             order=order,
             allow_fallback=allow_fallback,
         )
+        self.pydoll_fetcher = pydoll_fetcher
+        self.pydoll_engine = pydoll_fetcher.engine if pydoll_fetcher else None
 
     def fetch_html(
         self,

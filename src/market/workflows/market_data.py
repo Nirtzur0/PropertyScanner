@@ -106,7 +106,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--skip-hedonic", action="store_true", help="Skip hedonic_indices recompute")
     parser.add_argument("--city", type=str, default=None, help="Only compute hedonic index for this city (lowercased)")
     parser.add_argument("--train-tft", action="store_true", help="Train TFT forecaster (requires hedonic indices)")
+    
+    # Consolidated commands
+    parser.add_argument("--registries-only", action="store_true", help="Run ONLY official registry ingestion (skips indices/macro)")
+    parser.add_argument("--transactions", action="store_true", help="Also ingest sold/transaction data from defaults")
     args = parser.parse_args(argv)
+
+    # Merge logic for consolidations
+    if args.registries_only:
+        args.skip_macro = True
+        args.skip_market_indices = True
+        args.skip_hedonic = True
+        args.skip_migrations = True # Registries usually don't need migration unless specified, but let's be safe? No, let's skip.
+        # Ensure we don't accidentally skip the registry part itself (which is default behavior)
 
     build_market_data(
         db_path=args.db,
@@ -118,6 +130,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         train_tft=args.train_tft,
         app_config=defaults,
     )
+    
+    if args.transactions:
+        from src.market.workflows.transactions import ingest_transactions
+        # Default transactions path from config
+        trans_path = str(defaults.paths.transactions_path)
+        ingest_transactions(path=trans_path, db_path=args.db, app_config=defaults)
+
     return 0
 
 

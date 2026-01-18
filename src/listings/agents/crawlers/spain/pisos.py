@@ -32,13 +32,14 @@ class PisosCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 3)),
-            prefer_browser=bool(config.get("prefer_browser", True)),
+            prefer_browser=bool(config.get("prefer_browser", False)),
             prefer_playwright=bool(config.get("prefer_playwright", True)),
             enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             playwright_headless=bool(config.get("playwright_headless", True)),
             engine_order=config.get("engine_order"),
             max_workers=max_workers,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:

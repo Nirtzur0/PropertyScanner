@@ -23,7 +23,7 @@ def main(argv: List[str] = None) -> int:
         p.add_argument("args", nargs=argparse.REMAINDER)
 
     passthrough("harvest", "Run the listing harvester (wraps src.listings.workflows.harvest)")
-    passthrough("build-market", "Build macro + market/hedonic indices (wraps src.market.workflows.market_data)")
+    passthrough("market-data", "Build market/hedonic indices & ingest registries (wraps src.market.workflows.market_data)")
     passthrough("build-index", "Build FAISS vector index (wraps src.valuation.workflows.indexing)")
     passthrough("train", "Train the fusion model (wraps src.ml.training.train)")
     passthrough("backfill", "Backfill cached valuations (wraps src.valuation.workflows.backfill)")
@@ -33,8 +33,10 @@ def main(argv: List[str] = None) -> int:
     passthrough("clean-data", "Fix metadata/geocoding issues (wraps src.listings.workflows.maintenance)")
     passthrough("preflight", "Refresh stale data and artifacts (wraps src.platform.workflows.preflight)")
     passthrough("schedule", "Run scheduled preflight refreshes (wraps src.platform.workflows.scheduler)")
-    passthrough("transactions", "Ingest sold/transaction data (wraps src.market.workflows.transactions)")
     passthrough("unified-crawl", "Run unified multi-source crawl (wraps src.listings.workflows.unified_crawl)")
+    passthrough("migrate", "Run database schema migrations (wraps src.platform.migrations)")
+    passthrough("train-pipeline", "Run full training sequence: VLM prep + Fusion Train (wraps src.platform.workflows.full_pipeline)")
+    passthrough("preprocess-vlm", "Run VLM image captioning batch job (wraps src.ml.training.preprocess_vlm)")
 
     args, remaining = parser.parse_known_args(argv)
     cmd_args = getattr(args, "args", None)
@@ -45,7 +47,7 @@ def main(argv: List[str] = None) -> int:
 
     module_map = {
         "harvest": "src.listings.workflows.harvest",
-        "build-market": "src.market.workflows.market_data",
+        "market-data": "src.market.workflows.market_data", # Renamed from build-market
         "build-index": "src.valuation.workflows.indexing",
         "train": "src.ml.training.train",
         "backfill": "src.valuation.workflows.backfill",
@@ -54,8 +56,10 @@ def main(argv: List[str] = None) -> int:
         "clean-data": "src.listings.workflows.maintenance",
         "preflight": "src.platform.workflows.preflight",
         "schedule": "src.platform.workflows.scheduler",
-        "transactions": "src.market.workflows.transactions",
         "unified-crawl": "src.listings.workflows.unified_crawl",
+        "migrate": "src.platform.migrations",
+        "train-pipeline": "src.platform.workflows.full_pipeline",
+        "preprocess-vlm": "src.ml.training.preprocess_vlm",
     }
 
     if args.command == "dashboard":

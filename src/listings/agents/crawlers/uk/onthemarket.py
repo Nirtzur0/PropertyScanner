@@ -32,11 +32,12 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 5)),
-            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_browser=bool(config.get("prefer_browser", True)),
             prefer_playwright=bool(config.get("prefer_playwright", False)),
             enable_playwright=bool(config.get("enable_playwright", True)),
             engine_order=config.get("engine_order"),
             max_workers=max_workers,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:

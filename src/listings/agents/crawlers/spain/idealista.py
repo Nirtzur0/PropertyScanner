@@ -35,7 +35,7 @@ class IdealistaCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 10)),
-            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_browser=bool(config.get("prefer_browser", True)),
             prefer_playwright=prefer_playwright,
             enable_playwright=bool(config.get("enable_playwright", True)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
@@ -45,6 +45,7 @@ class IdealistaCrawlerAgent(BaseAgent):
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             playwright_max_concurrency=playwright_max_concurrency,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:
@@ -63,13 +64,16 @@ class IdealistaCrawlerAgent(BaseAgent):
         else:
             start_url = f"{self.base_url}/{search_path}"
 
+        errors: list[str] = []
         listing_urls = []
         if input_payload.get("target_urls"):
             listing_urls = input_payload["target_urls"]
         else:
             # Fetch Search Page
             html = self._fetch_url(start_url)
-            if html:
+            if not html:
+                errors.append("fetch_failed:search")
+            else:
                 # DEBUG: Save search page snapshot
                 try:
                     debug_path = self.scrape_client.build_raw_listing(
@@ -89,10 +93,12 @@ class IdealistaCrawlerAgent(BaseAgent):
                         include=["/inmueble/"],
                     ),
                 )
-        
+
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=3):
             if not result.html:
+                if result.url:
+                    errors.append(f"fetch_failed:{result.url}")
                 continue
             url = result.url
             html = result.html
@@ -117,5 +123,11 @@ class IdealistaCrawlerAgent(BaseAgent):
                 fetched_at=datetime.now()
             )
             results.append(raw_listing)
-            
-        return AgentResponse(status="success" if results else "failure", data=results)
+
+        if not listing_urls and "fetch_failed:search" not in errors:
+            errors.append("no_listings_found")
+
+        if not results and not errors:
+            errors.append("no_listings_found")
+
+        return AgentResponse(status="success" if results else "failure", data=results, errors=errors)

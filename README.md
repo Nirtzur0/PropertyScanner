@@ -156,8 +156,12 @@ analysis = api.evaluate_listing_id("listing-id", persist=True)
 ---
 
 ## Docs
+- `docs/00_docs_index.md` (start here)
 - `docs/01_system_overview.md`
 - `docs/02_data_pipeline.md`
-- `docs/03_model_architecture.md`
-- `docs/04_agent_workflow.md`
-- `docs/05_path_to_production.md`
+- `docs/03_unified_scraping_architecture.md`
+- `docs/04_services_map.md`
+- `docs/05_agents_map.md`
+- `docs/06_agent_workflow.md`
+- `docs/07_model_architecture.md`
+- `docs/08_path_to_production.md`

@@ -36,9 +36,9 @@ class RightmoveCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance_manager,
             user_agent=user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
-            prefer_browser=bool(config.get("prefer_browser", False)),
+            prefer_browser=bool(config.get("prefer_browser", True)),
             prefer_playwright=prefer_playwright,
-            enable_playwright=bool(config.get("enable_playwright", True)),
+            enable_playwright=bool(config.get("enable_playwright", False)),
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
             playwright_wait_s=float(config.get("playwright_wait_s", 2.0)),
             playwright_headless=bool(config.get("playwright_headless", True)),
@@ -46,6 +46,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             playwright_max_concurrency=playwright_max_concurrency,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:

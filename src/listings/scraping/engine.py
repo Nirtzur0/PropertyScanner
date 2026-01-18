@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import threading
 import time
-from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import structlog
 
 from src.platform.utils.stealth_requests import create_session, request_get
+from src.listings.scraping.pydoll_engine import PydollEngine, PydollEngineConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -80,10 +79,16 @@ class PydollFetcher:
         headless: bool = True,
         wait_s: float = 8.0,
         max_concurrency: int = 1,
+        pydoll_config: Optional[dict[str, Any]] = None,
     ) -> None:
-        self.user_agent = user_agent
-        self.headless = headless
-        self.wait_s = wait_s
+        self._engine_config = PydollEngineConfig.from_dict(
+            pydoll_config,
+            user_agent=user_agent,
+            headless=headless,
+            wait_s=wait_s,
+            max_concurrency=max_concurrency,
+        )
+        self._engine = PydollEngine(self._engine_config)
         self._semaphore = (
             threading.BoundedSemaphore(max_concurrency)
             if max_concurrency and max_concurrency > 0
@@ -91,49 +96,21 @@ class PydollFetcher:
         )
 
     def is_available(self) -> bool:
-        _ensure_pydoll_on_path()
-        try:
-            import pydoll  # noqa: F401
-        except Exception:
-            return False
-        return True
+        return self._engine.is_available()
+
+    @property
+    def engine(self) -> PydollEngine:
+        return self._engine
 
     def fetch(self, url: str, *, timeout_s: float = 30.0) -> Optional[str]:
         try:
             if self._semaphore:
                 with self._semaphore:
-                    return _run_async(self._fetch_async(url, timeout_s=timeout_s))
-            return _run_async(self._fetch_async(url, timeout_s=timeout_s))
+                    return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
+            return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
         except Exception as exc:
             logger.warning("pydoll_fetch_failed", url=url, error=str(exc))
             return None
-
-    async def _fetch_async(self, url: str, *, timeout_s: float) -> Optional[str]:
-        _ensure_pydoll_on_path()
-        from pydoll.browser import Chrome
-        from pydoll.browser.options import ChromiumOptions
-
-        options = ChromiumOptions()
-        options.headless = self.headless
-        if self.user_agent:
-            try:
-                options.add_argument(f"--user-agent={self.user_agent}")
-            except Exception:
-                pass
-
-        browser = Chrome(options=options)
-        tab = await browser.start()
-        try:
-            try:
-                async with tab.expect_and_bypass_cloudflare_captcha():
-                    await tab.go_to(url, timeout=int(timeout_s))
-            except Exception:
-                await tab.go_to(url, timeout=int(timeout_s))
-            await asyncio.sleep(self.wait_s)
-            html = await tab.page_source
-            return html
-        finally:
-            await browser.stop()
 
 
 class PlaywrightFetcher:
@@ -260,8 +237,6 @@ def resolve_engine_order(
             continue
         if name not in final:
             final.append(name)
-    if "http" not in final:
-        final.insert(0, "http")
     return final
 
 
@@ -287,10 +262,3 @@ def _run_async(coro):
     if loop.is_running():
         raise RuntimeError("pydoll_fetch_in_running_loop")
     return loop.run_until_complete(coro)
-
-
-def _ensure_pydoll_on_path() -> None:
-    root_dir = Path(__file__).resolve().parents[3]
-    pydoll_dir = root_dir / "third_party" / "pydoll"
-    if pydoll_dir.exists() and str(pydoll_dir) not in sys.path:
-        sys.path.insert(0, str(pydoll_dir))

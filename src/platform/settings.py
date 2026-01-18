@@ -108,6 +108,8 @@ class RegistrySourceConfig(BaseConfigModel):
     price_column: Optional[str] = "price_sqm"
     price_yoy_column: Optional[str] = None
     price_qoq_column: Optional[str] = None
+    has_header: bool = True
+    column_names: List[str] = Field(default_factory=list)
 
 
 class RegistryConfig(BaseConfigModel):

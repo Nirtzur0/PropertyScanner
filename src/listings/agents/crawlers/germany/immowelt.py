@@ -38,6 +38,7 @@ class ImmoweltCrawlerAgent(BaseAgent):
             browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             engine_order=config.get("engine_order"),
             max_workers=max_workers,
+            pydoll_config=config.get("pydoll_config"),
         )
 
     def _fetch_url(self, url: str) -> Optional[str]:
