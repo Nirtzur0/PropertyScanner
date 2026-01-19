@@ -13,6 +13,8 @@ from src.platform.utils.compliance import ComplianceManager
 
 logger = structlog.get_logger(__name__)
 
+from .rightmove_normalizer import RightmoveNormalizer
+
 
 class RightmoveCrawlerAgent(BaseAgent):
     """
@@ -39,6 +41,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )
+        self.normalizer = RightmoveNormalizer()
 
     def _fetch_url(self, url: str, *, retries: int = 3, timeout_s: float = 30.0) -> Optional[str]:
         for attempt in range(retries):
@@ -175,7 +178,11 @@ class RightmoveCrawlerAgent(BaseAgent):
                 source_id=source_id,
                 external_id=external_id,
                 url=url,
-                raw_data={"html_snippet": html_content, "is_detail_page": True},
+                raw_data={
+                    "html_snippet": html_content, 
+                    "is_detail_page": True,
+                    "parsed_data": self.normalizer.normalize(html_content, url)
+                },
                 fetched_at=datetime.utcnow(),
                 html_snapshot_path=snapshot_path,
             )

@@ -34,6 +34,12 @@ Tests were conducted using:
 | **SeLoger** | France | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
 | **Immowelt** | Germany | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
 | **Funda** | Netherlands | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **Akamai/reCAPTCHA**.<br>- Browser execution intercepted. |
+| **Rightmove** | UK | ✅ **Operational** | Passing | - Successfully fetched valid content.<br>- Stealth bypass effective. |
+| **Zoopla** | UK | ✅ **Operational** | Passing | - Successfully fetched valid content.<br>- Stealth bypass effective. |
+| **Sreality** | Czechia | ✅ **Operational** | Passing | - Successfully fetched valid content. |
+| **Daft.ie** | Ireland | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA/DataDome. |
+| **Pararius** | Netherlands | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA. |
+| **Otodom** | Poland | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA/Cloudflare. |
 
 ## Detailed Blocking Analysis
 
