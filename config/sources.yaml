@@ -7,7 +7,7 @@ sources:
       name: "Idealista Local Test"
       base_url: "file:///Users/nirtzur/Documents/projects/property_scanner/tests/fixtures/idealista_sample.html"
       type: "html_browser"
-      enabled: true
+      enabled: false
       rate_limit:
         requests: 10
         period_seconds: 1
@@ -20,7 +20,7 @@ sources:
       name: "Idealista"
       base_url: "https://www.idealista.com"
       type: "html_browser" # Will likely need browser automation
-      enabled: true
+      enabled: false
       countries: ["ES"]
       search_path_template: "/venta-viviendas/{slug}/"
       rate_limit:
@@ -35,7 +35,7 @@ sources:
       name: "Idealista Italy"
       base_url: "https://www.idealista.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_path_template: "/vendita-case/{slug}/"
       rate_limit:
@@ -65,7 +65,7 @@ sources:
       name: "Rightmove UK"
       base_url: "https://www.rightmove.co.uk"
       type: "html"
-      enabled: true
+      enabled: false
       countries: ["GB"]
       listing_url_template: "https://www.rightmove.co.uk/properties/{listing_id}"
       rate_limit:
@@ -81,7 +81,7 @@ sources:
       name: "Zoopla UK"
       base_url: "https://www.zoopla.co.uk"
       type: "html"
-      enabled: true
+      enabled: false
       countries: ["GB"]
       search_url_template: "https://www.zoopla.co.uk/for-sale/property/{slug}/"
       listing_url_template: "https://www.zoopla.co.uk/for-sale/details/{listing_id}/"
@@ -97,7 +97,7 @@ sources:
       name: "Immobiliare.it"
       base_url: "https://www.immobiliare.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_url_template: "https://www.immobiliare.it/vendita-case/{slug}/"
       rate_limit:
@@ -114,10 +114,11 @@ sources:
       type: "html_browser"
       enabled: true
       countries: ["GB"]
+      browser_max_concurrency: 8
       search_url_template: "https://www.onthemarket.com/for-sale/property/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.onthemarket.com/robots.txt"
         allowed_paths: ["/for-sale/", "/to-rent/"]
@@ -127,12 +128,12 @@ sources:
       name: "Casa.it"
       base_url: "https://www.casa.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_url_template: "https://www.casa.it/vendita/residenziale/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.casa.it/robots.txt"
         allowed_paths: ["/vendita", "/affitto"]
@@ -142,12 +143,12 @@ sources:
       name: "SeLoger"
       base_url: "https://www.seloger.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["FR"]
       search_url_template: "https://www.seloger.com/list/achat/paris/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.seloger.com/robots.txt"
         allowed_paths: ["/list", "/annonce"]
@@ -157,27 +158,28 @@ sources:
       name: "Realtor.com"
       base_url: "https://www.realtor.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.realtor.com/realestateandhomes-search/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.realtor.com/robots.txt"
-        allowed_paths: ["/realestateandhomes-search", "/realestateandhomes-detail"]
+        allowed_paths:
+          ["/realestateandhomes-search", "/realestateandhomes-detail"]
         disallowed_paths: []
 
     - id: "redfin_us"
       name: "Redfin"
       base_url: "https://www.redfin.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.redfin.com/city/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.redfin.com/robots.txt"
         allowed_paths: ["/city", "/state", "/zip"]
@@ -187,12 +189,12 @@ sources:
       name: "Homes.com"
       base_url: "https://www.homes.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.homes.com/{slug}/sold/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.homes.com/robots.txt"
         allowed_paths: ["/"]
@@ -202,12 +204,12 @@ sources:
       name: "Funda"
       base_url: "https://www.funda.nl"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["NL"]
       search_url_template: "https://www.funda.nl/koop/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.funda.nl/robots.txt"
         allowed_paths: ["/koop", "/huur"]
@@ -217,12 +219,12 @@ sources:
       name: "Immowelt"
       base_url: "https://www.immowelt.de"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["DE"]
       search_url_template: "https://www.immowelt.de/liste/{slug}/kaufen"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       compliance:
         robots_txt_url: "https://www.immowelt.de/robots.txt"
         allowed_paths: ["/liste", "/expose"]
@@ -234,13 +236,14 @@ sources:
       type: "html_browser"
       enabled: true
       countries: ["PT"]
-      search_url_template: "https://www.imovirtual.com/pt/venda/moradia/{slug}/"
+      search_url_template: "https://www.imovirtual.com/comprar/{slug}/"
       rate_limit:
         requests: 1
-        period_seconds: 5
+        period_seconds: 2
       browser_config:
         headless: true
         stealth: true
+      browser_max_concurrency: 8
       compliance:
         robots_txt_url: "https://www.imovirtual.com/robots.txt"
         allowed_paths: ["/pt/venda", "/pt/arrendar"]

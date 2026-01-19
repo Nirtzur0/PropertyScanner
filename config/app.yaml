@@ -9,6 +9,7 @@ defaults:
   - scoring
   - valuation
   - pipeline
+  - hedonic
   - quality_gate
   - description_analyst
   - vlm

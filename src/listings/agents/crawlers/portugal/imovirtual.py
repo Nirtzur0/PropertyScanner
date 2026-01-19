@@ -1,6 +1,8 @@
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 
 import structlog
 
@@ -47,6 +49,40 @@ class ImovirtualCrawlerAgent(BaseAgent):
             logger.warning("imovirtual_fetch_error", url=url, error=str(e))
             return None
 
+    def _extract_listing_urls(self, html: str) -> list[str]:
+        urls = self.scrape_client.extract_links(
+            html,
+            LinkExtractorSpec(
+                selectors=[
+                    "a[data-cy='listing-item-link']",
+                    "a[href*='/pt/anuncio/']",
+                    "a[href*='/pt/comprar/']",
+                ],
+                include=["/pt/anuncio/", "/pt/comprar/"],
+            ),
+        )
+
+        patterns = [
+            r"https?://www\.imovirtual\.com/pt/(?:anuncio|comprar)/[^\"'\s]+-ID[0-9A-Za-z]+",
+            r"/pt/(?:anuncio|comprar)/[^\"'\s]+-ID[0-9A-Za-z]+",
+        ]
+        for pattern in patterns:
+            for match in re.findall(pattern, html):
+                if match.startswith("http"):
+                    urls.append(match)
+                else:
+                    urls.append(urljoin(self.base_url, match))
+
+        deduped = []
+        seen = set()
+        for url in urls:
+            normalized = url.split("#")[0]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         start_url = input_payload.get("start_url") or input_payload.get("search_url")
         search_path = input_payload.get("search_path")
@@ -77,13 +113,7 @@ class ImovirtualCrawlerAgent(BaseAgent):
                 except Exception:
                     pass
 
-                listing_urls = self.scrape_client.extract_links(
-                    html,
-                    LinkExtractorSpec(
-                        selectors=["article a[data-cy='listing-item-link']", "a.css-13l592k"], 
-                        include=["/anuncio/"],
-                    ),
-                )
+                listing_urls = self._extract_listing_urls(html)
 
         listing_urls = list(dict.fromkeys(listing_urls))
         max_listings = int(input_payload.get("max_listings", 0))
@@ -98,7 +128,8 @@ class ImovirtualCrawlerAgent(BaseAgent):
             html = result.html
             
             try:
-                lid = hashlib.md5(url.encode()).hexdigest()[:12]
+                match = re.search(r"ID[0-9A-Za-z]+", url)
+                lid = match.group(0) if match else hashlib.md5(url.encode()).hexdigest()[:12]
             except:
                 lid = hashlib.md5(url.encode()).hexdigest()[:12]
             

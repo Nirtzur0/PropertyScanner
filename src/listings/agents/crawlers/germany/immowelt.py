@@ -1,6 +1,8 @@
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 
 import structlog
 
@@ -46,6 +48,28 @@ class ImmoweltCrawlerAgent(BaseAgent):
             logger.warning("immowelt_fetch_error", url=url, error=str(e))
             return None
 
+    def _extract_listing_urls(self, html: str) -> list[str]:
+        urls = self.scrape_client.extract_links(
+            html,
+            LinkExtractorSpec(
+                selectors=["a[href*='/expose/']"],
+                include=["/expose/"],
+            ),
+        )
+
+        for match in re.findall(r"/expose/[^\"'\s]+", html):
+            urls.append(urljoin(self.base_url, match))
+
+        deduped = []
+        seen = set()
+        for url in urls:
+            normalized = url.split("#")[0]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         search_path = input_payload.get("search_path", "/suche/berlin/wohnungen/kaufen")
         
@@ -74,13 +98,7 @@ class ImmoweltCrawlerAgent(BaseAgent):
                 except Exception:
                     pass
 
-                listing_urls = self.scrape_client.extract_links(
-                    html,
-                    LinkExtractorSpec(
-                        selectors=["a[data-test='classified-list-item']", "div.EstateItem-1c115 a"], 
-                        include=["/expose/"],
-                    ),
-                )
+                listing_urls = self._extract_listing_urls(html)
         
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=45, retries=3):
@@ -90,7 +108,8 @@ class ImmoweltCrawlerAgent(BaseAgent):
             html = result.html
             
             try:
-                lid = hashlib.md5(url.encode()).hexdigest()[:12]
+                match = re.search(r"/expose/([^/?#]+)", url)
+                lid = match.group(1) if match else hashlib.md5(url.encode()).hexdigest()[:12]
             except:
                 lid = hashlib.md5(url.encode()).hexdigest()[:12]
             

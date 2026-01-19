@@ -82,8 +82,8 @@ class AgentFactory:
         "rightmove": ("src.listings.agents.processors.rightmove", "RightmoveNormalizerAgent"),
         "zoopla_uk": ("src.listings.agents.processors.zoopla", "ZooplaNormalizerAgent"),
         "zoopla": ("src.listings.agents.processors.zoopla", "ZooplaNormalizerAgent"),
-        "onthemarket_uk": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "onthemarket": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "onthemarket_uk": ("src.listings.agents.processors.onthemarket", "OnTheMarketNormalizerAgent"),
+        "onthemarket": ("src.listings.agents.processors.onthemarket", "OnTheMarketNormalizerAgent"),
         
         # France
         "seloger_fr": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
@@ -106,8 +106,8 @@ class AgentFactory:
         "immowelt": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
         
         # Portugal
-        "imovirtual_pt": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "imovirtual": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "imovirtual_pt": ("src.listings.agents.processors.imovirtual", "ImovirtualNormalizerAgent"),
+        "imovirtual": ("src.listings.agents.processors.imovirtual", "ImovirtualNormalizerAgent"),
     }
 
     @classmethod

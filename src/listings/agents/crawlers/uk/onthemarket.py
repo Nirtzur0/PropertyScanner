@@ -1,6 +1,8 @@
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 
 import structlog
 
@@ -45,6 +47,28 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             logger.warning("onthemarket_fetch_error", url=url, error=str(e))
             return None
 
+    def _extract_listing_urls(self, html: str) -> list[str]:
+        urls = self.scrape_client.extract_links(
+            html,
+            LinkExtractorSpec(
+                selectors=["a[href*='/details/']"],
+                include=["/details/"],
+            ),
+        )
+
+        for match in re.findall(r"/details/\d+", html):
+            urls.append(urljoin(self.base_url, match))
+
+        deduped = []
+        seen = set()
+        for url in urls:
+            normalized = url.split("#")[0]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         search_path = input_payload.get("search_path", "/for-sale/property/london/") 
         
@@ -73,14 +97,12 @@ class OnTheMarketCrawlerAgent(BaseAgent):
                 except Exception:
                     pass
 
-                listing_urls = self.scrape_client.extract_links(
-                    html,
-                    LinkExtractorSpec(
-                        selectors=["li.result a.result-link", "a.property-link"], 
-                        include=["/details/"],
-                    ),
-                )
+                listing_urls = self._extract_listing_urls(html)
         
+        max_listings = input_payload.get("max_listings")
+        if max_listings:
+            listing_urls = listing_urls[:int(max_listings)]
+
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=3):
             if not result.html:
@@ -90,10 +112,8 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             
             try:
                 # OTM urls: /details/12345/
-                if "/details/" in url:
-                    lid = url.split("/details/")[1].split("/")[0]
-                else:
-                    lid = hashlib.md5(url.encode()).hexdigest()[:12]
+                match = re.search(r"/details/(\\d+)", url)
+                lid = match.group(1) if match else hashlib.md5(url.encode()).hexdigest()[:12]
             except:
                 lid = hashlib.md5(url.encode()).hexdigest()[:12]
             

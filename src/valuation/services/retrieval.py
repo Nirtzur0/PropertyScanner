@@ -539,11 +539,12 @@ class LanceDBRetriever(CompRetriever):
         if self.table_name in existing:
             return self.db.open_table(self.table_name)
 
+        vector_type = pa.list_(pa.float32(), list_size=self.dimension)
         schema = pa.schema(
             [
                 ("id", pa.string()),
                 ("int_id", pa.int64()),
-                ("vector", pa.list_(pa.float32())),
+                ("vector", vector_type),
                 ("title", pa.string()),
                 ("price", pa.float64()),
                 ("listing_type", pa.string()),
@@ -710,7 +711,7 @@ class LanceDBRetriever(CompRetriever):
         index_total = len(self.listings)
         search_k = min(max(k * 20, 100), index_total)
 
-        search_results = self.table.search(query_vec).limit(search_k).to_list()
+        search_results = self.table.search(query_vec, vector_column_name="vector").limit(search_k).to_list()
         candidates = []
         for row in search_results:
             int_id = row.get("int_id")
@@ -781,6 +782,9 @@ class LanceDBRetriever(CompRetriever):
                     if not ((1.0 - allowed_sqm_ratio) <= ratio <= (1.0 + allowed_sqm_ratio)):
                         continue
 
+            if il.price is None or il.price <= 0:
+                continue
+
             similarity = 1.0 / (1.0 + dist)
             results.append(
                 CompListing(
@@ -830,6 +834,9 @@ class LanceDBRetriever(CompRetriever):
                     geo_dist = self._haversine_distance(target_lat, target_lon, il.lat, il.lon)
                     if geo_dist > max_radius_km:
                         continue
+
+                if il.price is None or il.price <= 0:
+                    continue
 
                 similarity = 1.0 / (1.0 + dist)
                 results.append(

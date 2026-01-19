@@ -1,38 +1,42 @@
-
 import pytest
-import logging
-from src.listings.agents.crawlers.spain.idealista import IdealistaCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
+from src.listings.agents.crawlers.spain.idealista import IdealistaCrawlerAgent
+from src.listings.utils.seen_url_store import SeenUrlStore
 
 @pytest.mark.integration
 def test_idealista_real_search():
     """
-    Test real network call to Idealista.com search.
-    Note: Highly likely to be blocked (403).
+    Test real network call to Idealista search.
+    Expected: Success (200 OK) + Listings found.
     """
+    # Reset seen URLs
+    SeenUrlStore().reset_mode("fetch:idealista")
+
     compliance = ComplianceManager(user_agent="PropertyScanner/Test/1.0")
     config = {
         "base_url": "https://www.idealista.com",
-        "rate_limit": {"period_seconds": 3},
+        "rate_limit": {"period_seconds": 2},
         "id": "idealista",
-        "prefer_browser": True
+        "prefer_browser": True, # Essential for anti-bot
+        "browser_wait_s": 5.0,
+        "maximize_stealth": True 
     }
     
     crawler = IdealistaCrawlerAgent(config=config, compliance_manager=compliance)
     
+    # Use a broad search path
     payload = {
-        "search_path": "/venta-viviendas/madrid-madrid/",
+        "search_path": "/venta-viviendas/madrid/centro/",
         "max_pages": 1,
+        "max_listings": 3 # Limit to avoid excessive crawling
     }
     
     response = crawler.run(payload)
     
-    if response.status == "failure":
-        error_msg = str(response.errors)
-        if "403" in error_msg or "fetch_failed" in error_msg:
-            logging.warning(f"Idealista blocked/failed as expected: {error_msg}")
-            pytest.skip("Idealista blocked by anti-bot (403)")
-        else:
-            pytest.fail(f"Idealista failed with unexpected errors: {response.errors}")
-
-    assert len(response.data) > 0 or response.status == "success"
+    assert response.status == "success"
+    assert len(response.data) > 0, "Should find at least one listing on Idealista real search"
+    assert response.data[0].url.startswith("https://www.idealista.com")
+    
+    # Check for obvious block
+    html = response.data[0].raw_data.get("html_snippet", "")
+    assert "captcha-delivery.com" not in html, "Blocked by DataDome/Anti-bot"

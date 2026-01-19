@@ -5,6 +5,10 @@ env/
 
 # Data and snapshots
 *.db-journal
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite3
+data/vector_index.lancedb/
 
 # Python
 __pycache__/
@@ -22,8 +26,9 @@ __pycache__/
 
 # Logs
 *.log
-data/*.db-shm
-data/*.db-wal
 
 # Snapshots
 data/snapshots/
+
+# Models
+models/comp_cache.json

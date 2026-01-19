@@ -1,0 +1,17 @@
+# hedonic.yaml
+# Controls hedonic index computation and registry-backed time index resolution.
+
+hedonic:
+  index_mode: "pooled"
+  min_total_obs: 50
+  min_monthly_obs: 10
+  min_monthly_r2: 0.05
+  pooled_min_monthly_obs: 5
+  ridge_alpha: 1.0
+  include_neighborhood_fe: true
+  registry_primary: true
+  registry_provider_priority: []
+  registry_metric_priority:
+    - price_sqm
+    - index
+  registry_max_lag_days: 180

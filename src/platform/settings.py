@@ -171,6 +171,20 @@ class PipelineConfig(BaseConfigModel):
     metadata_path: str = str(VECTOR_METADATA_PATH)
 
 
+class HedonicConfig(BaseConfigModel):
+    index_mode: str = "pooled"  # "monthly" or "pooled"
+    min_total_obs: int = 50
+    min_monthly_obs: int = 10
+    min_monthly_r2: float = 0.05
+    pooled_min_monthly_obs: int = 5
+    ridge_alpha: float = 1.0
+    include_neighborhood_fe: bool = True
+    registry_primary: bool = True
+    registry_provider_priority: List[str] = Field(default_factory=list)
+    registry_metric_priority: List[str] = Field(default_factory=lambda: ["price_sqm", "index"])
+    registry_max_lag_days: int = 180
+
+
 class QualityGateConfig(BaseConfigModel):
     max_invalid_ratio: float = 0.1
     min_samples: int = 20
@@ -278,6 +292,7 @@ class AppConfig(BaseConfigModel):
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     valuation: ValuationConfig = Field(default_factory=ValuationConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    hedonic: HedonicConfig = Field(default_factory=HedonicConfig)
     quality_gate: QualityGateConfig = Field(default_factory=QualityGateConfig)
     tft: TFTConfig = Field(default_factory=TFTConfig)
     description_analyst: DescriptionAnalystConfig = Field(default_factory=DescriptionAnalystConfig)

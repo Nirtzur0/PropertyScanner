@@ -349,6 +349,9 @@ def train_model(
     retriever_vlm_policy: Optional[str] = None,
     comp_cache_path: Optional[str] = None,
     comp_cache_mode: str = "auto",
+    geo_radius_km: float = 5.0,
+    size_ratio_tolerance: float = 0.2,
+    require_hedonic: bool = True,
     app_config: Optional[AppConfig] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -410,6 +413,9 @@ def train_model(
         retriever_vlm_policy=retriever_vlm_policy,
         comp_cache_path=comp_cache_path,
         comp_cache_mode=comp_cache_mode,
+        geo_radius_km=geo_radius_km,
+        size_ratio_tolerance=size_ratio_tolerance,
+        require_hedonic=require_hedonic,
     )
 
     retriever_meta: Dict[str, Any] = {}
@@ -637,6 +643,12 @@ if __name__ == "__main__":
         choices=["auto", "read", "write"],
         help="Comp cache behavior (auto/read/write).",
     )
+    parser.add_argument("--num-comps", type=int, default=5, help="Number of comps per listing")
+    parser.add_argument("--geo-radius-km", type=float, default=5.0, help="Radius for spatial comps")
+    parser.add_argument("--size-tolerance", type=float, default=0.2, help="Size ratio tolerance (0.2 = +/- 20%)")
+    parser.add_argument("--require-hedonic", action="store_true", help="Require hedonic normalization")
+    parser.add_argument("--no-hedonic", dest="require_hedonic", action="store_false")
+    parser.set_defaults(require_hedonic=True)
     
     args = parser.parse_args()
     
@@ -645,6 +657,7 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        num_comps=args.num_comps,
         patience=args.patience,
         val_split=args.val_split,
         test_split=args.test_split,
@@ -665,6 +678,9 @@ if __name__ == "__main__":
         retriever_vlm_policy=args.retriever_vlm_policy,
         comp_cache_path=args.comp_cache,
         comp_cache_mode=args.comp_cache_mode,
+        geo_radius_km=args.geo_radius_km,
+        size_ratio_tolerance=args.size_tolerance,
+        require_hedonic=args.require_hedonic,
         app_config=defaults,
     )
     
