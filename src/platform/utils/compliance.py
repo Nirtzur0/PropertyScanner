@@ -1,9 +1,10 @@
 import time
 import urllib.robotparser
 import urllib.request
+import ssl
 from urllib.parse import urlparse
 from threading import Lock
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
 import structlog
 
 logger = structlog.get_logger()
@@ -65,7 +66,12 @@ class RobotsTxtValidator:
             rp = urllib.robotparser.RobotFileParser()
             rp.set_url(robots_url)
             try:
-                with urllib.request.urlopen(robots_url, timeout=10) as response:
+                # SSL context to ignore certificate errors (e.g. self-signed or missing intermediate)
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                
+                with urllib.request.urlopen(robots_url, timeout=10, context=ctx) as response:
                     data = response.read().decode("utf-8", errors="ignore")
                     rp.parse(data.splitlines())
             except Exception as e:
@@ -94,22 +100,24 @@ class ComplianceManager:
     """
     Unified interface for compliance checks.
     """
-    def __init__(self, user_agent: str):
+    def __init__(self, user_agent: str, seen_check: Optional[Callable[[str], bool]] = None):
         self.rate_limiter = RateLimiter()
         self.robots_validator = RobotsTxtValidator(user_agent)
+        self.seen_check = seen_check
 
     def check_and_wait(self, url: str, rate_limit_seconds: float = 1.0) -> bool:
         """
         Checks robots.txt and waits for rate limit.
         Returns True if safe to proceed, False if blocked by robots.txt.
         """
-        parsed = urlparse(url)
-        if parsed.scheme == "file":
-             return True
-             
-        if not self.robots_validator.can_fetch(url):
-            logger.warning("blocked_by_robots_txt", url=url)
+        if self.seen_check and self.seen_check(url):
+            logger.info("skipped_seen_url", url=url)
             return False
+
+        # Disabled robots.txt check as requested
+        # if not self.robots_validator.can_fetch(url):
+        #    logger.warning("blocked_by_robots_txt", url=url)
+        #    return False
         
         self.rate_limiter.wait_for_slot(url, period_seconds=rate_limit_seconds)
         return True

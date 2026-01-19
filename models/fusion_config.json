@@ -10,7 +10,7 @@
   "num_heads": 2,
   "retriever": {
     "index_fingerprint": null,
-    "index_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_index.faiss",
+    "index_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_index.lancedb",
     "metadata_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_metadata.json",
     "model_name": "all-MiniLM-L6-v2",
     "vlm_policy": "gated"

@@ -109,6 +109,7 @@ Index command: `python3 -m src.interfaces.cli build-index`.
 | `data/listings.db` (ine_ipv) | Official stats | `OfficialSourcesAgent` | Benchmark anchors |
 | `data/listings.db` (eri_metrics) | Registral stats | `OfficialSourcesAgent` | Liquidity signals |
 | `data/listings.db` (pipeline_runs) | Operational logs | `PipelineRunTracker` | Run metadata |
+| `data/listings.db` (agent_runs) | Agent run memory | `CognitiveOrchestrator` | Query, plan, status, top picks |
 | `data/vector_index.lancedb` | Dense comp index (LanceDB) | Indexing workflow | Required for comps |
 | `data/vector_metadata.json` | Comp metadata | Indexing workflow | Encoder + policy lock |
 | `data/unified_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |

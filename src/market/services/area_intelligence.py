@@ -294,7 +294,7 @@ class AreaIntelligenceService:
         text = str(period).strip()
         if not text:
             return None
-        match = re.match(r"^(\d{4})-Q([1-4])$", text)
+        match = re.match(r"^(\d{4})-?Q([1-4])$", text)
         if match:
             year = int(match.group(1))
             quarter = int(match.group(2))

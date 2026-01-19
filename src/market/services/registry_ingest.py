@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import os
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 import structlog
@@ -12,9 +12,7 @@ from src.platform.config import DEFAULT_DB_PATH
 from src.platform.db.base import resolve_db_url
 from src.platform.settings import AppConfig, RegistrySourceConfig
 from src.platform.utils.config import load_app_config_safe
-from src.market.repositories.eri_metrics import ERIMetricsRepository
-from src.market.repositories.it_registry_metrics import ItalyRegistryMetricsRepository
-from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
+from src.market.repositories.registry_metrics import RegistryMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
 
@@ -35,12 +33,8 @@ class RegistryIngestService:
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.app_config = app_config or load_app_config_safe()
         self.canonicalizer = RegistryCanonicalizer(app_config=self.app_config)
-        self._repositories = {
-            "eri_es": ERIMetricsRepository(db_url=self.db_url),
-            "uk_land_registry": UKRegistryMetricsRepository(db_url=self.db_url),
-            "it_omi_registry": ItalyRegistryMetricsRepository(db_url=self.db_url),
-            "ine_ipv": IneIpvRepository(db_url=self.db_url),
-        }
+        self._registry_repos: Dict[str, RegistryMetricsRepository] = {}
+        self._ine_repo = IneIpvRepository(db_url=self.db_url)
 
     def run(self) -> int:
         registry_cfg = getattr(self.app_config, "registry", None)
@@ -64,14 +58,15 @@ class RegistryIngestService:
         return total
 
     def _ingest_source(self, source: RegistrySourceConfig) -> int:
-        repo = self._repositories.get(source.provider_id)
-        if repo is None:
-            logger.warning("registry_provider_unknown", provider_id=source.provider_id)
+        if not source.provider_id:
+            logger.warning("registry_provider_missing")
             return 0
         
         # Specialized path for INE IPV due to different schema
         if source.provider_id == "ine_ipv":
-            return self._ingest_ine_source(source, repo)
+            return self._ingest_ine_source(source, self._ine_repo)
+
+        repo = self._registry_repo(source.provider_id)
 
         if source.kind.lower() != "csv":
             logger.warning(
@@ -158,6 +153,13 @@ class RegistryIngestService:
         saved = repo.upsert_records(records)
         logger.info("registry_ine_saved", count=saved)
         return saved
+
+    def _registry_repo(self, provider_id: str) -> RegistryMetricsRepository:
+        repo = self._registry_repos.get(provider_id)
+        if repo is None:
+            repo = RegistryMetricsRepository(db_url=self.db_url, provider_id=provider_id)
+            self._registry_repos[provider_id] = repo
+        return repo
 
     def _load_csv(self, location: str, source: RegistrySourceConfig) -> pd.DataFrame:
         logger.info("registry_source_load", provider_id=source.provider_id, location=location)

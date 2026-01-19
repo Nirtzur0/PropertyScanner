@@ -37,6 +37,13 @@ class SeenUrlStore:
         with self._lock:
             self.conn.close()
 
+    def is_seen(self, mode: str, url: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT 1 FROM seen_urls WHERE mode = ? AND url = ? LIMIT 1", (mode, url)
+            )
+            return cur.fetchone() is not None
+
     def count(self, mode: str) -> int:
         with self._lock:
             cur = self.conn.execute("SELECT COUNT(1) FROM seen_urls WHERE mode = ?", (mode,))

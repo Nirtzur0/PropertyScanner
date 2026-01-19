@@ -19,6 +19,7 @@ flowchart LR
         Storage["StorageService"]
         PipelineState["PipelineStateService"]
         Runs["PipelineRunTracker"]
+        AgentMemory["AgentMemoryStore"]
     end
 
     subgraph Listings
@@ -54,6 +55,7 @@ flowchart LR
     API --> PipelineState
     Dash --> PipelineState
     PipelineState --> Runs
+    AgentMemory --> Storage
 
     Enrich --> Geo
     Fusion --> Persist --> Storage
@@ -120,6 +122,7 @@ Platform services
 - `StorageService`: SQLite connection and session management.
 - `PipelineStateService`: freshness checks for listings, indices, and models.
 - `PipelineRunTracker`: writes to `pipeline_runs` for operational visibility.
+- `AgentMemoryStore`: writes completed agent runs to `agent_runs`.
 
 ## Interaction rules (to keep services cohesive)
 - Services read/write through repositories and `StorageService`, not direct SQL in workflows.

@@ -57,6 +57,7 @@ flowchart LR
         MarketTables[("market/hedonic/macro/area tables")]
         GovData[("ine_ipv + eri_metrics")]
         Runs[("pipeline_runs")]
+        AgentRuns[("agent_runs")]
         ModelArtifacts[("models/fusion_model.pt + fusion_config.json")]
         Calib[("models/calibration_registry.json")]
     end
@@ -66,6 +67,7 @@ flowchart LR
     API --> Preflight
     Prefect --> Preflight
     Agent --> Preflight
+    Agent --> AgentRuns
 
     Preflight --> CrawlBackfill
     Preflight --> Transactions
@@ -98,7 +100,7 @@ flowchart LR
 ## System components at a glance
 - Acquisition: Crawl backfill workflow via `ScrapeClient` (Pydoll) plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
 - Processing: Normalize listings, fuse VLM signals, ingest sold transactions, then persist via StorageService.
-- Data: SQLite is the system of record; `pipeline_runs` tracks operational health.
+- Data: SQLite is the system of record; `pipeline_runs` tracks operational health and `agent_runs` stores cognitive run history.
 - Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
 - Interfaces: CLI, PipelineAPI, and the Scout Intelligence dashboard.
 - Automation: Prefect preflight flows keep data and artifacts fresh without manual runs.

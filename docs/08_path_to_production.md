@@ -13,9 +13,11 @@ Production is not just uptime. It is a set of guarantees we commit to:
 
 ## 1) Product spine: one orchestration and data surface
 The product story is weaker without a single, explicit system spine.
-- Single orchestration stack: agentic runs already use a plan-executor; batch workflows now run as Prefect flows (`src/platform/workflows/prefect_orchestration.py`). Continue converging on a single run plan and shared budgets.
+- Single orchestration stack: agentic runs already use a plan-executor; batch workflows now run as Prefect flows (`src/platform/workflows/prefect_orchestration.py`). Continue converging on a single run plan, shared budgets, and explicit timeouts.
 - Canonical data access: prohibit raw SQL in services; data access lives behind repository classes with a stable API.
-- Clean library surface: `PipelineAPI` already exposes crawl/index/market/valuation for CLI, agent, and dashboard; keep it as the single surface.
+- Clean library surface: `PipelineAPI` exposes crawl/index/market/valuation for CLI, agent, and dashboard; keep it as the single surface.
+- Agent memory: every run is stored in `agent_runs` (query, areas, plan, status, top picks) for auditability and replay.
+- Approval gates: plans that include preflight, index rebuilds, or training require explicit user approval in the dashboard.
 
 Decision points:
 - Prefect is the chosen orchestrator; decide when to shift from in-process runs to Prefect deployments + schedules.
@@ -25,7 +27,7 @@ Scale comes from resilience and discipline, not only from volume.
 - Distributed extraction: containerized agents with queue-based scheduling and backpressure.
 - Source contract tests: golden queries and assertions for embedded JSON presence, parse rates, and required fields.
 - Canary change detection: structural change alerts before a full run; optional visual regression for JS-heavy pages.
-- Adaptive fetch strategy: Pydoll-only CDP fetches with network controls, hybrid UI+API, and context/proxy isolation as needed.
+- Adaptive fetch strategy: Pydoll-only CDP fetches with network controls, hybrid UI+API, and context/proxy isolation as needed. Avoid legacy fallback engines.
 - Compliance guardrails: honor robots and terms; avoid bypass or circumvention logic.
 
 Risks:
@@ -52,6 +54,8 @@ Production trust is earned by early detection.
 - Data contracts: validation checks for required fields, price ranges, and location integrity.
 - Health telemetry: metrics on yield, parse error rates, VLM latency, inference queue times, and index freshness.
 - Drift detection: monitor changes in distributions (price, area, listing count) and source HTML structure.
+- Agent quality gates: block reporting when evaluations are empty, score bounds are invalid, or quantiles are inconsistent.
+- Execution trace: persist per-step timing, status, and error surfaces to diagnose the first failure, not mask it.
 
 Success metrics:
 - Automatic alerting on crawl anomalies within one run.
@@ -63,6 +67,7 @@ The system's predictive power hinges on label quality and market alignment.
 - Market-specific calibration: separate models or calibration layers by city/region and listing type (sale vs rent).
 - Evaluation: time+geo splits are available; expand to stability and directional accuracy metrics.
 - Model registry: version artifacts, metrics, and data slices for each training run.
+- Strategy personas: scoring weights are tied to explicit personas (balanced, cash-flow, bargain, safe-bet).
 
 Risk:
 - Unstable targets or label leakage causing regression in live predictions.
@@ -71,7 +76,8 @@ Risk:
 Valuation becomes a product feature only if it scales reliably.
 - Separate inference: expose a model API (FastAPI + Triton or vLLM) to decouple heavy compute from UI.
 - Caching: cached valuations already exist; extend caching for embeddings and hot listings.
-- Guardrails: hard timeouts and fallback paths to baseline comp valuation.
+- Vector search: LanceDB is the single embedded vector store for comps (metadata + embeddings kept together).
+- Guardrails: hard timeouts and explicit failure surfaces (no silent fallback valuation paths).
 
 Decision point:
 - When to offload from local inference to managed or self-hosted GPU.
@@ -87,16 +93,16 @@ The production posture must be professional.
 A staged plan prevents premature scaling.
 
 Phase 1: Reliability Baseline
-- Goals: idempotent runs, data contracts, unified data access, single orchestration plan.
-- Exit criteria: no silent data failures for two weeks; reproducible valuations.
+- Goals: idempotent runs, data contracts, single orchestration plan, plan approval gates, and agent trace visibility.
+- Exit criteria: no silent data failures for two weeks; reproducible valuations and deterministic plans.
 
 Phase 2: Scale and Observability
-- Goals: distributed crawling, contract tests, monitoring dashboards, canary detection.
+- Goals: distributed crawling, contract tests, monitoring dashboards, canary detection, and agent memory dashboards.
 - Exit criteria: stable yield under variable source changes; alerting within minutes.
 
 Phase 3: Productization
-- Goals: model registry, inference service, API-first architecture, automated retraining.
-- Exit criteria: stable model performance, low latency valuation, predictable costs.
+- Goals: model registry, inference service, API-first architecture, automated retraining, and dynamic UI blocks.
+- Exit criteria: stable model performance, low latency valuation, predictable costs, and measurable user workflows.
 
 ## 9) Open questions to resolve
 - Which sources are non-negotiable for accuracy, and which are optional?
@@ -109,3 +115,4 @@ Phase 3: Productization
 - Expand Prefect deployments and schedules for crawl backfill + market data + training.
 - Draft a data-contract spec for each source with golden fixtures.
 - Establish evaluation baselines for valuation and rent estimation.
+- Add agent run dashboards (trace, quality gates, and approval outcomes).

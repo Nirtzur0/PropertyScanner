@@ -45,7 +45,7 @@ class UnifiedSourcePlan:
 
 @dataclass
 class UnifiedCrawlSettings:
-    source_workers: int = 2
+    source_workers: int = 10
     fusion_workers: int = 4
     vlm_concurrency: int = 1
     run_vlm: bool = True
@@ -221,7 +221,19 @@ class UnifiedCrawlRunner:
         payload = self._build_payload(plan)
         logger.info("unified_crawl_start", source=plan.source_id, payload=payload)
 
-        crawler = AgentFactory.create_crawler(plan.source_id, crawler_config, self.compliance)
+        # Create source-specific compliance with seen-url check
+        seen_mode = f"{self.settings.seen_mode_prefix}:{plan.source_id}"
+
+        def _is_seen(url: str) -> bool:
+            return self.seen_store.is_seen(seen_mode, url)
+
+        # We create a new manager for this source to bind the specific seen check
+        compliance = ComplianceManager(
+            user_agent=self.app_config.agents.defaults.uastring,
+            seen_check=_is_seen
+        )
+
+        crawler = AgentFactory.create_crawler(plan.source_id, crawler_config, compliance)
         crawl_response = crawler.run(payload)
         raw_listings = self._normalize_raw(crawl_response.data or [])
 

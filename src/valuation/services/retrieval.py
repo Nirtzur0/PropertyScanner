@@ -1,15 +1,11 @@
 """
-Enhanced comp retriever using LanceDB for semantic search with metadata filtering.
+Comp retriever utilities with LanceDB-backed semantic search and metadata filtering.
 """
 import os
 import json
 import re
 import structlog
 import numpy as np
-try:
-    import faiss
-except ImportError:  # pragma: no cover - optional dependency
-    faiss = None
 try:
     import lancedb
     import pyarrow as pa
@@ -56,7 +52,6 @@ class CompRetriever:
     Handles embedding generation and retrieving similar comparable listings (Comps).
     
     Features:
-    - Legacy FAISS backend (LanceDB is the primary backend)
     - SentenceTransformers for text embeddings
     - Geo-filtering (radius-based)
     - Temporal filtering (no future leakage)
@@ -84,17 +79,7 @@ class CompRetriever:
         else:
             self.model = SentenceTransformer(model_name)
         self.dimension = self.model.get_sentence_embedding_dimension()
-        
-        if faiss is None:
-            raise ImportError("faiss_missing")
-
-        # Initialize or Load FAISS Index
-        if os.path.exists(index_path):
-            self.index = faiss.read_index(index_path)
-        else:
-            # IndexFlatIP for inner product (cosine similarity with normalized vectors)
-            base_index = faiss.IndexFlatL2(self.dimension)
-            self.index = faiss.IndexIDMap(base_index)
+        self.index = None
             
         # Load or initialize metadata
         self.listings: Dict[int, IndexedListing] = {}
@@ -274,89 +259,7 @@ class CompRetriever:
         listings: List[CanonicalListing], 
         snapshot_ids: Optional[Dict[str, str]] = None
     ) -> int:
-        """
-        Add listings to the vector index.
-        
-        Args:
-            listings: List of canonical listings to index
-            snapshot_ids: Optional mapping of listing_id -> snapshot_id
-            
-        Returns:
-            Number of new listings added
-        """
-        if not listings:
-            return 0
-
-        vectors = []
-        new_listings = []
-        metadata_dirty = False
-        
-        snapshot_ids = snapshot_ids or {}
-        
-        for l in listings:
-            # Skip if already indexed, but refresh missing timestamps
-            if l.id in self.id_to_int:
-                int_id = self.id_to_int[l.id]
-                il = self.listings.get(int_id)
-                if il:
-                    listed_at = l.listed_at.isoformat() if getattr(l, "listed_at", None) else None
-                    updated_at = l.updated_at.isoformat() if getattr(l, "updated_at", None) else None
-                    if listed_at and not il.listed_at:
-                        il.listed_at = listed_at
-                        metadata_dirty = True
-                    if updated_at and not il.updated_at:
-                        il.updated_at = updated_at
-                        metadata_dirty = True
-                continue
-                
-            # Create embedding from text
-            text = self._build_text(l.title or "", l.description or "", getattr(l, "vlm_description", None))
-            vec = self.model.encode(text, normalize_embeddings=True, show_progress_bar=False)
-            vectors.append(vec)
-            
-            # Create indexed listing
-            int_id = self.next_int_id
-            self.next_int_id += 1
-            
-            il = IndexedListing(
-                id=l.id,
-                int_id=int_id,
-                external_id=getattr(l, "external_id", None),
-                source_id=getattr(l, "source_id", None),
-                url=str(getattr(l, "url", "")) if getattr(l, "url", None) else None,
-                title=l.title or "",
-                price=l.price,
-                listing_type=l.listing_type if hasattr(l, "listing_type") and l.listing_type else "sale",
-                property_type=(l.property_type.value if hasattr(l, "property_type") and hasattr(l.property_type, "value") else str(getattr(l, "property_type", "") or "")).lower() or None,
-                surface_area_sqm=l.surface_area_sqm,
-                bedrooms=l.bedrooms,
-                lat=l.location.lat if l.location else None,
-                lon=l.location.lon if l.location else None,
-                snapshot_id=snapshot_ids.get(l.id, ""),
-                listed_at=l.listed_at.isoformat() if getattr(l, "listed_at", None) else None,
-                updated_at=l.updated_at.isoformat() if getattr(l, "updated_at", None) else None,
-                status=str(getattr(l, "status", None)) if getattr(l, "status", None) else None
-            )
-            
-            self.listings[int_id] = il
-            self.id_to_int[l.id] = int_id
-            new_listings.append(int_id)
-            
-        if vectors:
-            vectors_np = np.array(vectors).astype('float32')
-            ids_np = np.array(new_listings).astype('int64')
-            self.index.add_with_ids(vectors_np, ids_np)
-            
-            # Persist
-            faiss.write_index(self.index, self.index_path)
-            self._save_metadata()
-            
-            logger.info("added_vectors_to_index", count=len(new_listings))
-        elif metadata_dirty:
-            self._save_metadata()
-            logger.info("updated_index_metadata", count=len(self.listings))
-
-        return len(new_listings)
+        raise NotImplementedError("retriever_add_listings_unsupported")
 
     def retrieve_comps(
         self, 
@@ -382,6 +285,8 @@ class CompRetriever:
         Returns:
             List of CompListing objects sorted by similarity
         """
+        if self.index is None:
+            return []
         try:
             index_total = int(getattr(self.index, "ntotal", 0) or 0)
         except (TypeError, ValueError):
@@ -567,8 +472,14 @@ class CompRetriever:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics."""
+        total_vectors = 0
+        if self.index is not None:
+            try:
+                total_vectors = int(getattr(self.index, "ntotal", 0) or 0)
+            except (TypeError, ValueError):
+                total_vectors = 0
         return {
-            "total_vectors": self.index.ntotal,
+            "total_vectors": total_vectors,
             "total_listings": len(self.listings),
             "embedding_dimension": self.dimension,
             "index_path": self.index_path

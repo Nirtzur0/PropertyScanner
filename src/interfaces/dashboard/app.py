@@ -319,7 +319,7 @@ with left_col:
     )
     chips_html = "".join([f"<span class='lens-chip'>{html.escape(c)}</span>" for c in lens_chips])
     
-    hud_cols = st.columns([6, 1])
+    hud_cols = st.columns([5, 1], gap="small", vertical_alignment="center")
     with hud_cols[0]:
         st.markdown(
             f"""
@@ -345,9 +345,6 @@ with left_col:
                 index=0 if selected_country == "All" else available_countries.index(selected_country) + 1,
                 on_change=lambda: setattr(st.session_state, 'selected_country', st.session_state.selected_country_dupe)
             )
-        # Note: synchronizing duplicated controls is tricky in Streamlit. 
-        # For this refactor I'll stick to the sidebar being source of truth or just displaying the HUD.
-        # The extraction kept logic simple.
 
         with st.expander("System status", expanded=False):
             st.caption(f"Pipeline: {pipeline_state_text}")
@@ -408,20 +405,61 @@ elif not filtered_df.empty:
 else:
     st.session_state.selected_title = None
 
+# --- Scout Command Center ---
 st.markdown('<div id="scout-command-center"></div>', unsafe_allow_html=True)
-with st.form("scout_command_center", clear_on_submit=True):
-    input_cols = st.columns([3, 1])
+with st.form("scout_command_center", clear_on_submit=False):
+    st.markdown('<span id="scout-form-marker"></span>', unsafe_allow_html=True)
+    input_cols = st.columns([3, 1], vertical_alignment="bottom")
     with input_cols[0]:
-        prompt = st.text_input("Scout Command", key="orchestrator_input", placeholder="Ask the Scout... (⌘K)", label_visibility="collapsed")
+        # Check for preset prompt
+        default_prompt = st.session_state.get("scout_prompt_preset", "")
+        # Reset preset after consumption to avoid sticking
+        if default_prompt:
+             del st.session_state.scout_prompt_preset
+        
+        prompt_val = default_prompt
+        prompt = st.text_input(
+            "Scout Command", 
+            value=prompt_val,
+            key="orchestrator_input", 
+            placeholder="Ask the Scout... (⌘K)", 
+            label_visibility="collapsed"
+        )
     with input_cols[1]:
         submitted = st.form_submit_button("Scout it", use_container_width=True)
+
+    # Examples (Inside the floating panel)
+    if not submitted and not st.session_state.agent_plan:
+        st.caption("Try an example:")
+        example_cols = st.columns(2)
+        examples = [
+            "💰 High Yield deals",
+            "📉 Undervalued gems",
+            "🚀 High Momentum",
+            "📍 Only Barcelona"
+        ]
+        chosen_example = None
+        for i, ex in enumerate(examples):
+            with example_cols[i % 2]:
+                # In a form, buttons sumbit the form. We check which one was clicked.
+                if st.form_submit_button(ex, use_container_width=True):
+                    chosen_example = ex
+                    submitted = True
+        
+        if chosen_example:
+            prompt = chosen_example
 
 if submitted and prompt:
     log_orchestrator("user", prompt)
     target_areas = _resolve_target_areas(selected_city, selected_country)
     if not target_areas:
+        # Default to all cities if no specific area is selected
+        target_areas = cities
+        st.toast(f"Scouting across {len(cities)} cities...", icon="🌍")
+
+    if not target_areas:
         st.session_state.agent_error = "target_area_required"
-        st.error("Select a city or country before running the agent.")
+        st.error("No cities available to scout. Please check your data.")
         st.stop()
 
     strategy = _resolve_strategy(scout_profile)
@@ -577,67 +615,79 @@ with left_panel:
 
     if panel_choice == "📋 Deal Flow":
         st.markdown("### 📋 Deal Flow")
-        st.caption(f"{len(deal_df)} listings with photos • sorted by {sort_key}")
+        # Pagination & View Logic
+        total_deals = len(deal_df)
+        page_size = max(1, int(st.session_state.deal_page_size))
+        total_pages = max(1, int(math.ceil(total_deals / page_size))) if total_deals > 0 else 1
+        current_page = min(max(1, int(st.session_state.deal_page)), total_pages)
+        
+        start_idx = (current_page - 1) * page_size
+        end_idx = min(start_idx + page_size, total_deals)
 
-        view_cols = st.columns([1, 1, 2])
-        with view_cols[0]:
+        # Controls Toolbar
+        ctrl_cols = st.columns([1.5, 1, 0.7, 0.9, 0.7, 2.5], vertical_alignment="center")
+        
+        # 1. View Mode
+        with ctrl_cols[0]:
             deal_view = st.radio(
-                "Deal view",
-                ["Grid", "List"],
+                "View", ["Grid", "List"],
                 index=0 if st.session_state.deal_view_mode == "Grid" else 1,
                 horizontal=True,
                 label_visibility="collapsed",
+                key="deal_view_ctrl"
             )
             if deal_view != st.session_state.deal_view_mode:
                 st.session_state.deal_view_mode = deal_view
                 st.rerun()
-        with view_cols[1]:
-            page_size = st.selectbox(
-                "Per page",
-                [6, 8, 10, 12],
-                index=[6, 8, 10, 12].index(st.session_state.deal_page_size)
-                if st.session_state.deal_page_size in [6, 8, 10, 12]
-                else 1,
+
+        # 2. Page Size
+        with ctrl_cols[1]:
+            page_size_sel = st.selectbox(
+                "Size", [6, 8, 10, 12, 24],
+                index=[6, 8, 10, 12, 24].index(st.session_state.deal_page_size) if st.session_state.deal_page_size in [6, 8, 10, 12, 24] else 1,
                 label_visibility="collapsed",
+                key="page_size_ctrl"
             )
-            if page_size != st.session_state.deal_page_size:
-                st.session_state.deal_page_size = page_size
+            if page_size_sel != st.session_state.deal_page_size:
+                st.session_state.deal_page_size = page_size_sel
                 st.session_state.deal_page = 1
                 st.rerun()
-        with view_cols[2]:
-            st.caption("Only listings with photos are shown.")
 
-        total_deals = len(deal_df)
+        # 3. Prev
+        with ctrl_cols[2]:
+            if st.button("◀", disabled=current_page <= 1, use_container_width=True):
+                st.session_state.deal_page = max(1, current_page - 1)
+                st.rerun()
+
+        # 4. Page Selector
+        with ctrl_cols[3]:
+            page_sel = st.selectbox(
+                "Page", list(range(1, total_pages + 1)),
+                index=current_page - 1,
+                label_visibility="collapsed",
+                key="page_sel_ctrl"
+            )
+            if page_sel != current_page:
+                st.session_state.deal_page = page_sel
+                st.rerun()
+
+        # 5. Next
+        with ctrl_cols[4]:
+            if st.button("▶", disabled=current_page >= total_pages, use_container_width=True):
+                st.session_state.deal_page = min(total_pages, current_page + 1)
+                st.rerun()
+
+        # 6. Status Info
+        with ctrl_cols[5]:
+            if total_deals > 0:
+                st.caption(f"{start_idx + 1}-{end_idx} of {total_deals} • {sort_key}")
+            else:
+                st.caption("No matches")
+
         if total_deals == 0:
             st.info("No listings with photos match the current lens.")
         else:
-            page_size = max(1, int(st.session_state.deal_page_size))
-            total_pages = max(1, int(math.ceil(total_deals / page_size)))
-            current_page = min(max(1, int(st.session_state.deal_page)), total_pages)
-            start_idx = (current_page - 1) * page_size
-            end_idx = min(start_idx + page_size, total_deals)
             page_df = deal_df.iloc[start_idx:end_idx]
-
-            nav_cols = st.columns([1, 1, 2])
-            with nav_cols[0]:
-                if st.button("Prev", disabled=current_page <= 1, use_container_width=True):
-                    st.session_state.deal_page = max(1, current_page - 1)
-                    st.rerun()
-            with nav_cols[1]:
-                if st.button("Next", disabled=current_page >= total_pages, use_container_width=True):
-                    st.session_state.deal_page = min(total_pages, current_page + 1)
-                    st.rerun()
-            with nav_cols[2]:
-                page_choice = st.selectbox(
-                    "Page",
-                    list(range(1, total_pages + 1)),
-                    index=current_page - 1,
-                    label_visibility="collapsed",
-                )
-                if page_choice != current_page:
-                    st.session_state.deal_page = page_choice
-                    st.rerun()
-            st.caption(f"Showing {start_idx + 1}-{end_idx} of {total_deals}")
 
             if st.session_state.deal_view_mode == "Grid":
                 grid_cols = st.columns(2, gap="large")

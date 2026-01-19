@@ -13,16 +13,19 @@ from src.platform.domain.schema import CanonicalListing, GeoLocation
 
 class TestCompRetrieverLogic(unittest.TestCase):
     def setUp(self):
-        self.faiss_patcher = patch("src.valuation.services.retrieval.faiss", MagicMock())
-        self.faiss_patcher.start()
+        self.model_patcher = patch("src.valuation.services.retrieval.SentenceTransformer")
+        mock_model_cls = self.model_patcher.start()
+        mock_model = MagicMock()
+        mock_model.get_sentence_embedding_dimension.return_value = 384
+        mock_model.encode.return_value = np.zeros(384).astype("float32")
+        mock_model_cls.return_value = mock_model
 
         # Create a mock retriever that bypasses legacy index loading
         self.retriever = CompRetriever(index_path="non_existent", metadata_path="non_existent")
         
         # Mock the index and model
         self.retriever.index = MagicMock()
-        self.retriever.model = MagicMock()
-        self.retriever.model.encode.return_value = np.zeros(384).astype('float32') # Dummy embedding
+        self.retriever.model = mock_model
         
         # Mock listings database
         # We will populate self.retriever.listings with diverse options
@@ -42,7 +45,7 @@ class TestCompRetrieverLogic(unittest.TestCase):
         self.retriever.index.search.return_value = (distances, indices)
 
     def tearDown(self):
-        self.faiss_patcher.stop()
+        self.model_patcher.stop()
 
     def setup_mock_listings(self):
         self.retriever.listings = {}

@@ -1,5 +1,7 @@
 
 import sqlite3
+from datetime import datetime
+
 import structlog
 from src.platform.config import DEFAULT_DB_PATH
 
@@ -204,66 +206,187 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         )
     """)
 
-    # 6. ERI (Registral) Metrics
+    # 6. Official Metrics (ERI/Registry/INE unified)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS eri_metrics (
-            id TEXT PRIMARY KEY, -- "region_id|period_date"
+        CREATE TABLE IF NOT EXISTS official_metrics (
+            id TEXT PRIMARY KEY,
+            provider_id TEXT,
             region_id TEXT,
-            period_date DATE,
-            txn_count INT,
-            mortgage_count INT,
-            price_sqm FLOAT,
-            price_sqm_yoy FLOAT,
-            price_sqm_qoq FLOAT,
-            updated_at DATETIME
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_eri_region_date ON eri_metrics (region_id, period_date)")
-
-    # 6a. UK Land Registry Metrics
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS uk_registry_metrics (
-            id TEXT PRIMARY KEY, -- "region_id|period_date"
-            region_id TEXT,
-            period_date DATE,
-            txn_count INT,
-            mortgage_count INT,
-            price_sqm FLOAT,
-            price_sqm_yoy FLOAT,
-            price_sqm_qoq FLOAT,
-            updated_at DATETIME
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_uk_registry_region_date ON uk_registry_metrics (region_id, period_date)")
-
-    # 6b. Italy OMI Registry Metrics
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS it_registry_metrics (
-            id TEXT PRIMARY KEY, -- "region_id|period_date"
-            region_id TEXT,
-            period_date DATE,
-            txn_count INT,
-            mortgage_count INT,
-            price_sqm FLOAT,
-            price_sqm_yoy FLOAT,
-            price_sqm_qoq FLOAT,
-            updated_at DATETIME
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_it_registry_region_date ON it_registry_metrics (region_id, period_date)")
-
-    # 6c. INE IPV (Housing Price Index)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ine_ipv (
             period TEXT,
-            region_id TEXT,
-            housing_type TEXT, -- 'general', 'new', 'used'
-            metric TEXT,      -- 'index', 'yoy', 'qoq'
+            period_date DATE,
+            housing_type TEXT,
+            metric TEXT,
             value FLOAT,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (period, region_id, housing_type, metric)
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_official_metrics_provider_region_date "
+        "ON official_metrics (provider_id, region_id, period_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_official_metrics_provider_region_metric "
+        "ON official_metrics (provider_id, region_id, metric, housing_type, period_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_official_metrics_provider_metric "
+        "ON official_metrics (provider_id, metric)"
+    )
+
+    def _table_exists(name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        return row is not None
+
+    def _normalize_date(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            return datetime.fromisoformat(text).date().isoformat()
+        except ValueError:
+            return text
+
+    def _period_to_date(period: str) -> str:
+        text = str(period).strip()
+        if not text:
+            return ""
+        if "Q" in text:
+            text = text.replace("-Q", "Q")
+            if len(text) == 6 and text[:4].isdigit() and text[4] == "Q" and text[5].isdigit():
+                year = int(text[:4])
+                quarter = int(text[5])
+                month = (quarter - 1) * 3 + 1
+                return f"{year}-{month:02d}-01"
+        try:
+            return datetime.fromisoformat(text).date().isoformat()
+        except ValueError:
+            return ""
+
+    def _migrate_registry_table(table_name: str, provider_id: str) -> None:
+        rows = conn.execute(
+            f"""
+            SELECT region_id, period_date, txn_count, mortgage_count, price_sqm, price_sqm_yoy, price_sqm_qoq
+            FROM {table_name}
+            """
+        ).fetchall()
+        if not rows:
+            return
+        payloads = []
+        for (
+            region_id,
+            period_date,
+            txn_count,
+            mortgage_count,
+            price_sqm,
+            price_sqm_yoy,
+            price_sqm_qoq,
+        ) in rows:
+            if not region_id or not period_date:
+                continue
+            period = _normalize_date(period_date)
+            if not period:
+                period = str(period_date)
+            metrics = {
+                "txn_count": txn_count,
+                "mortgage_count": mortgage_count,
+                "price_sqm": price_sqm,
+                "price_sqm_yoy": price_sqm_yoy,
+                "price_sqm_qoq": price_sqm_qoq,
+            }
+            for metric, value in metrics.items():
+                if value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                payloads.append(
+                    (
+                        f"{provider_id}|{region_id}|{period}|{metric}",
+                        provider_id,
+                        region_id,
+                        period,
+                        period,
+                        None,
+                        metric,
+                        numeric,
+                    )
+                )
+        if payloads:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO official_metrics
+                (id, provider_id, region_id, period, period_date, housing_type, metric, value, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                payloads,
+            )
+
+    def _migrate_ine_ipv() -> None:
+        rows = conn.execute(
+            """
+            SELECT period, region_id, housing_type, metric, value
+            FROM ine_ipv
+            """
+        ).fetchall()
+        if not rows:
+            return
+        payloads = []
+        for period, region_id, housing_type, metric, value in rows:
+            if not period or not region_id or metric is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            period_text = str(period).strip()
+            period_date = _period_to_date(period_text)
+            payloads.append(
+                (
+                    f"ine_ipv|{region_id}|{period_text}|{housing_type}|{metric}",
+                    "ine_ipv",
+                    region_id,
+                    period_text,
+                    period_date,
+                    housing_type,
+                    metric,
+                    numeric,
+                )
+            )
+        if payloads:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO official_metrics
+                (id, provider_id, region_id, period, period_date, housing_type, metric, value, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                payloads,
+            )
+
+    if _table_exists("eri_metrics"):
+        _migrate_registry_table("eri_metrics", "eri_es")
+    if _table_exists("uk_registry_metrics"):
+        _migrate_registry_table("uk_registry_metrics", "uk_land_registry")
+    if _table_exists("it_registry_metrics"):
+        _migrate_registry_table("it_registry_metrics", "it_omi_registry")
+    if _table_exists("ine_ipv"):
+        _migrate_ine_ipv()
+
+    def _official_metrics_populated() -> bool:
+        row = conn.execute("SELECT COUNT(1) FROM official_metrics").fetchone()
+        return bool(row and row[0] and int(row[0]) > 0)
+
+    if _official_metrics_populated():
+        for legacy in ("eri_metrics", "uk_registry_metrics", "it_registry_metrics", "ine_ipv"):
+            if _table_exists(legacy):
+                conn.execute(f"DROP TABLE IF EXISTS {legacy}")
 
     # 8. Pipeline Runs (operational audit/logs)
     conn.execute("""

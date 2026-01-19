@@ -225,8 +225,6 @@ a:hover {
 }
 
 .lens-hud-bar {
-  position: sticky;
-  top: 1rem;
   z-index: 900;
   display: flex;
   align-items: center;
@@ -866,7 +864,7 @@ a:hover {
   border-radius: var(--radius-md);
 }
 
-.scout-command-center {
+[data-testid="stForm"]:has(#scout-form-marker) {
   position: fixed;
   bottom: 1.6rem;
   right: 1.6rem;
@@ -880,33 +878,45 @@ a:hover {
   box-shadow: var(--shadow-strong);
   padding: 0.65rem 0.85rem;
   backdrop-filter: blur(12px);
+  gap: 0.5rem;
 }
 
 /* Hide scrollbar for clean look */
-.scout-command-center::-webkit-scrollbar {
+[data-testid="stForm"]:has(#scout-form-marker)::-webkit-scrollbar {
   width: 0px;
   background: transparent;
 }
 
-.scout-command-center .stTextInput input {
+[data-testid="stForm"]:has(#scout-form-marker) .stTextInput input {
   border-radius: 999px !important;
   padding: 0.55rem 0.9rem !important;
 }
 
-.scout-command-center .stButton > button {
+[data-testid="stForm"]:has(#scout-form-marker) .stButton > button {
   border-radius: 999px;
   padding: 0.45rem 0.6rem;
   font-size: 0.75rem;
   letter-spacing: 0.08em;
+  width: 100%; /* Make example buttons full width */
+  border: 1px solid rgba(21, 19, 16, 0.1);
+  color: var(--ink);
+  box-shadow: none;
 }
 
-.scout-command-center [data-testid="stExpander"] > details {
+/* Specific styling for the primary submit button to distinguish it */
+[data-testid="stForm"]:has(#scout-form-marker) [data-testid="baseButton-secondary"] {
+   background: linear-gradient(120deg, rgba(193, 147, 91, 0.9), rgba(208, 123, 82, 0.92)) !important;
+   color: #fff !important;
+   border: none !important;
+}
+
+[data-testid="stForm"]:has(#scout-form-marker) [data-testid="stExpander"] > details {
   margin-top: 0.5rem;
   background: rgba(255, 255, 255, 0.96);
 }
 
 @media (max-width: 900px) {
-  .scout-command-center {
+  [data-testid="stForm"]:has(#scout-form-marker) {
     bottom: 1rem;
     right: 1rem;
     left: 1rem;

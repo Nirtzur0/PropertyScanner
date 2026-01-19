@@ -40,31 +40,49 @@ class HedonicIndicesRepository(RepositoryBase):
         return float(row[0]), float(row[1] or 0.0), int(row[2] or 0), str(row[3])
 
     def fetch_ine_benchmark(self, region_id: str, period: str) -> Optional[float]:
+        def period_variants(value: str) -> List[str]:
+            text_val = str(value).strip()
+            if not text_val:
+                return []
+            variants = {text_val}
+            if "-Q" in text_val:
+                variants.add(text_val.replace("-Q", "Q"))
+            elif "Q" in text_val:
+                variants.add(text_val.replace("Q", "-Q"))
+            return list(variants)
+
         query = text(
             """
-            SELECT value FROM ine_ipv
-            WHERE period = :period AND region_id = :region_id
-              AND housing_type = 'general' AND metric = 'index'
+            SELECT value FROM official_metrics
+            WHERE provider_id = 'ine_ipv'
+              AND period = :period
+              AND LOWER(region_id) = :region_id
+              AND housing_type = 'general'
+              AND metric = 'index'
             LIMIT 1
             """
         )
+        query_national = text(
+            """
+            SELECT value FROM official_metrics
+            WHERE provider_id = 'ine_ipv'
+              AND period = :period
+              AND region_id LIKE '%Nacional%'
+              AND housing_type = 'general'
+              AND metric = 'index'
+            LIMIT 1
+            """
+        )
+        region_key = region_id.lower().strip()
         with self.engine.connect() as conn:
-            row = conn.execute(query, {"period": period, "region_id": region_id}).fetchone()
-            if row:
-                return float(row[0])
-            row = conn.execute(
-                text(
-                    """
-                    SELECT value FROM ine_ipv
-                    WHERE period = :period AND region_id LIKE '%Nacional%'
-                      AND housing_type = 'general' AND metric = 'index'
-                    LIMIT 1
-                    """
-                ),
-                {"period": period},
-            ).fetchone()
-        if row:
-            return float(row[0])
+            for candidate in period_variants(period):
+                row = conn.execute(query, {"period": candidate, "region_id": region_key}).fetchone()
+                if row:
+                    return float(row[0])
+            for candidate in period_variants(period):
+                row = conn.execute(query_national, {"period": candidate}).fetchone()
+                if row:
+                    return float(row[0])
         return None
 
     def fetch_index_series(self, region_id: str, start_month: str, end_month: str) -> pd.DataFrame:

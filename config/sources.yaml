@@ -107,3 +107,138 @@ sources:
         robots_txt_url: "https://www.immobiliare.it/robots.txt"
         allowed_paths: ["/vendita-case", "/affitto-case", "/annunci/"]
         disallowed_paths: ["/login"]
+
+    - id: "onthemarket_uk"
+      name: "OnTheMarket"
+      base_url: "https://www.onthemarket.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["GB"]
+      search_url_template: "https://www.onthemarket.com/for-sale/property/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.onthemarket.com/robots.txt"
+        allowed_paths: ["/for-sale/", "/to-rent/"]
+        disallowed_paths: []
+
+    - id: "casa_it"
+      name: "Casa.it"
+      base_url: "https://www.casa.it"
+      type: "html_browser"
+      enabled: true
+      countries: ["IT"]
+      search_url_template: "https://www.casa.it/vendita/residenziale/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.casa.it/robots.txt"
+        allowed_paths: ["/vendita", "/affitto"]
+        disallowed_paths: []
+
+    - id: "seloger_fr"
+      name: "SeLoger"
+      base_url: "https://www.seloger.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["FR"]
+      search_url_template: "https://www.seloger.com/list/achat/paris/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.seloger.com/robots.txt"
+        allowed_paths: ["/list", "/annonce"]
+        disallowed_paths: []
+
+    - id: "realtor_us"
+      name: "Realtor.com"
+      base_url: "https://www.realtor.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["US"]
+      search_url_template: "https://www.realtor.com/realestateandhomes-search/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.realtor.com/robots.txt"
+        allowed_paths: ["/realestateandhomes-search", "/realestateandhomes-detail"]
+        disallowed_paths: []
+
+    - id: "redfin_us"
+      name: "Redfin"
+      base_url: "https://www.redfin.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["US"]
+      search_url_template: "https://www.redfin.com/city/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.redfin.com/robots.txt"
+        allowed_paths: ["/city", "/state", "/zip"]
+        disallowed_paths: []
+
+    - id: "homes_us"
+      name: "Homes.com"
+      base_url: "https://www.homes.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["US"]
+      search_url_template: "https://www.homes.com/{slug}/sold/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.homes.com/robots.txt"
+        allowed_paths: ["/"]
+        disallowed_paths: []
+
+    - id: "funda_nl"
+      name: "Funda"
+      base_url: "https://www.funda.nl"
+      type: "html_browser"
+      enabled: true
+      countries: ["NL"]
+      search_url_template: "https://www.funda.nl/koop/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.funda.nl/robots.txt"
+        allowed_paths: ["/koop", "/huur"]
+        disallowed_paths: []
+
+    - id: "immowelt_de"
+      name: "Immowelt"
+      base_url: "https://www.immowelt.de"
+      type: "html_browser"
+      enabled: true
+      countries: ["DE"]
+      search_url_template: "https://www.immowelt.de/liste/{slug}/kaufen"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.immowelt.de/robots.txt"
+        allowed_paths: ["/liste", "/expose"]
+        disallowed_paths: []
+
+    - id: "imovirtual_pt"
+      name: "Imovirtual"
+      base_url: "https://www.imovirtual.com"
+      type: "html_browser"
+      enabled: true
+      countries: ["PT"]
+      search_url_template: "https://www.imovirtual.com/pt/venda/moradia/{slug}/"
+      rate_limit:
+        requests: 1
+        period_seconds: 5
+      compliance:
+        robots_txt_url: "https://www.imovirtual.com/robots.txt"
+        allowed_paths: ["/pt/venda", "/pt/arrendar"]
+        disallowed_paths: []

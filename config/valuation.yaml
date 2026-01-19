@@ -23,7 +23,7 @@ valuation:
 
   horizons_months: [12, 36, 60]
 
-  forecast_mode: "analytic"
+  forecast_mode: "tft"
   forecast_index_source: "market"
   tft_model_path: ${paths.tft_model_path}
 
