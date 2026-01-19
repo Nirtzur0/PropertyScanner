@@ -24,8 +24,9 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
+        browser_max_concurrency = int(
+            config.get("browser_max_concurrency", 6)
+        )
         
         self.scrape_client = ScrapeClient(
             source_id="onthemarket",
@@ -33,7 +34,6 @@ class OnTheMarketCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
             rate_limit_seconds=float(config.get("period_seconds", 5)),
-            max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )

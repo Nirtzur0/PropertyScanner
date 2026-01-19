@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -61,9 +60,9 @@ class FusionPool:
         self,
         *,
         app_config: AppConfig,
-        max_workers: int,
-        run_vlm: bool,
-        vlm_concurrency: int,
+        max_workers: int = 4,
+        run_vlm: bool = True,
+        vlm_concurrency: int = 1,
     ) -> None:
         self.run_vlm = run_vlm
         self.max_workers = max(1, int(max_workers))
@@ -403,7 +402,7 @@ def run_backfill(
     max_listings: int = 0,
     max_pages: int = 1,
     page_size: int = 24,
-    source_workers: int = 2,
+    source_workers: int = 10,
     fusion_workers: int = 4,
     vlm_concurrency: int = 1,
     run_vlm: bool = True,
@@ -462,7 +461,7 @@ def _load_plan_file(path: str) -> tuple[List[UnifiedSourcePlan], UnifiedCrawlSet
 
     settings_raw = data.get("settings", {})
     settings = UnifiedCrawlSettings(
-        source_workers=int(settings_raw.get("source_workers", 2)),
+        source_workers=int(settings_raw.get("source_workers", 10)),
         fusion_workers=int(settings_raw.get("fusion_workers", 4)),
         vlm_concurrency=int(settings_raw.get("vlm_concurrency", 1)),
         run_vlm=bool(settings_raw.get("run_vlm", True)),
@@ -510,7 +509,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--max-listings", type=int, default=0, help="Limit listings per source")
     parser.add_argument("--max-pages", type=int, default=1, help="Max search pages (where supported)")
     parser.add_argument("--page-size", type=int, default=24, help="Search page size (where supported)")
-    parser.add_argument("--source-workers", type=int, default=2, help="Parallel sources to crawl")
+    parser.add_argument("--source-workers", type=int, default=10, help="Parallel sources to crawl")
     parser.add_argument("--fusion-workers", type=int, default=4, help="Parallel fusion workers")
     parser.add_argument("--vlm-concurrency", type=int, default=1, help="Concurrent VLM requests")
     parser.add_argument("--no-fusion", action="store_true", help="Disable LLM/VLM fusion")

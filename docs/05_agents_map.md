@@ -44,7 +44,7 @@ Listing normalizers (source-specific)
 - Normalize raw HTML/JSON into `CanonicalListing` with consistent fields.
 
 Market and official agents
-- `OfficialSourcesAgent`: ingests INE/ERI registral data into market tables.
+- `OfficialSourcesAgent`: ingests INE/ERI/UK/IT official metrics into `official_metrics`.
 - `MacroEvidenceAgent`: macro forecasts with cite-or-drop guarantees.
 
 Analysis agents

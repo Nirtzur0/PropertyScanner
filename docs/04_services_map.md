@@ -102,13 +102,13 @@ Listings services
 
 Market services
 - `TransactionsIngestService`: sold price/status updates into `listings`.
-- `RegistryIngestService`: official registral metrics ingestion.
+- `RegistryIngestService`: official metrics ingestion into `official_metrics` (INE/ERI/UK/IT).
 - `MacroDataService`: macro indicators ingestion and normalization.
 - `MarketIndexService`: price and rent indices per region.
 - `HedonicIndexService`: time-safe hedonic index construction.
 - `AreaIntelligenceService`: area sentiment/development signals (official + geohash local).
 - `MarketAnalyticsService`: snapshot metrics (liquidity/momentum/catchup).
-- `ERISignalsService`: derived registral liquidity signals (ERI).
+- `ERISignalsService`: derived liquidity signals from ERI official metrics.
 
 Valuation and forecasting services
 - `ForecastingService`: time-series projections for price and rent.

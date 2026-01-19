@@ -178,6 +178,8 @@ class TFTForecaster(nn.Module):
         
         # Add region embedding via addition (static covariate)
         # (Simplified - full TFT uses more sophisticated fusion)
+        region_context = region_emb.repeat(1, 1, 4)
+        x = x + region_context
         
         # Encode
         encoded, _ = self.encoder(x)
@@ -229,22 +231,52 @@ class TFTForecastingService:
         self.config = config
         self.model = None
         self.region_map = {}
+        self.data_source = None
         
-    def _load_training_data(self) -> pd.DataFrame:
-        """Load and prepare training data from hedonic indices"""
+    def _load_training_data(
+        self,
+        *,
+        data_source: Optional[str] = None,
+        allow_fallback: bool = False,
+    ) -> Tuple[pd.DataFrame, str]:
+        """Load and prepare training data from hedonic indices (fallback to official metrics)."""
         repo = MarketDataRepository(db_path=self.db_path)
         try:
-            return repo.load_tft_training_data()
+            source = str(data_source).strip().lower() if data_source else None
+            if source == "official":
+                return repo.load_tft_official_data(), "official"
+            if source == "hedonic":
+                return repo.load_tft_training_data(), "hedonic"
+
+            df = repo.load_tft_training_data()
+            if not allow_fallback:
+                return df, "hedonic"
+
+            min_rows = max(50, self.config.context_length + 1)
+            if len(df) >= min_rows:
+                return df, "hedonic"
+
+            fallback = repo.load_tft_official_data()
+            if not fallback.empty:
+                logger.warning(
+                    "tft_data_source_fallback",
+                    hedonic_rows=len(df),
+                    official_rows=len(fallback),
+                )
+                return fallback, "official"
+
+            return df, "hedonic"
         except Exception as e:
             logger.warning("tft_training_data_load_failed", error=str(e))
-            return pd.DataFrame()
+            return pd.DataFrame(), "hedonic"
     
     def train(self, epochs: int = 100, lr: float = 0.001):
         """Train the TFT model"""
-        df = self._load_training_data()
+        df, data_source = self._load_training_data(allow_fallback=True)
+        self.data_source = data_source
         
         if len(df) < 50:
-            logger.warning("insufficient_data_for_tft", count=len(df))
+            logger.warning("insufficient_data_for_tft", count=len(df), data_source=data_source)
             return
         
         # Build region map
@@ -320,7 +352,8 @@ class TFTForecastingService:
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'region_map': self.region_map,
-            'config': config_payload
+            'config': config_payload,
+            'data_source': self.data_source,
         }, self.model_path)
         
         logger.info("tft_training_complete", model_path=self.model_path)
@@ -338,16 +371,38 @@ class TFTForecastingService:
             return {}
         
         # Get recent history
-        df = self._load_training_data()
+        data_source = self.data_source or "hedonic"
+        df, _ = self._load_training_data(data_source=data_source, allow_fallback=False)
         if df.empty or "region_id" not in df.columns:
             return {}
-        region_df = df[df['region_id'] == region_id].tail(self.config.context_length)
-        
+
+        region_key = str(region_id).strip().lower() if region_id else ""
+        region_df = df[df['region_id'] == region_key].tail(self.config.context_length)
+
         if len(region_df) < self.config.context_length:
-            return {}
+            fallback_key = None
+            for candidate in ("all", "national"):
+                if candidate == region_key:
+                    continue
+                candidate_df = df[df["region_id"] == candidate].tail(self.config.context_length)
+                if len(candidate_df) >= self.config.context_length:
+                    fallback_key = candidate
+                    region_df = candidate_df
+                    break
+            if fallback_key:
+                logger.warning("tft_region_fallback", requested=region_id, used=fallback_key)
+                region_key = fallback_key
+            else:
+                return {}
         
         # Prepare tensors
-        region_idx = self.region_map.get(region_id, 0)
+        region_idx = self.region_map.get(region_key)
+        if region_idx is None:
+            if self.region_map:
+                region_idx = next(iter(self.region_map.values()))
+                logger.warning("tft_region_missing", requested=region_id, used=region_key)
+            else:
+                region_idx = 0
         region_tensor = torch.tensor([region_idx])
         
         price_seq = torch.tensor(region_df['hedonic_index_sqm'].values, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
@@ -381,7 +436,7 @@ class TFTForecastingService:
         """Load trained model from disk"""
         try:
             try:
-                checkpoint = torch.load(self.model_path)
+                checkpoint = torch.load(self.model_path, map_location="cpu")
             except Exception as e:
                 # PyTorch 2.6 defaults `weights_only=True` and may reject older checkpoints
                 # that contain custom Python objects. Fall back to full load for local files.
@@ -395,11 +450,14 @@ class TFTForecastingService:
                             setattr(main_module, "TFTConfig", TFTConfig)
                     except Exception:
                         pass
-                    checkpoint = torch.load(self.model_path, weights_only=False)
+                    checkpoint = torch.load(self.model_path, weights_only=False, map_location="cpu")
                 except TypeError:
                     raise e
 
             self.region_map = checkpoint.get('region_map', {})
+            self.data_source = checkpoint.get("data_source")
+            if self.data_source is not None:
+                self.data_source = str(self.data_source).strip().lower()
 
             raw_config = checkpoint.get('config')
             if isinstance(raw_config, dict):
@@ -429,6 +487,7 @@ class TFTForecastingService:
                         "model_state_dict": checkpoint.get("model_state_dict"),
                         "region_map": self.region_map,
                         "config": config_payload,
+                        "data_source": self.data_source,
                     }
                     torch.save(safe_checkpoint, self.model_path)
                     logger.info("tft_checkpoint_upgraded", path=self.model_path)

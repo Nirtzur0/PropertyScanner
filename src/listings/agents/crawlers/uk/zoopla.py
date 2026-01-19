@@ -16,7 +16,7 @@ logger = structlog.get_logger(__name__)
 
 class ZooplaCrawlerAgent(BaseAgent):
     """
-    Crawls Zoopla (UK) using curl_cffi to bypass TLS fingerprinting protections.
+    Crawls Zoopla (UK) using ScrapeClient (Pydoll browser engine).
     """
 
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
@@ -29,8 +29,9 @@ class ZooplaCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
+        browser_max_concurrency = int(
+            config.get("browser_max_concurrency", 6)
+        )
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "zoopla_uk"),
             base_url=self.base_url,
@@ -38,7 +39,6 @@ class ZooplaCrawlerAgent(BaseAgent):
             user_agent=self.user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
-            max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )

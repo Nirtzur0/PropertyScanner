@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
+import structlog
+
+
+logger = structlog.get_logger(__name__)
+
 
 BrowserTask = Callable[["Tab"], Awaitable[Any]]
 BrowserPreflight = Callable[[str], Awaitable[bool]]
@@ -364,7 +369,11 @@ class BrowserEngine:
                     browser, initial_tab, is_remote, force_new=True
                 )
                 tab_state = await self._prepare_tab(tab)
-                results[idx] = await task(tab)
+                try:
+                    results[idx] = await task(tab)
+                except Exception as exc:
+                    results[idx] = None
+                    logger.warning("browser_task_failed", error=str(exc))
             finally:
                 if tab and tab_state:
                     await self._cleanup_tab(tab, tab_state)

@@ -17,7 +17,7 @@ class MarketDataRepository(RepositoryBase):
 
         joins = []
         select_fields = [
-            "hi.region_id",
+            "LOWER(hi.region_id) as region_id",
             "hi.month_date",
             "hi.hedonic_index_sqm",
         ]
@@ -44,6 +44,45 @@ class MarketDataRepository(RepositoryBase):
             FROM hedonic_indices hi
             {" ".join(joins)}
             ORDER BY hi.region_id, hi.month_date
+        """
+        return pd.read_sql(text(query), self.engine)
+
+    def load_tft_official_data(self) -> pd.DataFrame:
+        if not self.has_table("official_metrics"):
+            return pd.DataFrame()
+
+        has_macro = self.has_table("macro_indicators")
+        has_cpi = self.has_column("macro_indicators", "spain_cpi") if has_macro else False
+
+        joins = []
+        select_fields = [
+            "LOWER(om.region_id) as region_id",
+            "om.period_date as month_date",
+            "om.value as hedonic_index_sqm",
+            "NULL as inventory_count",
+        ]
+
+        if has_macro:
+            select_fields.append("mac.euribor_12m")
+            if has_cpi:
+                select_fields.append("COALESCE(mac.spain_cpi, 2.5) as inflation")
+            else:
+                select_fields.append("2.5 as inflation")
+            joins.append("LEFT JOIN macro_indicators mac ON om.period_date = mac.date")
+        else:
+            select_fields.append("NULL as euribor_12m")
+            select_fields.append("2.5 as inflation")
+
+        query = f"""
+            SELECT {", ".join(select_fields)}
+            FROM official_metrics om
+            {" ".join(joins)}
+            WHERE om.provider_id = 'ine_ipv'
+              AND om.metric = 'index'
+              AND om.housing_type = 'general'
+              AND om.period_date IS NOT NULL
+              AND om.region_id IS NOT NULL
+            ORDER BY region_id, month_date
         """
         return pd.read_sql(text(query), self.engine)
 

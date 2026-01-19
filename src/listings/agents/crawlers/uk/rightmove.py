@@ -26,8 +26,9 @@ class RightmoveCrawlerAgent(BaseAgent):
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
         user_agent = config.get("user_agent", "PropertyScanner/1.0")
-        max_workers = int(config.get("max_workers", 6))
-        browser_max_concurrency = int(config.get("browser_max_concurrency", max_workers))
+        browser_max_concurrency = int(
+            config.get("browser_max_concurrency", 6)
+        )
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "rightmove_uk"),
             base_url=self.base_url,
@@ -35,7 +36,6 @@ class RightmoveCrawlerAgent(BaseAgent):
             user_agent=user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
             browser_wait_s=float(config.get("browser_wait_s", 8.0)),
-            max_workers=max_workers,
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )

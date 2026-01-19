@@ -35,7 +35,7 @@ flowchart LR
         Hedonic["HedonicIndexService"]
         Area["AreaIntelligenceService"]
         MarketAnalytics["MarketAnalyticsService"]
-        Gov["OfficialSourcesAgent (INE/ERI)"]
+        Gov["OfficialSourcesAgent (official metrics)"]
     end
 
     subgraph ML
@@ -55,7 +55,7 @@ flowchart LR
         Seen[("unified_seen_urls.sqlite3")]
         VectorIndex[("vector_index.lancedb + metadata")]
         MarketTables[("market/hedonic/macro/area tables")]
-        GovData[("ine_ipv + eri_metrics")]
+        GovData[("official_metrics (provider_id)")]
         Runs[("pipeline_runs")]
         AgentRuns[("agent_runs")]
         ModelArtifacts[("models/fusion_model.pt + fusion_config.json")]
@@ -98,7 +98,7 @@ flowchart LR
 ```
 
 ## System components at a glance
-- Acquisition: Crawl backfill workflow via `ScrapeClient` (Pydoll) plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for government stats.
+- Acquisition: Crawl backfill workflow via `ScrapeClient` (Pydoll) plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for official metrics (INE/ERI/UK/IT).
 - Processing: Normalize listings, fuse VLM signals, ingest sold transactions, then persist via StorageService.
 - Data: SQLite is the system of record; `pipeline_runs` tracks operational health and `agent_runs` stores cognitive run history.
 - Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
@@ -109,7 +109,7 @@ flowchart LR
 - Interfaces: CLI, API, and dashboard entry points.
 - Agents: LangGraph tools, the orchestrator, and analyst agents.
 - Listings: Crawl/normalize/enrich listings, `ScrapeClient` + `BrowserEngine` (Pydoll), listing repos, crawl workflows.
-- Market: Macro/indices/registry signals, market repos, market workflows.
+- Market: Macro/indices/official metrics signals, market repos, market workflows.
 - Valuation: Retrieval + valuation services, calibration/backfill/indexing workflows.
 - ML: Models/encoders and training pipelines.
 - Platform: Config/settings, storage + migrations, pipeline state/runs.

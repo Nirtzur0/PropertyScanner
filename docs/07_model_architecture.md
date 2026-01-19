@@ -72,7 +72,7 @@ The model predicts price relative to the market:
 - A robust comp baseline (MAD-filtered weighted median) is computed outside the model.
 - The model predicts log-residuals over the baseline (`target_mode=log_residual`).
 - Comp prices are time-adjusted (hedonic for sale, rent index for rent) before baseline/residual math.
-- INE IPV anchors are used when local data is thin.
+- INE IPV anchors (from `official_metrics` with `provider_id=ine_ipv`) are used when local data is thin.
 
 ### 2. Quantile regression and uncertainty
 The model outputs a distribution, not a single number:
@@ -108,7 +108,7 @@ flowchart LR
 ```
 
 - **Income blend** uses local yield distributions and weights by rent comp coverage/variance.
-- **Area adjustment** nudges valuation using sentiment and development scores derived from official ERI/INE data, with freshness and credibility scaling.
+- **Area adjustment** nudges valuation using sentiment and development scores derived from `official_metrics` (ERI/INE), with freshness and credibility scaling.
 - Evidence is recorded in `external_signals` for transparency.
 
 ## Current configuration

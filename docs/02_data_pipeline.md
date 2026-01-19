@@ -63,7 +63,7 @@ flowchart LR
     Listings[("listings")] --> MarketData["Market data workflow"]
     MarketData --> MarketTables["market_indices / hedonic_indices / macro_indicators / area_intelligence"]
 
-    Gov["OfficialSourcesAgent"] --> GovData["ine_ipv + eri_metrics"] --> MarketData
+    Gov["OfficialSourcesAgent"] --> GovData["official_metrics (provider_id)"] --> MarketData
 
     Listings --> Index["Vector index workflow"]
     Index --> VectorIndex["vector_index.lancedb + vector_metadata.json"]
@@ -106,8 +106,7 @@ Index command: `python3 -m src.interfaces.cli build-index`.
 | --- | --- | --- | --- |
 | `data/listings.db` (listings) | Primary dataset | `StorageService` | System of record |
 | `data/listings.db` (market/hedonic) | Derived indices | Market data workflow | Market + hedonic indices |
-| `data/listings.db` (ine_ipv) | Official stats | `OfficialSourcesAgent` | Benchmark anchors |
-| `data/listings.db` (eri_metrics) | Registral stats | `OfficialSourcesAgent` | Liquidity signals |
+| `data/listings.db` (official_metrics) | Official stats (INE/ERI/UK/IT) | `OfficialSourcesAgent` | Benchmark anchors + liquidity signals |
 | `data/listings.db` (pipeline_runs) | Operational logs | `PipelineRunTracker` | Run metadata |
 | `data/listings.db` (agent_runs) | Agent run memory | `CognitiveOrchestrator` | Query, plan, status, top picks |
 | `data/vector_index.lancedb` | Dense comp index (LanceDB) | Indexing workflow | Required for comps |
@@ -115,7 +114,7 @@ Index command: `python3 -m src.interfaces.cli build-index`.
 | `data/unified_seen_urls.sqlite3` | URL de-dupe | `SeenUrlStore` | Safe to delete to re-crawl |
 | `models/fusion_model.pt` | Trained fusion model | Training workflow | Required for valuation |
 | `models/fusion_config.json` | Fusion model config | Training workflow | Required for valuation |
-| `models/comp_cache.json` | Comp cache (optional) | Training workflow | Persisted comps when using retriever |
+| `models/comp_cache.json` | Comp cache (optional) | Training workflow | Created only if comp cache is enabled |
 | `models/calibration_registry.json` | Conformal calibrators | Calibration workflow | Optional |
 
 ## 5. Multimodal training at a glance

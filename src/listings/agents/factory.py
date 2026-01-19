@@ -64,18 +64,50 @@ class AgentFactory:
     }
     
     _NORMALIZERS: Dict[str, Tuple[str, str]] = {
+        # Spain
         "idealista": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "idealista_es": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "idealista_it": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "idealista_local_test": ("src.listings.agents.processors.idealista", "IdealistaNormalizerAgent"),
         "pisos_es": ("src.listings.agents.processors.pisos", "PisosNormalizerAgent"),
         "pisos": ("src.listings.agents.processors.pisos", "PisosNormalizerAgent"),
+        
+        # Italy
         "immobiliare_it": ("src.listings.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
         "immobiliare": ("src.listings.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
+        "casa_it": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # United Kingdom
         "rightmove_uk": ("src.listings.agents.processors.rightmove", "RightmoveNormalizerAgent"),
         "rightmove": ("src.listings.agents.processors.rightmove", "RightmoveNormalizerAgent"),
         "zoopla_uk": ("src.listings.agents.processors.zoopla", "ZooplaNormalizerAgent"),
         "zoopla": ("src.listings.agents.processors.zoopla", "ZooplaNormalizerAgent"),
+        "onthemarket_uk": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "onthemarket": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # France
+        "seloger_fr": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "seloger": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # USA
+        "realtor_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "realtor": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "redfin_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "redfin": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "homes_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "homes": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # Netherlands
+        "funda_nl": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "funda": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # Germany
+        "immowelt_de": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "immowelt": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        
+        # Portugal
+        "imovirtual_pt": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "imovirtual": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
     }
 
     @classmethod
@@ -106,13 +138,6 @@ class AgentFactory:
     def create_normalizer(cls, source_id: str) -> BaseAgent:
         norm_info = cls._NORMALIZERS.get(source_id)
         if not norm_info:
-            # Fallback for new agents without normalizers yet
-            # Return a dummy or generic normalizer if possible, for now we let it fail or implementation needs to follow
-            # We can map them to generic or raise error. 
-            # For this test, let's allow "generic" if not found? No, better to be strict or user will see empty data.
-            # But the user asked to test crawling mainly. 
-            # Let's see if we can use a pass-through normalizer?
-            # Or just update map.
             raise ValueError(f"No normalizer found for source_id: {source_id}")
             
         module_path, class_name = norm_info

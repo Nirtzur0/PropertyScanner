@@ -10,6 +10,7 @@ import structlog
 from bs4 import BeautifulSoup
 
 from src.listings.scraping.engine import BrowserFetcher, _run_async
+from src.listings.utils.seen_url_store import SeenUrlStore
 from src.listings.services.snapshot_storage import SnapshotService
 from src.platform.utils.compliance import ComplianceManager
 
@@ -42,17 +43,19 @@ class ScrapeClient:
         user_agent: str,
         rate_limit_seconds: float,
         browser_wait_s: float = 8.0,
-        max_workers: int = 4,
         browser_max_concurrency: Optional[int] = None,
         browser_config: Optional[dict[str, Any]] = None,
+        seen_store: Optional[SeenUrlStore] = None,
+        seen_mode: Optional[str] = None,
     ) -> None:
         self.source_id = source_id
         self.base_url = base_url
         self.compliance_manager = compliance_manager
         self.rate_limit_seconds = rate_limit_seconds
         self.snapshot_service = SnapshotService()
-        self.max_workers = max(1, int(max_workers))
-        resolved_concurrency = max(1, int(browser_max_concurrency or self.max_workers))
+        self.seen_store = seen_store or SeenUrlStore()
+        self.seen_mode = seen_mode or f"fetch:{self.source_id}"
+        resolved_concurrency = max(1, int(browser_max_concurrency or 4))
 
         self.browser_fetcher = BrowserFetcher(
             user_agent,
@@ -61,6 +64,20 @@ class ScrapeClient:
             browser_config=browser_config,
         )
         self.browser_engine = self.browser_fetcher.engine
+
+    def _filter_seen_urls(self, urls: list[str]) -> list[str]:
+        if not urls or not self.seen_store:
+            return urls
+        new_urls = self.seen_store.insert_new(self.seen_mode, urls)
+        skipped = len(urls) - len(new_urls)
+        if skipped:
+            logger.info(
+                "seen_urls_skipped",
+                source_id=self.source_id,
+                skipped=skipped,
+                kept=len(new_urls),
+            )
+        return new_urls
 
     @staticmethod
     def _running_loop() -> bool:
@@ -132,16 +149,10 @@ class ScrapeClient:
             return []
 
         deduped = list(dict.fromkeys(url_list))
-        worker_count = max_workers if max_workers is not None else self.max_workers
-        worker_count = max(1, int(worker_count))
-        worker_count = min(worker_count, len(deduped))
-
-        if worker_count <= 1:
-            results = []
-            for url in deduped:
-                html = self.fetch_html(url, retries=retries, timeout_s=timeout_s)
-                results.append(FetchResult(url=url, html=html))
-            return results
+        deduped = self._filter_seen_urls(deduped)
+        if not deduped:
+            return []
+        max_concurrency = max_workers if max_workers is not None else None
 
         async def preflight(url: str) -> bool:
             return await asyncio.to_thread(
@@ -153,7 +164,7 @@ class ScrapeClient:
                 self.browser_engine.fetch_many(
                     deduped,
                     timeout_s=timeout_s,
-                    max_concurrency=worker_count,
+                    max_concurrency=max_concurrency,
                     preflight=preflight,
                 )
             )
@@ -181,16 +192,10 @@ class ScrapeClient:
             return []
 
         deduped = list(dict.fromkeys(url_list))
-        worker_count = max_workers if max_workers is not None else self.max_workers
-        worker_count = max(1, int(worker_count))
-        worker_count = min(worker_count, len(deduped))
-
-        if worker_count <= 1:
-            results = []
-            for url in deduped:
-                html = await self.fetch_html_async(url, retries=retries, timeout_s=timeout_s)
-                results.append(FetchResult(url=url, html=html))
-            return results
+        deduped = self._filter_seen_urls(deduped)
+        if not deduped:
+            return []
+        max_concurrency = max_workers if max_workers is not None else None
 
         async def preflight(url: str) -> bool:
             return await asyncio.to_thread(
@@ -201,7 +206,7 @@ class ScrapeClient:
             browser_results = await self.browser_engine.fetch_many(
                 deduped,
                 timeout_s=timeout_s,
-                max_concurrency=worker_count,
+                max_concurrency=max_concurrency,
                 preflight=preflight,
             )
         except Exception as exc:

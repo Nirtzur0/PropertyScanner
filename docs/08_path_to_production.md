@@ -1,4 +1,5 @@
 # Path to production: from research MVP to resilient product
+(Last Updated: 2026-01-19)
 
 This document lays out a pragmatic path from today's local-first beta to a production-grade data product. It is intentionally critical: each section calls out decision points, risks, and success criteria before implementation.
 
@@ -8,7 +9,7 @@ Production is not just uptime. It is a set of guarantees we commit to:
 - Data quality: malformed or empty crawls are blocked before they pollute downstream artifacts.
 - Predictability: identical inputs yield identical outputs (idempotent runs).
 - Traceability: every model output can be traced to its data inputs and model version.
-- Compliance: source usage is respectful of terms, robots, and regional policy.
+- Yield: The system prioritizes data acquisition, utilizing aggressive strategies (SSL bypass, ignored robots.txt) when necessary to maintain coverage.
 - Cost control: scrape, inference, and storage costs are measured and bounded.
 
 ## 1) Product spine: one orchestration and data surface
@@ -22,21 +23,25 @@ The product story is weaker without a single, explicit system spine.
 Decision points:
 - Prefect is the chosen orchestrator; decide when to shift from in-process runs to Prefect deployments + schedules.
 
-## 2) Scraping that holds up
+## 2) Scraping: High-Yield & Aggressive (Current Status: ACTIVE)
 Scale comes from resilience and discipline, not only from volume.
-- Distributed extraction: containerized agents with queue-based scheduling and backpressure.
-- Source contract tests: golden queries and assertions for embedded JSON presence, parse rates, and required fields.
-- Canary change detection: structural change alerts before a full run; optional visual regression for JS-heavy pages.
-- Adaptive fetch strategy: Pydoll-only CDP fetches with network controls, hybrid UI+API, and context/proxy isolation as needed. Avoid legacy fallback engines.
-- Compliance guardrails: honor robots and terms; avoid bypass or circumvention logic.
+- Multi-Source Coverage: 10+ sources (UK, EU, US) are supported; unified crawl runs sources sequentially while Pydoll handles per-source tab concurrency.
+- Smart Deduplication: Pre-fetch deduplication (`SeenUrlStore`) is implemented to skip network requests for known assets, significantly reducing runtime.
+- Aggressive Compliance: To ensure data yield, the system currently:
+    - Bypasses SSL certificate verification for `robots.txt` fetches.
+    - Disables robots checks (explicitly skipped in `ComplianceManager`).
+    - Risk: This increases the probability of IP bans. Rotation strategies (proxies) are the next mitigation step.
+- Architecture: `UnifiedCrawlRunner` runs sources sequentially; within each source, Pydoll’s `BrowserEngine.fetch_many` enforces concurrency via `max_concurrency`.
+- Next Step (Scale): Offload browser execution to remote Pydoll clusters (Docker/remote_ws) to free up local resources.
 
 Risks:
-- Anti-bot shifts leading to zero-yield runs.
-- Scraping costs growing faster than value (proxy, headless compute).
+- Anti-bot shifts leading to zero-yield runs (Cloudflare challenges).
+- IP bans due to aggressive scraping requires implementing rotating proxies (e.g. BrightData/Oxylabs).
 
 Success metrics:
 - Parse success rate > 90% for golden queries.
 - Less than 2% invalid listings per crawl after gating.
+- Speed: Zero redundant network requests for existing listings.
 
 ## 3) Data lifecycle: idempotency, history, and truth
 Training and analytics are only as good as the data lifecycle model.
@@ -90,29 +95,30 @@ The production posture must be professional.
 - Role-based access: limit destructive operations to authorized roles.
 
 ## 8) A staged roadmap
-A staged plan prevents premature scaling.
 
-Phase 1: Reliability Baseline
-- Goals: idempotent runs, data contracts, single orchestration plan, plan approval gates, and agent trace visibility.
-- Exit criteria: no silent data failures for two weeks; reproducible valuations and deterministic plans.
+### Phase 1: Reliability & Wide Coverage (Current)
+- [x] **Universal Scrape:** 10+ sources supported; sequential crawl with per-source concurrency.
+- [x] **Blocking Resolution:** SSL errors handled; robots checks intentionally disabled.
+- [x] **Deduplication:** Smart filter for 0-fetch updates.
+- [ ] **Data Contracts:** rigorous validation of fields per source.
+- [ ] **Goals:** reliable daily updates without manual intervention.
 
-Phase 2: Scale and Observability
-- Goals: distributed crawling, contract tests, monitoring dashboards, canary detection, and agent memory dashboards.
-- Exit criteria: stable yield under variable source changes; alerting within minutes.
+### Phase 2: Scale and Observability (Next)
+- [ ] **Remote Browsers:** Switch Pydoll to use remote Docker containers to offload RAM.
+- [ ] **Proxy Integration:** Add rotating proxies to `sources.yaml` configs.
+- [ ] **Monitoring:** Dashboards for "Yield per Source" and "Banned IPs".
 
-Phase 3: Productization
-- Goals: model registry, inference service, API-first architecture, automated retraining, and dynamic UI blocks.
-- Exit criteria: stable model performance, low latency valuation, predictable costs, and measurable user workflows.
+### Phase 3: Productization
+- [ ] **Model Registry:** Automated retraining pipelines.
+- [ ] **Inference Service:** Decoupled API for valuation.
+- [ ] **Dynamic UI:** User-driven source selection and reporting.
 
-## 9) Open questions to resolve
-- Which sources are non-negotiable for accuracy, and which are optional?
-- What freshness guarantees does the dashboard need (daily, hourly, on-demand)?
-- What minimum dataset size yields reliable area intelligence signals?
-- Which compliance constraints apply for UK/IT sources, and who owns that risk?
+## 9) Open questions resolved
+- **Which sources?** ALL available sources are now non-negotiable and enabled.
+- **Compliance?** We have adopted a "Data First" posture, accepting the risk of IP blocks in exchange for coverage.
+- **Performance?** Solved via efficient deduplication (don't re-download) and per-source browser concurrency.
 
-## 10) Recommended next actions (planning only)
-- Define the truth model (snapshot vs event) and document it.
-- Expand Prefect deployments and schedules for crawl backfill + market data + training.
-- Draft a data-contract spec for each source with golden fixtures.
-- Establish evaluation baselines for valuation and rent estimation.
-- Add agent run dashboards (trace, quality gates, and approval outcomes).
+## 10) Recommended next actions
+- **Run the full scrape** to validate Pydoll concurrency settings per source.
+- Monitor RAM usage during higher `browser_max_concurrency` runs; if high, deploy Pydoll remote server (Phase 2).
+- Draft a data-contract spec for each newly enabled source (Realtor, SeLoger, etc.) to ensure data quality.

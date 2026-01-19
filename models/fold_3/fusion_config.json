@@ -1,7 +1,0 @@
-{
-  "hidden_dim": 64,
-  "image_dim": 512,
-  "num_heads": 2,
-  "tabular_dim": 11,
-  "text_dim": 384
-}

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import Any, Optional
 
 import structlog
@@ -28,11 +27,6 @@ class BrowserFetcher:
             max_concurrency=max_concurrency,
         )
         self._engine = BrowserEngine(self._engine_config)
-        self._semaphore = (
-            threading.BoundedSemaphore(max_concurrency)
-            if max_concurrency and max_concurrency > 0
-            else None
-        )
 
     def is_available(self) -> bool:
         return self._engine.is_available()
@@ -43,9 +37,6 @@ class BrowserFetcher:
 
     def fetch(self, url: str, *, timeout_s: float = 30.0) -> Optional[str]:
         try:
-            if self._semaphore:
-                with self._semaphore:
-                    return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
             return _run_async(self._engine.fetch_html(url, timeout_s=timeout_s))
         except RuntimeError as exc:
             if str(exc) == "pydoll_fetch_in_running_loop":

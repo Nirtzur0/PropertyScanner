@@ -32,13 +32,13 @@ graph TD
 
 ### 1. `ScrapeClient`
 The high-level orchestrator used by all crawlers.
-*   **Role**: Manages batching (`fetch_html_batch`), compliance checks, and per-source concurrency.
+*   **Role**: Manages batching (`fetch_html_batch`), compliance checks, per-source concurrency, and pre-fetch URL de-duplication via `SeenUrlStore`.
 *   **Usage**: `client.fetch_html(url)` or `client.fetch_html_batch([urls])`.
 *   **Config**: Accepts `browser_config` to override the browser engine for a source.
 
 ### 2. `BrowserFetcher`
 Thin sync wrapper around the async browser engine.
-*   **Role**: Binds `BrowserEngineConfig`, enforces a bounded semaphore, and bridges sync crawlers to async Pydoll.
+*   **Role**: Binds `BrowserEngineConfig` and bridges sync crawlers to async Pydoll; concurrency is enforced inside `BrowserEngine` via `max_concurrency`.
 *   **Behavior**: Throws if invoked inside an active event loop to avoid nested async usage.
 
 ### 3. `BrowserEngine` (Pydoll/CDP)
