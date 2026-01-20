@@ -7,7 +7,7 @@ sources:
       name: "Idealista Local Test"
       base_url: "file:///Users/nirtzur/Documents/projects/property_scanner/tests/fixtures/idealista_sample.html"
       type: "html_browser"
-      enabled: true
+      enabled: false
       rate_limit:
         requests: 10
         period_seconds: 1
@@ -20,7 +20,7 @@ sources:
       name: "Idealista"
       base_url: "https://www.idealista.com"
       type: "html_browser" # Will likely need browser automation
-      enabled: true
+      enabled: false
       countries: ["ES"]
       search_path_template: "/venta-viviendas/{slug}/"
       rate_limit:
@@ -35,7 +35,7 @@ sources:
       name: "Idealista Italy"
       base_url: "https://www.idealista.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_path_template: "/vendita-case/{slug}/"
       rate_limit:
@@ -97,7 +97,7 @@ sources:
       name: "Immobiliare.it"
       base_url: "https://www.immobiliare.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_url_template: "https://www.immobiliare.it/vendita-case/{slug}/"
       rate_limit:
@@ -112,7 +112,7 @@ sources:
       name: "OnTheMarket"
       base_url: "https://www.onthemarket.com"
       type: "html_browser"
-      enabled: false
+      enabled: true
       countries: ["GB"]
       browser_max_concurrency: 8
       search_url_template: "https://www.onthemarket.com/for-sale/property/{slug}/"
@@ -128,7 +128,7 @@ sources:
       name: "Casa.it"
       base_url: "https://www.casa.it"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["IT"]
       search_url_template: "https://www.casa.it/vendita/residenziale/{slug}/"
       rate_limit:
@@ -143,7 +143,7 @@ sources:
       name: "SeLoger"
       base_url: "https://www.seloger.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["FR"]
       search_url_template: "https://www.seloger.com/list/achat/paris/{slug}/"
       rate_limit:
@@ -158,7 +158,7 @@ sources:
       name: "Realtor.com"
       base_url: "https://www.realtor.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.realtor.com/realestateandhomes-search/{slug}/"
       rate_limit:
@@ -174,7 +174,7 @@ sources:
       name: "Redfin"
       base_url: "https://www.redfin.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.redfin.com/city/{slug}/"
       rate_limit:
@@ -189,7 +189,7 @@ sources:
       name: "Homes.com"
       base_url: "https://www.homes.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["US"]
       search_url_template: "https://www.homes.com/{slug}/sold/"
       rate_limit:
@@ -204,7 +204,7 @@ sources:
       name: "Funda"
       base_url: "https://www.funda.nl"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["NL"]
       search_url_template: "https://www.funda.nl/koop/{slug}/"
       rate_limit:
@@ -219,7 +219,7 @@ sources:
       name: "Immowelt"
       base_url: "https://www.immowelt.de"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["DE"]
       search_url_template: "https://www.immowelt.de/liste/{slug}/kaufen"
       rate_limit:
@@ -234,7 +234,7 @@ sources:
       name: "Imovirtual"
       base_url: "https://www.imovirtual.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["PT"]
       search_url_template: "https://www.imovirtual.com/comprar/{slug}/"
       rate_limit:
@@ -270,7 +270,7 @@ sources:
       name: "Pararius"
       base_url: "https://www.pararius.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["NL"]
       search_url_template: "https://www.pararius.com/apartments/nederland"
       rate_limit:
@@ -289,7 +289,7 @@ sources:
       name: "Sreality"
       base_url: "https://www.sreality.cz"
       type: "html_browser"
-      enabled: false
+      enabled: true
       countries: ["CZ"]
       search_url_template: "https://www.sreality.cz/en/search/for-sale/apartments"
       rate_limit:
@@ -308,7 +308,7 @@ sources:
       name: "Otodom"
       base_url: "https://www.otodom.pl"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["PL"]
       search_url_template: "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/cala-polska"
       rate_limit:
@@ -317,6 +317,8 @@ sources:
       browser_config:
         headless: true
         stealth: true
+        consent_selector: "#onetrust-accept-btn-handler"
+        consent_wait_s: 3.0
       compliance:
         robots_txt_url: "https://www.otodom.pl/robots.txt"
         allowed_paths: ["/pl/wyniki"]

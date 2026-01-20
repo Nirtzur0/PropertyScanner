@@ -28,15 +28,28 @@ class OtodomNormalizerAgent(BaseAgent):
         for script in soup.find_all("script", type="application/ld+json"):
             try:
                 data = json.loads(script.string)
-                # Sometimes it's a list, sometimes single object
-                # Look for @type: Product or Apartment or RealEstateListing
+                candidates = []
+                
                 if isinstance(data, list):
-                     for item in data:
-                         if isinstance(item, dict) and item.get("@type") in ["Product", "Apartment", "RealEstateListing", "Offer"]:
-                             json_ld = item
-                             break
+                    candidates = data
                 elif isinstance(data, dict):
-                     json_ld = data
+                    if "@graph" in data and isinstance(data["@graph"], list):
+                        candidates = data["@graph"]
+                    else:
+                        candidates = [data]
+                
+                for item in candidates:
+                    # Type can be string or list
+                    type_val = item.get("@type")
+                    is_listing = False
+                    if isinstance(type_val, str) and type_val in ["Product", "Apartment", "RealEstateListing", "Offer"]:
+                        is_listing = True
+                    elif isinstance(type_val, list) and any(t in ["Product", "Apartment", "RealEstateListing", "Offer"] for t in type_val):
+                        is_listing = True
+                    
+                    if is_listing:
+                        json_ld = item
+                        break
                 
                 if json_ld:
                     break
@@ -61,6 +74,32 @@ class OtodomNormalizerAgent(BaseAgent):
             
             # Address sometimes deeply nested
             # fallback to HTML for address if JSON is simple
+            
+            # Extract Features (Area, Rooms) from additionalProperty
+            if json_ld.get("additionalProperty"):
+                for prop in json_ld["additionalProperty"]:
+                    name = prop.get("name")
+                    val = prop.get("value")
+                    if not name or not val:
+                        continue
+                    
+                    if name == "Powierzchnia":
+                        # e.g. "55.6 m²"
+                        match = re.search(r"([\d.,]+)", str(val))
+                        if match:
+                            try:
+                                result["surface_area_sqm"] = float(match.group(1).replace(",", "."))
+                            except:
+                                pass
+                    elif name == "Liczba pokoi":
+                        # e.g. "3 "
+                        match = re.search(r"(\d+)", str(val))
+                        if match:
+                            try:
+                                result["bedrooms"] = int(match.group(1))
+                            except:
+                                pass
+
         
         # Fallback / Supplement with HTML selectors
 

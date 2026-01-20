@@ -270,6 +270,7 @@ class UnifiedCrawlRunner:
             "normalized": len(canonical_listings),
             "saved": saved,
             "invalid": len(invalid),
+            "invalid_details": invalid,
             "errors": errors,
         }
 

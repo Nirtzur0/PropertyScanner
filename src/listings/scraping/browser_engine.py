@@ -66,6 +66,9 @@ class BrowserEngineConfig:
     retry_exponential_backoff: bool = True
     maximize_stealth: bool = True
     maximize_speed: bool = True
+    consent_selector: Optional[str] = None
+    consent_wait_s: float = 2.0
+    consent_click_iframe: bool = False
     network: BrowserNetworkConfig = field(default_factory=BrowserNetworkConfig)
 
     @classmethod
@@ -108,6 +111,9 @@ class BrowserEngineConfig:
             retry_exponential_backoff=bool(payload.get("retry_exponential_backoff", True)),
             maximize_stealth=bool(payload.get("maximize_stealth", True)),
             maximize_speed=bool(payload.get("maximize_speed", True)),
+            consent_selector=payload.get("consent_selector"),
+            consent_wait_s=float(payload.get("consent_wait_s", 2.0)),
+            consent_click_iframe=bool(payload.get("consent_click_iframe", False)),
             network=BrowserNetworkConfig(
                 block_resource_types=tuple(
                     network_payload.get(
@@ -667,6 +673,21 @@ class BrowserEngine:
                 await tab.go_to(url, timeout=int(timeout_s))
         else:
             await tab.go_to(url, timeout=int(timeout_s))
+            
+        if self.config.consent_selector:
+            try:
+                from pydoll.constants import By
+                # Give it a moment to appear
+                await asyncio.sleep(3.0) 
+                logger.info(f"Attempting consent click: {self.config.consent_selector}")
+                element = await tab.find_element(By.CSS_SELECTOR, self.config.consent_selector)
+                await element.click()
+                logger.info("Consent button clicked")
+                if self.config.consent_wait_s:
+                    await asyncio.sleep(self.config.consent_wait_s)
+            except Exception as exc:
+                logger.debug(f"Consent click skipped: {exc}")
+
         if self.config.wait_s:
             await asyncio.sleep(self.config.wait_s)
         return await tab.page_source
