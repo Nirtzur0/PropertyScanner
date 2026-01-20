@@ -20,6 +20,7 @@ class SrealityCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance: ComplianceManager):
         super().__init__(name="SrealityCrawler", config=config)
         self.compliance = compliance
+        self.source_id = config.get("id", "sreality_cz")
         self.base_url = config.get("base_url", "https://www.sreality.cz")
         self.user_agent = config.get(
             "user_agent",
@@ -30,7 +31,7 @@ class SrealityCrawlerAgent(BaseAgent):
         )
         
         self.scrape_client = ScrapeClient(
-            source_id="sreality_cz",
+            source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
@@ -57,54 +58,70 @@ class SrealityCrawlerAgent(BaseAgent):
             return None
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
+        listing_urls = list(input_payload.get("target_urls") or [])
         start_urls = []
-        if input_payload.get("start_url"):
-            start_urls.append(input_payload["start_url"])
-        else:
-            # Default search path
+        raw_start_urls = input_payload.get("start_urls") or []
+        for url in raw_start_urls:
+            url = str(url)
+            if not url.startswith("http"):
+                url = f"{self.base_url}{url}" if url.startswith("/") else f"{self.base_url}/{url}"
+            start_urls.append(url)
+        start_url = input_payload.get("start_url") or input_payload.get("search_url")
+        if start_url:
+            start_url = str(start_url)
+            if not start_url.startswith("http"):
+                start_url = (
+                    f"{self.base_url}{start_url}"
+                    if start_url.startswith("/")
+                    else f"{self.base_url}/{start_url}"
+                )
+            start_urls.append(start_url)
+        if not start_urls and not listing_urls:
             start_urls.append(f"{self.base_url}/en/search/for-sale/apartments")
 
-        listing_urls = []
-        if input_payload.get("target_urls"):
-            listing_urls = input_payload["target_urls"]
-        else:
-            # Crawl start URLs to find listings
-            for start_url in start_urls:
-                html = self._fetch_url(start_url)
-                if html:
-                    try:
-                        debug_path = self.scrape_client.build_raw_listing(
-                            external_id=f"search_sreality_{int(datetime.now().timestamp())}",
-                            url=start_url,
-                            html=html,
-                            snapshot_ext="html"
-                        )
-                        logger.info("sreality_search_snapshot_saved", path=debug_path)
-                    except Exception:
-                        pass
-
-                    extracted = self.scrape_client.extract_links(
-                        html,
-                        self.link_extractor_spec,
+        errors = []
+        if not listing_urls:
+            for url in start_urls:
+                html = self._fetch_url(url)
+                if not html:
+                    errors.append(f"fetch_failed:{url}")
+                    continue
+                try:
+                    debug_path = self.scrape_client.build_raw_listing(
+                        external_id=f"search_sreality_{int(datetime.utcnow().timestamp())}",
+                        url=url,
+                        html=html,
+                        snapshot_ext="html"
                     )
-                    # Sreality often has relative links /en/detail/..., scrape_client usually handles this if configured,
-                    # but let's ensure full URLs are formed.
-                    # This is actually handled by scrape_client.extract_links if base_url is set correctly.
-                    listing_urls.extend(extracted)
+                    logger.info("sreality_search_snapshot_saved", path=debug_path)
+                except Exception:
+                    pass
+
+                extracted = self.scrape_client.extract_links(
+                    html,
+                    self.link_extractor_spec,
+                )
+                listing_urls.extend(extracted)
         
         # De-duplicate
-        listing_urls = list(set(listing_urls))
+        listing_urls = list(dict.fromkeys(listing_urls))
         
         # Limit to max_listings if specified
         max_listings = input_payload.get("max_listings", 0)
         if max_listings > 0:
             listing_urls = listing_urls[:max_listings]
 
+        if not listing_urls:
+            if not errors:
+                errors.append("no_listings_found")
+            return AgentResponse(status="failure", data=[], errors=errors)
+
         results = []
         logger.info("sreality_crawling_listings", count=len(listing_urls))
         
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=45, retries=3):
             if not result.html:
+                errors.append(f"fetch_failed:{result.url}")
                 continue
             url = result.url
             html = result.html
@@ -125,13 +142,14 @@ class SrealityCrawlerAgent(BaseAgent):
             )
             
             raw_listing = RawListing(
-                source_id="sreality_cz",
+                source_id=self.source_id,
                 external_id=lid,
                 url=url,
                 html_snapshot_path=raw_path,
                 raw_data={"html_snippet": html, "is_detail_page": True},
-                fetched_at=datetime.now()
+                fetched_at=datetime.utcnow()
             )
             results.append(raw_listing)
             
-        return AgentResponse(status="success" if results else "failure", data=results)
+        status = "success" if results else "failure"
+        return AgentResponse(status=status, data=results, errors=errors)

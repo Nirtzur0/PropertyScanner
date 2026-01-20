@@ -54,6 +54,7 @@ class FundaNormalizerAgent(BaseAgent):
                 result["street"] = addr.get("streetAddress", "")
                 result["city"] = addr.get("addressLocality", "")
                 result["province"] = addr.get("addressRegion", "")
+                result["zip_code"] = addr.get("postalCode", "")
             
             # Images
             photos = json_ld_data.get("photo", [])
@@ -118,6 +119,14 @@ class FundaNormalizerAgent(BaseAgent):
                  num = match.group(1).replace(".", "")
                  result["surface_area_sqm"] = float(num)
 
+        # Bathrooms
+        # "Aantal badkamers" -> "1 badkamer" or "1 badkamer en 1 apart toilet"
+        if "aantal badkamers" in specs:
+            val = specs["aantal badkamers"]
+            match = re.search(r"(\d+)", val)
+            if match:
+                result["bathrooms"] = int(match.group(1))
+
         # Build Year
         if "bouwjaar" in specs:
             result["build_year"] = specs["bouwjaar"] # store metadata?
@@ -150,7 +159,7 @@ class FundaNormalizerAgent(BaseAgent):
                     address_full=full_address,
                     city=city,
                     country="NL",
-                    # zip code might need extra parsing from address parts or title
+                    zip_code=data.get("zip_code")
                 )
 
                 # Construct CanonicalListing
@@ -169,6 +178,7 @@ class FundaNormalizerAgent(BaseAgent):
                     image_urls=data.get("image_urls", []),
                     bedrooms=data.get("bedrooms"),
                     surface_area_sqm=data.get("surface_area_sqm"),
+                    bathrooms=data.get("bathrooms"),
                     property_type="apartment", # Default or parse
                     crawled_at=raw.fetched_at,
                     market_date=raw.fetched_at,
