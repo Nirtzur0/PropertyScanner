@@ -112,7 +112,7 @@ sources:
       name: "OnTheMarket"
       base_url: "https://www.onthemarket.com"
       type: "html_browser"
-      enabled: true
+      enabled: false
       countries: ["GB"]
       browser_max_concurrency: 8
       search_url_template: "https://www.onthemarket.com/for-sale/property/{slug}/"
@@ -264,12 +264,13 @@ sources:
         robots_txt_url: "https://www.daft.ie/robots.txt"
         allowed_paths: ["/property-for-sale"]
         disallowed_paths: []
+      listing_path_includes: ["/for-sale/"]
 
     - id: "pararius_nl"
       name: "Pararius"
       base_url: "https://www.pararius.com"
       type: "html_browser"
-      enabled: false
+      enabled: true
       countries: ["NL"]
       search_url_template: "https://www.pararius.com/apartments/nederland"
       rate_limit:
@@ -282,6 +283,7 @@ sources:
         robots_txt_url: "https://www.pararius.com/robots.txt"
         allowed_paths: ["/apartments"]
         disallowed_paths: []
+      listing_path_includes: ["/apartment/"]
 
     - id: "sreality_cz"
       name: "Sreality"
@@ -300,12 +302,13 @@ sources:
         robots_txt_url: "https://www.sreality.cz/robots.txt"
         allowed_paths: ["/en/search"]
         disallowed_paths: []
+      listing_path_includes: ["/en/detail/"]
 
     - id: "otodom_pl"
       name: "Otodom"
       base_url: "https://www.otodom.pl"
       type: "html_browser"
-      enabled: false
+      enabled: true
       countries: ["PL"]
       search_url_template: "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/cala-polska"
       rate_limit:
@@ -318,3 +321,4 @@ sources:
         robots_txt_url: "https://www.otodom.pl/robots.txt"
         allowed_paths: ["/pl/wyniki"]
         disallowed_paths: []
+      listing_path_includes: ["/pl/oferta/"]

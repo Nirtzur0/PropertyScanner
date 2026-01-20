@@ -4,7 +4,7 @@ import json
 import re
 import hashlib
 from src.platform.agents.base import BaseAgent, AgentResponse
-from src.platform.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus
+from src.platform.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus, GeoLocation
 
 class PisosNormalizerAgent(BaseAgent):
     """
@@ -356,22 +356,22 @@ class PisosNormalizerAgent(BaseAgent):
             has_elevator=has_elevator,
             # energy_rating removed
             
-            status=ListingStatus.ACTIVE
+            status=ListingStatus.ACTIVE,
+            crawled_at=raw.fetched_at,
+            market_date=raw.fetched_at
         )
         
         if lat and lon:
-            from src.platform.domain.schema import GeoLocation
             canonical.location = GeoLocation(
                 lat=lat, 
                 lon=lon, 
                 address_full=title, 
                 city=city, 
-                neighborhood="Unknown",
-                country="ES" 
+                country="ES",
+                zip_code=None
             )
         else:
             # Create location object even if incomplete, to ensure it exists for enrichment
-            from src.platform.domain.schema import GeoLocation
             canonical.location = GeoLocation(
                 lat=None,
                 lon=None,

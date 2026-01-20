@@ -14,6 +14,8 @@ class Currency(str, Enum):
     USD = "USD"
     EUR = "EUR"
     GBP = "GBP"
+    CZK = "CZK"
+    PLN = "PLN"
 
 class ListingStatus(str, Enum):
     ACTIVE = "active"

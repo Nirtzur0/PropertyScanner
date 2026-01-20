@@ -324,6 +324,8 @@ class RightmoveNormalizerAgent(BaseAgent):
             image_urls=image_urls,
             status=ListingStatus.ACTIVE,
             location=location,
+            crawled_at=raw.fetched_at,
+            market_date=raw.fetched_at,
         )
 
         posted = data.get("datePosted") or data.get("datePublished")

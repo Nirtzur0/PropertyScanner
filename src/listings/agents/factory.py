@@ -37,6 +37,7 @@ class AgentFactory:
         "zoopla": ("src.listings.agents.crawlers.uk.zoopla", "ZooplaCrawlerAgent"),
         "onthemarket_uk": ("src.listings.agents.crawlers.uk.onthemarket", "OnTheMarketCrawlerAgent"),
         "onthemarket": ("src.listings.agents.crawlers.uk.onthemarket", "OnTheMarketCrawlerAgent"),
+        "daft_ie": ("src.listings.agents.crawlers.uk.daft", "DaftCrawlerAgent"),
         
         # France
         "seloger_fr": ("src.listings.agents.crawlers.france.seloger", "SeLogerCrawlerAgent"),
@@ -53,10 +54,13 @@ class AgentFactory:
         # Netherlands
         "funda_nl": ("src.listings.agents.crawlers.netherlands.funda", "FundaCrawlerAgent"),
         "funda": ("src.listings.agents.crawlers.netherlands.funda", "FundaCrawlerAgent"),
+        "pararius_nl": ("src.listings.agents.crawlers.netherlands.pararius", "ParariusCrawlerAgent"),
         
         # Germany
         "immowelt_de": ("src.listings.agents.crawlers.germany.immowelt", "ImmoweltCrawlerAgent"),
         "immowelt": ("src.listings.agents.crawlers.germany.immowelt", "ImmoweltCrawlerAgent"),
+        "sreality_cz": ("src.listings.agents.crawlers.czech_republic.sreality", "SrealityCrawlerAgent"),
+        "otodom_pl": ("src.listings.agents.crawlers.poland.otodom", "OtodomCrawlerAgent"),
         
         # Portugal
         "imovirtual_pt": ("src.listings.agents.crawlers.portugal.imovirtual", "ImovirtualCrawlerAgent"),
@@ -75,7 +79,7 @@ class AgentFactory:
         # Italy
         "immobiliare_it": ("src.listings.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
         "immobiliare": ("src.listings.agents.processors.immobiliare", "ImmobiliareNormalizerAgent"),
-        "casa_it": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "casa_it": ("src.listings.agents.processors.casa_it", "CasaItNormalizerAgent"),
         
         # United Kingdom
         "rightmove_uk": ("src.listings.agents.processors.rightmove", "RightmoveNormalizerAgent"),
@@ -84,26 +88,30 @@ class AgentFactory:
         "zoopla": ("src.listings.agents.processors.zoopla", "ZooplaNormalizerAgent"),
         "onthemarket_uk": ("src.listings.agents.processors.onthemarket", "OnTheMarketNormalizerAgent"),
         "onthemarket": ("src.listings.agents.processors.onthemarket", "OnTheMarketNormalizerAgent"),
+        "daft_ie": ("src.listings.agents.processors.daft", "DaftNormalizerAgent"),
         
         # France
-        "seloger_fr": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "seloger": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "seloger_fr": ("src.listings.agents.processors.seloger", "SeLogerNormalizerAgent"),
+        "seloger": ("src.listings.agents.processors.seloger", "SeLogerNormalizerAgent"),
         
         # USA
-        "realtor_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "realtor": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "redfin_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "redfin": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "homes_us": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "homes": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "realtor_us": ("src.listings.agents.processors.realtor", "RealtorNormalizerAgent"),
+        "realtor": ("src.listings.agents.processors.realtor", "RealtorNormalizerAgent"),
+        "redfin_us": ("src.listings.agents.processors.redfin", "RedfinNormalizerAgent"),
+        "redfin": ("src.listings.agents.processors.redfin", "RedfinNormalizerAgent"),
+        "homes_us": ("src.listings.agents.processors.homes", "HomesNormalizerAgent"),
+        "homes": ("src.listings.agents.processors.homes", "HomesNormalizerAgent"),
         
         # Netherlands
-        "funda_nl": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "funda": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "funda_nl": ("src.listings.agents.processors.funda", "FundaNormalizerAgent"),
+        "funda": ("src.listings.agents.processors.funda", "FundaNormalizerAgent"),
+        "pararius_nl": ("src.listings.agents.processors.pararius", "ParariusNormalizerAgent"),
         
         # Germany
-        "immowelt_de": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
-        "immowelt": ("src.listings.agents.processors.generic", "GenericNormalizerAgent"),
+        "immowelt_de": ("src.listings.agents.processors.immowelt", "ImmoweltNormalizerAgent"),
+        "immowelt": ("src.listings.agents.processors.immowelt", "ImmoweltNormalizerAgent"),
+        "sreality_cz": ("src.listings.agents.processors.sreality", "SrealityNormalizerAgent"),
+        "otodom_pl": ("src.listings.agents.processors.otodom", "OtodomNormalizerAgent"),
         
         # Portugal
         "imovirtual_pt": ("src.listings.agents.processors.imovirtual", "ImovirtualNormalizerAgent"),

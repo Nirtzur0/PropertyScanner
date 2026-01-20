@@ -138,7 +138,9 @@ class OnTheMarketNormalizerAgent(BaseAgent):
             bathrooms=bathrooms,
             image_urls=image_urls,
             status=ListingStatus.ACTIVE,
-            listed_at=datetime.now()
+            listed_at=raw.fetched_at,
+            crawled_at=raw.fetched_at,
+            market_date=raw.fetched_at,
         )
         
         if postcode:
@@ -147,14 +149,14 @@ class OnTheMarketNormalizerAgent(BaseAgent):
                 address_full=title,
                 city=city,
                 zip_code=postcode,
-                country="UK"
+                country="GB"
             )
         else:
              canonical.location = GeoLocation(
                 lat=None, lon=None,
                 address_full=title,
                 city=city,
-                country="UK"
+                country="GB"
             )
             
         return canonical

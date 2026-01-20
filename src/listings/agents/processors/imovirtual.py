@@ -179,7 +179,9 @@ class ImovirtualNormalizerAgent(BaseAgent):
             bathrooms=bathrooms,
             image_urls=image_urls,
             status=ListingStatus.ACTIVE,
-            listed_at=datetime.now() # Fallback
+            listed_at=raw.fetched_at,
+            crawled_at=raw.fetched_at,
+            market_date=raw.fetched_at,
         )
         
         if lat and lon:
@@ -187,8 +189,8 @@ class ImovirtualNormalizerAgent(BaseAgent):
                 lat=lat, lon=lon,
                 address_full=title,
                 city=city,
-                neighborhood="Unknown",
-                country="PT"
+                country="PT",
+                zip_code=None
             )
         else:
              canonical.location = GeoLocation(

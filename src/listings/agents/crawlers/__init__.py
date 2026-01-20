@@ -13,4 +13,4 @@ from .usa.homes import HomesCrawlerAgent
 from .netherlands.funda import FundaCrawlerAgent
 from .germany.immowelt import ImmoweltCrawlerAgent
 from .portugal.imovirtual import ImovirtualCrawlerAgent
-from .general.macro_intel import MacroEvidenceAgent, MacroIntelligenceAgent
+from src.market.services.macro_intel import MacroEvidenceAgent, MacroIntelligenceAgent

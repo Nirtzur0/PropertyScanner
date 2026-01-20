@@ -1,6 +1,10 @@
 import hashlib
+import json
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
+
+import structlog
+from bs4 import BeautifulSoup
 
 import structlog
 
@@ -46,6 +50,39 @@ class FundaCrawlerAgent(BaseAgent):
             logger.warning("funda_fetch_error", url=url, error=str(e))
             return None
 
+    def _extract_json_ld_links(self, html: str) -> List[str]:
+        """Extracts listing URLs from JSON-LD schema in the HTML."""
+        urls = []
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            script_tags = soup.find_all("script", {"type": "application/ld+json"})
+            
+            for script in script_tags:
+                try:
+                    data = json.loads(script.string)
+                    # Handle both list and single object
+                    if isinstance(data, dict):
+                        # check for ItemList
+                        if data.get("@type") == "ItemList" or "ItemList" in data.get("@type", []):
+                            items = data.get("itemListElement", [])
+                            for item in items:
+                                if isinstance(item, dict) and "url" in item:
+                                    urls.append(item["url"])
+                    elif isinstance(data, list):
+                        # Sometimes it's a list of objects
+                        for entry in data:
+                             if isinstance(entry, dict) and "url" in entry:
+                                 # We are looking for property details
+                                 if "/detail/koop/" in entry["url"] or "/detail/huur/" in entry["url"]:
+                                     urls.append(entry["url"])
+
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            logger.warning("funda_json_ld_extraction_error", error=str(e))
+            
+        return urls
+
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         search_path = input_payload.get("search_path", "/koop/amsterdam/")
         
@@ -74,13 +111,21 @@ class FundaCrawlerAgent(BaseAgent):
                 except Exception:
                     pass
 
-                listing_urls = self.scrape_client.extract_links(
-                    html,
-                    LinkExtractorSpec(
-                        selectors=["div.search-result__header-title-col a", "a[data-test-id='object-image-link']"], 
-                        include=["/koop/", "/huur/"],
-                    ),
-                )
+                # Attempt JSON-LD extraction first (more reliable)
+                json_links = self._extract_json_ld_links(html)
+                if json_links:
+                    listing_urls = json_links
+                    logger.info("funda_extracted_links_json_ld", count=len(listing_urls))
+                
+                # Fallback or combine with selector extraction if needed
+                if not listing_urls:
+                    listing_urls = self.scrape_client.extract_links(
+                        html,
+                        LinkExtractorSpec(
+                            selectors=["div.search-result__header-title-col a", "a[data-test-id='object-image-link']"], 
+                            include=["/koop/", "/huur/"],
+                        ),
+                    )
         
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=45, retries=3):
