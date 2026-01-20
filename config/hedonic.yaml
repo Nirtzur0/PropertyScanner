@@ -14,4 +14,4 @@ hedonic:
   registry_metric_priority:
     - price_sqm
     - index
-  registry_max_lag_days: 180
+  registry_max_lag_days: 365

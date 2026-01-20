@@ -310,7 +310,7 @@ def transactions_flow(
         raise ValueError("transactions_path_missing")
 
     tracker = PipelineRunTracker(db_path=db_path)
-    logger.info("prefect_transactions_ingest", path=transactions_path)
+    logger.info("prefect_transactions_ingest path=%s", transactions_path)
     result = _run_tracked(
         tracker,
         step_name="transactions_ingest",
@@ -386,7 +386,7 @@ def market_data_flow(
     results: Dict[str, Any] = {"market_data": "ok"}
     if transactions:
         tx_path = transactions_path or str(app_config.paths.transactions_path)
-        logger.info("prefect_market_data_transactions", path=tx_path)
+        logger.info("prefect_market_data_transactions path=%s", tx_path)
         _run_tracked(
             tracker,
             step_name="transactions_ingest",
@@ -510,7 +510,7 @@ def training_flow(
         )
         results["vlm"] = "ok"
 
-    logger.info("training_model_start", epochs=epochs)
+    logger.info("training_model_start epochs=%s", epochs)
     _run_tracked(
         tracker,
         step_name="train_model",
@@ -644,7 +644,7 @@ def preflight_flow(
         tx_path = transactions_path or str(app_config.paths.transactions_path)
         if not tx_path or not tx_path.strip():
             raise ValueError("transactions_path_missing")
-        logger.info("prefect_preflight_transactions", path=tx_path)
+        logger.info("prefect_preflight_transactions path=%s", tx_path)
         _run_tracked(
             tracker,
             step_name="transactions_ingest",
@@ -695,7 +695,7 @@ def preflight_flow(
     if not skip_training:
         state = state_service.snapshot()
         if state.needs_training:
-            logger.info("prefect_preflight_training", epochs=train_epochs)
+            logger.info("prefect_preflight_training epochs=%s", train_epochs)
             _run_tracked(
                 tracker,
                 step_name="train_model",

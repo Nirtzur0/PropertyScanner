@@ -53,3 +53,33 @@ def db_session(test_db_engine):
 def real_data_dir():
     """Returns the path to the tests/resources directory."""
     return os.path.join(os.path.dirname(__file__), "resources")
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run tests marked as integration.",
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "integration: marks tests that hit live external services"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    run_integration = (
+        config.getoption("--run-integration")
+        or os.getenv("RUN_INTEGRATION") == "1"
+    )
+    if run_integration:
+        return
+    skip_integration = pytest.mark.skip(
+        reason="integration tests require --run-integration or RUN_INTEGRATION=1"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)

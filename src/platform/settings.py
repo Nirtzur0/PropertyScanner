@@ -182,7 +182,7 @@ class HedonicConfig(BaseConfigModel):
     registry_primary: bool = True
     registry_provider_priority: List[str] = Field(default_factory=list)
     registry_metric_priority: List[str] = Field(default_factory=lambda: ["price_sqm", "index"])
-    registry_max_lag_days: int = 180
+    registry_max_lag_days: int = 365
 
 
 class QualityGateConfig(BaseConfigModel):

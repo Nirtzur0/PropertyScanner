@@ -496,8 +496,10 @@ class PropertyDataset(Dataset):
                 comp_timestamp=obs_date,
                 target_timestamp=self.reference_date
             )
-            if meta.get("comp_index_fallback") or meta.get("target_index_fallback"):
-                if self.require_hedonic:
+            if self.require_hedonic and (meta.get("comp_index_fallback") or meta.get("target_index_fallback")):
+                comp_source = meta.get("comp_index_source")
+                target_source = meta.get("target_index_source")
+                if comp_source == "hedonic" or target_source == "hedonic":
                     return None
             return float(adj_price)
         except Exception:

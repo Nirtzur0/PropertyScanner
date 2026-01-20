@@ -223,6 +223,48 @@ class HedonicIndexService:
             return None
         return value, period_dt.to_pydatetime()
 
+    def _fetch_registry_global_metric(
+        self,
+        *,
+        provider_id: str,
+        metric: str,
+        target_end: datetime,
+        housing_type: Optional[str] = None,
+    ) -> Optional[Tuple[float, datetime]]:
+        clause = ""
+        params = {
+            "provider_id": provider_id,
+            "metric": metric,
+            "target_end": target_end.date().isoformat(),
+        }
+        if housing_type:
+            clause = "AND housing_type = :housing_type"
+            params["housing_type"] = housing_type
+
+        query = text(
+            f"""
+            SELECT AVG(value) as avg_value, period_date
+            FROM official_metrics
+            WHERE provider_id = :provider_id
+              AND metric = :metric
+              AND period_date IS NOT NULL
+              {clause}
+              AND period_date <= :target_end
+            GROUP BY period_date
+            ORDER BY period_date DESC
+            LIMIT 1
+            """
+        )
+        with self.storage.engine.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        if not row or row[0] is None or row[1] is None:
+            return None
+        value = float(row[0])
+        period_dt = pd.to_datetime(row[1], format="mixed", errors="coerce")
+        if pd.isna(period_dt):
+            return None
+        return value, period_dt.to_pydatetime()
+
     def _get_registry_index(self, region_id: str, month_date: str) -> Optional[IndexResult]:
         if not self.repo.has_table("official_metrics"):
             return None
@@ -278,6 +320,30 @@ class HedonicIndexService:
                         period_date=period_dt.date().isoformat(),
                         lag_days=lag_days,
                     )
+                row = self._fetch_registry_global_metric(
+                    provider_id=provider_id,
+                    metric=metric,
+                    target_end=target_end,
+                    housing_type=housing_type,
+                )
+                if not row:
+                    continue
+                value, period_dt = row
+                lag_days = (target_end.date() - period_dt.date()).days
+                if lag_days < 0 or lag_days > max_lag.days:
+                    continue
+                return IndexResult(
+                    value=value,
+                    r_squared=0.0,
+                    n_observations=0,
+                    is_fallback=True,
+                    fallback_reason="registry_global_avg",
+                    source="registry",
+                    provider_id=provider_id,
+                    metric=metric,
+                    period_date=period_dt.date().isoformat(),
+                    lag_days=lag_days,
+                )
         return None
 
     def _index_quality_ok(self, r_squared: float, n_obs: int) -> bool:
