@@ -1,5 +1,3 @@
-
-import os
 import pytest
 from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
@@ -21,10 +19,9 @@ def ine_ipv_sample_csv(tmp_path):
     file_path.write_text(content, encoding="utf-8")
     return str(file_path)
 
-def test_ine_ipv_ingest_real(ine_ipv_sample_csv, test_db_path):
-    """
-    Test dedicated INE IPV ingestion path.
-    """
+def test_registry_ingest__ine_ipv_csv__normalizes_quarters_and_writes_latest_metric(ine_ipv_sample_csv, tmp_path):
+    # Arrange
+    db_path = tmp_path / "ine_ipv.db"
     source = RegistrySourceConfig(
         provider_id="ine_ipv", # Special provider ID triggering specialized logic
         country_code="ES",
@@ -40,9 +37,12 @@ def test_ine_ipv_ingest_real(ine_ipv_sample_csv, test_db_path):
     config = AppConfig()
     config.registry.sources = [source]
     
-    service = RegistryIngestService(db_path=test_db_path, app_config=config)
+    # Act
+    service = RegistryIngestService(db_path=str(db_path), app_config=config)
     
     count = service.run()
+
+    # Assert
     assert count == 3
     
     repo = IneIpvRepository(db_url=service.db_url)

@@ -10,7 +10,7 @@ def compliance():
 
 @pytest.mark.live
 @pytest.mark.network
-def test_rightmove_real(compliance):
+def test_live_fetch_html__rightmove__returns_content_or_fails_with_block_signal(compliance):
     """Test Rightmove (GB) blocking status."""
     client = ScrapeClient(
         source_id="rightmove_uk",
@@ -32,7 +32,7 @@ def test_rightmove_real(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_zoopla_real(compliance):
+def test_live_fetch_html__zoopla__returns_content_or_fails_with_block_signal(compliance):
     """Test Zoopla (GB) blocking status."""
     client = ScrapeClient(
         source_id="zoopla_uk",
@@ -53,7 +53,7 @@ def test_zoopla_real(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_daft_real(compliance):
+def test_live_fetch_html__daft__returns_content_or_fails_with_block_signal(compliance):
     """Test Daft.ie (IE) blocking status."""
     client = ScrapeClient(
         source_id="daft_ie",
@@ -74,7 +74,7 @@ def test_daft_real(compliance):
     
 @pytest.mark.live
 @pytest.mark.network
-def test_pararius_real(compliance):
+def test_live_fetch_html__pararius__returns_content_or_fails_with_block_signal(compliance):
     """Test Pararius (NL) blocking status."""
     client = ScrapeClient(
         source_id="pararius_nl",
@@ -96,7 +96,7 @@ def test_pararius_real(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_sreality_real(compliance):
+def test_live_fetch_html__sreality__returns_content_or_fails_with_block_signal(compliance):
     """Test Sreality (CZ) blocking status."""
     client = ScrapeClient(
         source_id="sreality_cz",
@@ -116,7 +116,7 @@ def test_sreality_real(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_otodom_real(compliance):
+def test_live_fetch_html__otodom__returns_content_or_fails_with_block_signal(compliance):
     """Test Otodom (PL) blocking status."""
     client = ScrapeClient(
         source_id="otodom_pl",

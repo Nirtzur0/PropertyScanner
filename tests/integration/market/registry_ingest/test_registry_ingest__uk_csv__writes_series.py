@@ -1,10 +1,7 @@
-
-import os
 import pytest
 import pandas as pd
-from datetime import datetime
 from src.market.services.registry_ingest import RegistryIngestService
-from src.platform.settings import AppConfig, RegistryConfig, RegistrySourceConfig
+from src.platform.settings import AppConfig, RegistrySourceConfig
 from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
 
 pytestmark = pytest.mark.integration
@@ -23,7 +20,9 @@ def uk_sample_csv(tmp_path):
     file_path.write_text(content, encoding="utf-8")
     return str(file_path)
 
-def test_uk_registry_ingest_real_structure(uk_sample_csv, test_db_path):
+def test_registry_ingest__uk_land_registry_csv__writes_canonical_series(uk_sample_csv, tmp_path):
+    # Arrange
+    db_path = tmp_path / "uk_registry.db"
     source = RegistrySourceConfig(
         provider_id="uk_land_registry",
         country_code="GB",
@@ -40,9 +39,12 @@ def test_uk_registry_ingest_real_structure(uk_sample_csv, test_db_path):
     config = AppConfig()
     config.registry.sources = [source]
     
-    service = RegistryIngestService(db_path=test_db_path, app_config=config)
+    # Act
+    service = RegistryIngestService(db_path=str(db_path), app_config=config)
     
     count = service.run()
+
+    # Assert
     assert count == 2
     
     repo = UKRegistryMetricsRepository(db_url=service.db_url)

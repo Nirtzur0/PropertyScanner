@@ -4,7 +4,7 @@ from src.listings.agents.crawlers.italy.immobiliare import ImmobiliareCrawlerAge
 
 @pytest.mark.live
 @pytest.mark.network
-def test_immobiliare_real_search():
+def test_live_crawl__immobiliare__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Immobiliare.it search.
     Expected: Success (200 OK) + Listings found.

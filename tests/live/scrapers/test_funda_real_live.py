@@ -5,7 +5,7 @@ from src.listings.utils.seen_url_store import SeenUrlStore
 
 @pytest.mark.live
 @pytest.mark.network
-def test_funda_real_search():
+def test_live_crawl__funda__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Funda search.
     Expected: Success (200 OK) + Listings found.

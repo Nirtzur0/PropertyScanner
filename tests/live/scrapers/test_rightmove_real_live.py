@@ -6,7 +6,7 @@ from src.platform.utils.compliance import ComplianceManager
 
 @pytest.mark.live
 @pytest.mark.network
-def test_rightmove_real_search():
+def test_live_crawl__rightmove__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Rightmove.co.uk search.
     Note: Uses default config (Pydoll preferred) to avoid hangs.

@@ -11,7 +11,7 @@ def compliance():
 
 @pytest.mark.live
 @pytest.mark.network
-def test_realtor_real_search(compliance):
+def test_live_crawl__realtor__returns_listings_or_skips_when_blocked(compliance):
     """Test Realtor.com real network call."""
     SeenUrlStore().reset_mode("fetch:realtor")
     config = {
@@ -38,7 +38,7 @@ def test_realtor_real_search(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_redfin_real_search(compliance):
+def test_live_crawl__redfin__returns_listings_or_skips_when_blocked(compliance):
     """Test Redfin.com real network call (Expect Success)."""
     SeenUrlStore().reset_mode("fetch:redfin")
     config = {
@@ -64,7 +64,7 @@ def test_redfin_real_search(compliance):
 
 @pytest.mark.live
 @pytest.mark.network
-def test_homes_real_search(compliance):
+def test_live_crawl__homes__returns_listings_or_skips_when_blocked(compliance):
     """Test Homes.com real network call."""
     SeenUrlStore().reset_mode("fetch:homes")
     config = {

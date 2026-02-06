@@ -6,7 +6,7 @@ from src.platform.utils.compliance import ComplianceManager
 
 @pytest.mark.live
 @pytest.mark.network
-def test_imovirtual_real_search():
+def test_live_crawl__imovirtual__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Imovirtual search.
     Expected: Success (200 OK) + Listings found.

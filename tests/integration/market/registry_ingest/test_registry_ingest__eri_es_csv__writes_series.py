@@ -1,5 +1,3 @@
-
-import os
 import pytest
 from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
@@ -22,10 +20,9 @@ def ine_sample_csv(tmp_path):
     file_path.write_text(content, encoding="utf-8")
     return str(file_path)
 
-def test_eri_es_ingest_real_structure(ine_sample_csv, test_db_path):
-    """
-    Test ERI (Spain) ingestion using a structure mimicking INE IPV data.
-    """
+def test_registry_ingest__eri_es_csv__writes_canonical_series(ine_sample_csv, tmp_path):
+    # Arrange
+    db_path = tmp_path / "eri_es.db"
     source = RegistrySourceConfig(
         provider_id="eri_es",
         country_code="ES",
@@ -41,9 +38,12 @@ def test_eri_es_ingest_real_structure(ine_sample_csv, test_db_path):
     config = AppConfig()
     config.registry.sources = [source]
     
-    service = RegistryIngestService(db_path=test_db_path, app_config=config)
+    # Act
+    service = RegistryIngestService(db_path=str(db_path), app_config=config)
     
     count = service.run()
+
+    # Assert
     assert count == 3
     
     repo = ERIMetricsRepository(db_url=service.db_url)

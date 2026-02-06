@@ -6,7 +6,7 @@ from src.platform.utils.compliance import ComplianceManager
 
 @pytest.mark.live
 @pytest.mark.network
-def test_zoopla_real_search():
+def test_live_crawl__zoopla__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Zoopla.co.uk search.
     Note: Highly likely to be blocked (403).

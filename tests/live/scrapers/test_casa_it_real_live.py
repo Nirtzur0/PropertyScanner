@@ -7,7 +7,7 @@ from src.listings.agents.processors.casa_it import CasaItNormalizerAgent
 
 @pytest.mark.live
 @pytest.mark.network
-def test_casait_real_search():
+def test_live_crawl__casa_it__returns_listings_or_skips_when_blocked():
     """
     Test real network call to Casa.it search and normalization.
     """

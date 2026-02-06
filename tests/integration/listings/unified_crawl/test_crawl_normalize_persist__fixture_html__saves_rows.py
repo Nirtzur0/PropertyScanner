@@ -27,7 +27,8 @@ def _listing_store(tmp_path):
     return listings_repo, persistence
 
 
-def test_rightmove_crawler_normalizer_storage(tmp_path):
+def test_crawl_normalize_persist__rightmove_fixture_html__saves_listing_row(tmp_path):
+    # Arrange
     search_html = Path("tests/resources/html/rightmove_search.html").read_text(encoding="utf-8")
     detail_html = Path("tests/resources/html/rightmove.html").read_text(encoding="utf-8")
 
@@ -58,25 +59,33 @@ def test_rightmove_crawler_normalizer_storage(tmp_path):
     crawler.scrape_client.fetch_html = fake_fetch_html
     crawler.scrape_client.fetch_html_batch = fake_fetch_html_batch
 
+    # Act
     result = crawler.run(
         {"start_url": "https://www.rightmove.co.uk/property-for-sale/find.html?index=0"}
     )
 
+    # Assert
     assert result.status == "success"
     assert len(result.data) == 1
     raw = result.data[0]
     assert raw.external_id == "12345678"
     assert raw.raw_data.get("html_snippet")
 
+    # Act
     normalizer = RightmoveNormalizerAgent()
     normalized = normalizer.run({"raw_listings": result.data})
+
+    # Assert
     assert normalized.status == "success"
     canonical = normalized.data[0]
     assert canonical.price == 850000.0
     assert canonical.location is not None
 
+    # Act
     listings_repo, persistence = _listing_store(tmp_path)
     saved = persistence.save_listings(normalized.data)
+
+    # Assert
     assert saved == 1
     db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
@@ -84,7 +93,8 @@ def test_rightmove_crawler_normalizer_storage(tmp_path):
     assert db_item.city.lower() == "london"
 
 
-def test_zoopla_crawler_normalizer_storage(tmp_path):
+def test_crawl_normalize_persist__zoopla_fixture_html__saves_listing_row(tmp_path):
+    # Arrange
     search_html = Path("tests/resources/html/zoopla_search.html").read_text(encoding="utf-8")
     detail_html = Path("tests/resources/html/zoopla.html").read_text(encoding="utf-8")
 
@@ -115,25 +125,33 @@ def test_zoopla_crawler_normalizer_storage(tmp_path):
     crawler.scrape_client.fetch_html = fake_fetch_html
     crawler.scrape_client.fetch_html_batch = fake_fetch_html_batch
 
+    # Act
     result = crawler.run(
         {"start_url": "https://www.zoopla.co.uk/for-sale/property/manchester/"}
     )
 
+    # Assert
     assert result.status == "success"
     assert len(result.data) == 1
     raw = result.data[0]
     assert raw.external_id == "98765432"
     assert raw.raw_data.get("html_snippet")
 
+    # Act
     normalizer = ZooplaNormalizerAgent()
     normalized = normalizer.run({"raw_listings": result.data})
+
+    # Assert
     assert normalized.status == "success"
     canonical = normalized.data[0]
     assert canonical.price == 450000.0
     assert canonical.location is not None
 
+    # Act
     listings_repo, persistence = _listing_store(tmp_path)
     saved = persistence.save_listings(normalized.data)
+
+    # Assert
     assert saved == 1
     db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
@@ -141,7 +159,8 @@ def test_zoopla_crawler_normalizer_storage(tmp_path):
     assert db_item.city.lower() == "manchester"
 
 
-def test_immobiliare_crawler_normalizer_storage(tmp_path):
+def test_crawl_normalize_persist__immobiliare_fixture_html__saves_listing_row(tmp_path):
+    # Arrange
     detail_html = Path("tests/resources/html/immobiliare.html").read_text(encoding="utf-8")
     listing_url = "https://www.immobiliare.it/annunci/1357911/"
 
@@ -164,23 +183,31 @@ def test_immobiliare_crawler_normalizer_storage(tmp_path):
 
     crawler.scrape_client.fetch_html_batch = fake_fetch_html_batch
 
+    # Act
     result = crawler.run({"listing_url": listing_url})
 
+    # Assert
     assert result.status == "success"
     assert len(result.data) == 1
     raw = result.data[0]
     assert raw.external_id == "1357911"
     assert raw.raw_data.get("html_snippet")
 
+    # Act
     normalizer = ImmobiliareNormalizerAgent()
     normalized = normalizer.run({"raw_listings": result.data})
+
+    # Assert
     assert normalized.status == "success"
     canonical = normalized.data[0]
     assert canonical.price == 620000.0
     assert canonical.location is not None
 
+    # Act
     listings_repo, persistence = _listing_store(tmp_path)
     saved = persistence.save_listings(normalized.data)
+
+    # Assert
     assert saved == 1
     db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None

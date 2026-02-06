@@ -1,5 +1,3 @@
-
-import os
 import pytest
 from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
@@ -22,16 +20,6 @@ def omi_sample_csv(tmp_path):
     return str(file_path)
 
 @pytest.fixture
-def omi_sample_config(omi_sample_csv):
-    """
-    Needs a wrapper to convert year/semester to period_date for the generic ingestor,
-    OR we rely on the ingestor's flexible date parsing if we format it right.
-    Generic ingestor expects a single date column.
-    We'll construct a CSV where we pre-merge year/sem into a period column for testing.
-    """
-    pass
-
-@pytest.fixture
 def omi_sample_csv_clean(tmp_path):
     # Pre-processed OMI format for generic ingest (Aggregated by City)
     content = (
@@ -42,7 +30,9 @@ def omi_sample_csv_clean(tmp_path):
     file_path.write_text(content, encoding="utf-8")
     return str(file_path)
 
-def test_it_omi_ingest_real_structure(omi_sample_csv_clean, test_db_path):
+def test_registry_ingest__it_omi_csv__writes_canonical_series(omi_sample_csv_clean, tmp_path):
+    # Arrange
+    db_path = tmp_path / "it_omi.db"
     source = RegistrySourceConfig(
         provider_id="it_omi_registry",
         country_code="IT",
@@ -57,9 +47,12 @@ def test_it_omi_ingest_real_structure(omi_sample_csv_clean, test_db_path):
     config = AppConfig()
     config.registry.sources = [source]
     
-    service = RegistryIngestService(db_path=test_db_path, app_config=config)
+    # Act
+    service = RegistryIngestService(db_path=str(db_path), app_config=config)
     
     count = service.run()
+
+    # Assert
     assert count == 1
     
     repo = ItalyRegistryMetricsRepository(db_url=service.db_url)
