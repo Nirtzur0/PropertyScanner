@@ -61,7 +61,7 @@ def _seed_market_indices(conn: sqlite3.Connection, region_id: str) -> None:
     )
 
 
-def test_registry_signals_eri(tmp_path):
+def test_get_signals__eri_registry_present__returns_provider_and_metrics(tmp_path):
     db_path = tmp_path / "registry.db"
     db_url = f"sqlite:///{db_path}"
 
@@ -125,7 +125,7 @@ def test_registry_signals_eri(tmp_path):
     assert "txn_volume_z" in signals
 
 
-def test_registry_signals_proxy_for_gb_and_it(tmp_path):
+def test_get_signals__proxy_enabled_for_gb_it__returns_expected_provider_ids(tmp_path):
     db_path = tmp_path / "registry_proxy.db"
     conn = sqlite3.connect(db_path)
     _create_market_indices(conn)

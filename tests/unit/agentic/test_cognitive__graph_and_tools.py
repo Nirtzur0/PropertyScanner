@@ -5,7 +5,7 @@ Verifies state schema, tool wrappers, graph nodes, and orchestrator.
 import json
 import pytest
 from unittest.mock import MagicMock, patch
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
 from src.agentic.state import AgentState
 from src.agentic.graph import create_cognitive_graph, create_initial_state, get_llm
@@ -15,7 +15,7 @@ from src.agentic.orchestrator import CognitiveOrchestrator
 class TestAgentState:
     """Tests for the AgentState schema and reducers."""
     
-    def test_state_accumulation(self):
+    def test_agent_state__annotated_accumulators__use_operator_add(self):
         """Test that Annotated[List, add] correctly accumulates items."""
         # Note: LangGraph handles the actual accumulation during graph execution,
         # but we can verify the schema is correctly typed.
@@ -38,7 +38,7 @@ class TestTools:
 
     @patch("src.listings.agents.factory.AgentFactory.create_crawler")
     @patch("src.platform.utils.config.ConfigLoader")
-    def test_crawl_listings_tool(self, mock_config, mock_create_crawler):
+    def test_crawl_listings_tool__crawler_returns_success__returns_count_and_data(self, mock_config, mock_create_crawler):
         """Test crawl_listings tool wrapper."""
         from src.agentic.tools import crawl_listings
         from src.platform.agents.base import AgentResponse
@@ -60,7 +60,7 @@ class TestTools:
         assert result["data"][0]["external_id"] == "123"
 
     @patch("src.listings.agents.factory.AgentFactory.create_normalizer")
-    def test_normalize_listings_tool(self, mock_create_normalizer):
+    def test_normalize_listings_tool__normalizer_returns_success__returns_payload(self, mock_create_normalizer):
         """Test normalize_listings tool wrapper."""
         from src.agentic.tools import normalize_listings
         from src.platform.agents.base import AgentResponse
@@ -90,7 +90,7 @@ class TestTools:
         assert result["data"][0]["id"] == "abc"
 
     @patch("src.agentic.tools.evaluate_listing")
-    def test_evaluate_listing_tool(self, mock_eval_tool):
+    def test_evaluate_listing_tool__mocked_tool__returns_deal_score(self, mock_eval_tool):
         """Test evaluate_listing tool wrapper."""
         from src.agentic.tools import evaluate_listing
         
@@ -112,7 +112,7 @@ class TestGraphNodes:
     """Tests for individual LangGraph nodes."""
 
     @patch("src.agentic.graph.get_llm")
-    def test_planner_node_logic(self, mock_get_llm):
+    def test_planner_node__valid_plan_json__activates_plan(self, mock_get_llm):
         """Test planner node plan creation."""
         from src.agentic.graph import planner_node
 
@@ -139,7 +139,7 @@ class TestGraphNodes:
         assert result["plan"]["steps"][0]["action"] == "crawl"
 
     @patch("src.agentic.graph.crawl_listings")
-    def test_crawl_node_execution(self, mock_crawl_tool):
+    def test_crawl_node__crawl_tool_success__adds_raw_listings_and_stage(self, mock_crawl_tool):
         """Test crawl node execution logic."""
         from src.agentic.graph import crawl_node
         
@@ -160,7 +160,7 @@ class TestGraphNodes:
 class TestOrchestrator:
     """Tests for the high-level CognitiveOrchestrator class."""
 
-    def test_orchestrator_initialization(self):
+    def test_orchestrator__lazy_graph_compilation__compiles_on_access(self):
         """Test orchestrator lazy loading."""
         orchestrator = CognitiveOrchestrator()
         assert orchestrator._graph is None
@@ -171,7 +171,7 @@ class TestOrchestrator:
         assert orchestrator._graph is not None
 
     @patch("src.agentic.orchestrator.create_cognitive_graph")
-    def test_orchestrator_run_batch(self, mock_create_graph):
+    def test_orchestrator_run__graph_invoke__returns_report_and_count(self, mock_create_graph):
         """Test orchestrator run method."""
         mock_graph = MagicMock()
         mock_graph.invoke.return_value = {"final_report": "All good", "listings_count": 5}
@@ -193,7 +193,7 @@ class TestIntegration:
     @patch("src.agentic.graph.crawl_listings")
     @patch("src.agentic.graph.normalize_listings")
     @patch("src.agentic.graph.evaluate_listing")
-    def test_full_workflow_path(self, mock_eval, mock_norm, mock_crawl, mock_get_llm, mock_snapshot):
+    def test_graph_workflow__mocked_tools__produces_final_report(self, mock_eval, mock_norm, mock_crawl, mock_get_llm, mock_snapshot):
         """Test a full successful path through the graph."""
         mock_snapshot.return_value = MagicMock(to_dict=lambda: {"needs_refresh": False})
         # 1. Mock planner plan + report content
