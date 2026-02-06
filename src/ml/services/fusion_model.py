@@ -296,17 +296,32 @@ class FusionModelService:
         self.model = None
         self.config = {}
         self.device = "cpu"
-        
+
+        # Load config even when torch is unavailable so downstream services can
+        # still read `target_mode` / retriever metadata and fall back cleanly.
+        self._load_config()
+
         if TORCH_AVAILABLE:
-            self._load_or_init()
+            self._try_load_model()
 
-    def _load_or_init(self):
-        """Load existing model or initialize a new one."""
+    def _load_config(self) -> None:
         if not os.path.exists(self.config_path):
-            raise FileNotFoundError("fusion_config_missing")
+            logger.warning("fusion_config_missing", path=self.config_path)
+            self.config = {}
+            return
 
-        with open(self.config_path, "r") as f:
-            self.config = json.load(f)
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self.config = json.load(f)
+        except Exception as exc:
+            logger.warning("fusion_config_load_failed", path=self.config_path, error=str(exc))
+            self.config = {}
+
+    def _try_load_model(self) -> None:
+        """Best-effort model load. Missing artifacts should not crash the app."""
+        if not self.config:
+            # Without config we can't build the module; keep fusion disabled.
+            return
 
         try:
             torch.set_num_threads(1)
@@ -317,7 +332,8 @@ class FusionModelService:
         required = {"tabular_dim", "text_dim", "image_dim", "hidden_dim", "num_heads"}
         missing = required.difference(self.config.keys())
         if missing:
-            raise ValueError("fusion_config_incomplete")
+            logger.warning("fusion_config_incomplete", missing=sorted(missing))
+            return
 
         self.model = PropertyFusionModel(
             tabular_dim=self.config["tabular_dim"],
@@ -328,10 +344,17 @@ class FusionModelService:
         )
         
         if not os.path.exists(self.model_path):
-            raise FileNotFoundError("fusion_model_missing")
+            logger.warning("fusion_model_missing", path=self.model_path)
+            self.model = None
+            return
 
-        self.model.load_state_dict(torch.load(self.model_path, map_location="cpu"))
-        logger.info("fusion_model_loaded", path=self.model_path)
+        try:
+            self.model.load_state_dict(torch.load(self.model_path, map_location="cpu"))
+            logger.info("fusion_model_loaded", path=self.model_path)
+        except Exception as exc:
+            logger.warning("fusion_model_load_failed", path=self.model_path, error=str(exc))
+            self.model = None
+            return
             
         self.model.eval()
 
