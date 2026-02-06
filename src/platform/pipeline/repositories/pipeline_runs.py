@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 
 from src.platform.db.base import RepositoryBase
+from src.platform.utils.time import utcnow
 
 
 class PipelineRunsRepository(RepositoryBase):
@@ -55,7 +56,7 @@ class PipelineRunsRepository(RepositoryBase):
             "run_type": run_type,
             "step_name": step_name,
             "status": "running",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": utcnow().isoformat(),
             "completed_at": None,
             "metadata": json.dumps(metadata or {}),
         }
@@ -81,7 +82,7 @@ class PipelineRunsRepository(RepositoryBase):
         payload = {
             "run_id": run_id,
             "status": status,
-            "completed_at": datetime.utcnow().isoformat(),
+            "completed_at": utcnow().isoformat(),
             "metadata": json.dumps(metadata or {}),
         }
         with self.engine.begin() as conn:

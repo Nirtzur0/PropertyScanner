@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field, HttpUrl, AnyUrl
+from src.platform.utils.time import utcnow
 
 class PropertyType(str, Enum):
     APARTMENT = "apartment"
@@ -92,7 +93,7 @@ class CanonicalListing(BaseModel):
     
     # Metadata
     listed_at: Optional[datetime] = None
-    updated_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=utcnow)
     status: ListingStatus = ListingStatus.ACTIVE
     sold_at: Optional[datetime] = None
     
@@ -199,7 +200,7 @@ class ListingEvaluationResult(BaseModel):
     top_comps: List[CompListing] = Field(default_factory=list)
     flags: List[str] = Field(default_factory=list)
     
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=utcnow)
 
 class ValuationProjection(BaseModel):
     """
@@ -234,7 +235,7 @@ class AreaIntelligence(BaseModel):
     Crawled/External intelligence for a specific area (City/Neighborhood).
     """
     area_id: str # e.g. "madrid" or "madrid_chamberi"
-    last_updated: datetime = Field(default_factory=datetime.now)
+    last_updated: datetime = Field(default_factory=utcnow)
 
     # Quantitative Indicators (0.0 to 1.0 or normalized)
     sentiment_score: float = 0.5 # 0.0=Negative, 1.0=Positive (News/Social)

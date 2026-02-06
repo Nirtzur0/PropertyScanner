@@ -24,6 +24,7 @@ from bs4 import BeautifulSoup
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.market.repositories.macro_scenarios import MacroScenariosRepository
 from src.platform.utils.stealth_requests import create_session, request_get
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -74,7 +75,7 @@ class MacroScenario:
         self.source_url = source_url
         self.confidence = confidence
         self.horizon_year = horizon_year
-        self.retrieved_at = datetime.now().isoformat()
+        self.retrieved_at = utcnow().isoformat()
     
     def to_dict(self) -> Dict:
         return {
@@ -114,7 +115,7 @@ class MacroEvidenceAgent(BaseAgent):
         Input: {"year": 2025}
         Output: List of MacroScenario objects with citations
         """
-        target_year = input_payload.get("year", datetime.now().year + 1)
+        target_year = input_payload.get("year", utcnow().year + 1)
         
         logger.info("macro_evidence_start", year=target_year)
         
@@ -251,7 +252,7 @@ class MacroEvidenceAgent(BaseAgent):
             return
 
         payloads = []
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = utcnow().strftime("%Y-%m-%d")
         for s in scenarios:
             payloads.append(
                 {

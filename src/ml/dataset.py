@@ -20,6 +20,7 @@ from src.platform.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METAD
 from src.platform.settings import AppConfig
 from src.listings.repositories.listings import ListingsRepository
 from src.market.repositories.market_indices import MarketIndicesRepository
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger()
 
@@ -766,7 +767,7 @@ class PropertyDataset(Dataset):
             payload = {
                 "meta": {
                     "version": COMP_CACHE_VERSION,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": utcnow().isoformat(),
                     "settings": self._comp_cache_settings(),
                     "db_fingerprint": self._db_fingerprint(),
                 },

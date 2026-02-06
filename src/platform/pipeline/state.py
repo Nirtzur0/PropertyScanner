@@ -9,6 +9,7 @@ from src.listings.repositories.listings import ListingsRepository
 from src.market.repositories.macro_indicators import MacroIndicatorsRepository
 from src.market.repositories.market_indices import MarketIndicesRepository
 from src.platform.db.base import resolve_db_url
+from src.platform.utils.time import utcfromtimestamp, utcnow
 
 
 @dataclass
@@ -85,7 +86,7 @@ class PipelineStateService:
         index_at = self._file_timestamp(index_paths, use_oldest=True)
         model_at = self._file_timestamp([self.paths.fusion_model_path], use_oldest=False)
 
-        now = datetime.utcnow()
+        now = utcnow()
         reasons: List[str] = []
 
         needs_crawl = listings_count == 0
@@ -160,7 +161,7 @@ class PipelineStateService:
         times = []
         for path in paths:
             if path and os.path.exists(path):
-                times.append(datetime.utcfromtimestamp(os.path.getmtime(path)))
+                times.append(utcfromtimestamp(os.path.getmtime(path)))
         if not times:
             return None
         return min(times) if use_oldest else max(times)

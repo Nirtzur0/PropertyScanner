@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import CanonicalListing, CompListing
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger()
 
@@ -62,7 +63,7 @@ class EvaluationResult(BaseModel):
     
     # Metadata
     model_version: str = "fusion_v1"
-    evaluated_at: datetime = Field(default_factory=datetime.now)
+    evaluated_at: datetime = Field(default_factory=utcnow)
     strategy_used: str = "balanced"
 
 class ScoringWeights(BaseModel):

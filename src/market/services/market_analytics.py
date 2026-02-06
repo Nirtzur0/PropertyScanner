@@ -8,6 +8,7 @@ from src.platform.config import DEFAULT_DB_PATH
 from src.market.services.eri_signals import ERISignalsService
 from src.platform.db.base import resolve_db_url
 from src.listings.repositories.listings import ListingsRepository
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -94,7 +95,7 @@ class MarketAnalyticsService:
         if df_zone.empty:
             return 0.5
             
-        now = datetime.now()
+        now = utcnow()
         df_zone['age_days'] = (now - df_zone['listed_at']).dt.days
         median_age = df_zone['age_days'].median()
         
@@ -149,7 +150,7 @@ class MarketAnalyticsService:
         if include_eri and listing.location and listing.location.city:
             eri_signals = self.eri.get_signals(
                 listing.location.city.lower(),
-                listing.updated_at if listing.updated_at else datetime.now(),
+                listing.updated_at if listing.updated_at else utcnow(),
                 country_code=listing.location.country if listing.location else None,
             )
 

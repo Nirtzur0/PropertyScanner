@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 import structlog
 from src.platform.config import SNAPSHOTS_DIR
 from pydantic import BaseModel
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger()
 
@@ -55,7 +56,7 @@ class SnapshotService:
         """
         try:
             # Create subdirs
-            date_prefix = datetime.now().strftime("%Y%m%d")
+            date_prefix = utcnow().strftime("%Y%m%d")
             save_dir = os.path.join(self.base_dir, source_id, date_prefix)
             os.makedirs(save_dir, exist_ok=True)
             
@@ -81,7 +82,7 @@ class SnapshotService:
                 listing_url=listing_url,
                 content_hash=content_hash,
                 size_bytes=len(content.encode('utf-8')),
-                created_at=datetime.now(),
+                created_at=utcnow(),
                 file_path=content_filepath
             )
             

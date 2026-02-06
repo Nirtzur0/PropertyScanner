@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 from src.platform.domain.schema import CanonicalListing
+from src.platform.utils.time import utcnow
 
 FEATURE_BOUNDS = {
     "bedrooms": (0, 20),
@@ -73,7 +74,7 @@ def _price_bounds_for_listing(listing_type: Any) -> Tuple[float, float]:
 
 
 def sanitize_year_built(value: Any) -> Optional[int]:
-    max_year = datetime.utcnow().year + YEAR_BUILT_MAX_YEARS_AHEAD
+    max_year = utcnow().year + YEAR_BUILT_MAX_YEARS_AHEAD
     return _sanitize_int_range(value, YEAR_BUILT_MIN, max_year)
 
 

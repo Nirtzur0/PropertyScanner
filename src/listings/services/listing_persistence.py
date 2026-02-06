@@ -10,6 +10,7 @@ from src.platform.domain.listing_updates import ListingUpsertPayload
 from src.platform.domain.schema import CanonicalListing
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.feature_sanitizer import sanitize_listing_features
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -24,7 +25,7 @@ class ListingPersistenceService:
         self,
         listings_repo: ListingsRepository,
         *,
-        now_fn: Callable[[], datetime] = datetime.utcnow,
+        now_fn: Callable[[], datetime] = utcnow,
     ) -> None:
         self.listings_repo = listings_repo
         self.now_fn = now_fn

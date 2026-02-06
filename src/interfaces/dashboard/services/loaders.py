@@ -11,6 +11,7 @@ from src.platform.domain.models import DBListing
 from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.platform.domain.schema import DealAnalysis, ValuationProjection
 from src.interfaces.dashboard.utils.formatting import safe_num
+from src.platform.utils.serialize import model_to_dict
 
 @st.cache_resource
 def get_services():
@@ -177,7 +178,7 @@ def fetch_listings_dataframe(
                  evidence_payload = cached_val.evidence.get("evidence", {}) if cached_val.evidence else {}
             elif analysis.evidence:
                  try:
-                     evidence_payload = analysis.evidence.dict()
+                     evidence_payload = model_to_dict(analysis.evidence)
                  except Exception:
                      pass
             

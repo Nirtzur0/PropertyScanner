@@ -12,6 +12,7 @@ from src.listings.repositories.listings import ListingsRepository
 from src.market.repositories.market_indices import MarketIndicesRepository
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -106,8 +107,8 @@ class MarketIndexService:
             # Time Range (e.g. last 24 months)
             min_date = df["listed_at"].min()
             if pd.isna(min_date):
-                min_date = datetime.now() - timedelta(days=30)
-            now = datetime.now()
+                min_date = utcnow() - timedelta(days=30)
+            now = utcnow()
 
             buckets = self._get_monthly_buckets(min_date, now)
 
@@ -143,7 +144,7 @@ class MarketIndexService:
         has_listing_type: bool,
     ) -> List[tuple]:
         records = []
-        updated_at = datetime.utcnow().isoformat()
+        updated_at = utcnow().isoformat()
         has_updated = self.market_repo.has_column("market_indices", "updated_at")
 
         for region in regions:
@@ -244,7 +245,7 @@ class MarketIndexService:
         has_listing_type: bool,
     ) -> List[tuple]:
         records: List[tuple] = []
-        updated_at = datetime.utcnow().isoformat()
+        updated_at = utcnow().isoformat()
         has_updated = self.market_repo.has_column("market_indices", "updated_at")
         df_pl = pl.from_pandas(df)
 

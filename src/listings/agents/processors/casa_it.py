@@ -6,6 +6,7 @@ import hashlib
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus, GeoLocation
 from datetime import datetime
+from src.platform.utils.time import utcnow
 
 class CasaItNormalizerAgent(BaseAgent):
     """
@@ -145,7 +146,7 @@ class CasaItNormalizerAgent(BaseAgent):
             floor=floor,
             image_urls=image_urls,
             status=ListingStatus.ACTIVE,
-            listed_at=datetime.now()
+            listed_at=utcnow()
         )
         
         # Location (Italy)

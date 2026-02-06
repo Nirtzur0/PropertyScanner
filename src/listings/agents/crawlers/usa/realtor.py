@@ -8,6 +8,7 @@ from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
+from src.platform.utils.time import unix_ts, utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -65,7 +66,7 @@ class RealtorCrawlerAgent(BaseAgent):
             if html:
                 try:
                     debug_path = self.scrape_client.build_raw_listing(
-                        external_id=f"search_realtor_{int(datetime.now().timestamp())}",
+                        external_id=f"search_realtor_{unix_ts()}",
                         url=start_url,
                         html=html,
                         snapshot_ext="html"
@@ -107,7 +108,7 @@ class RealtorCrawlerAgent(BaseAgent):
                 url=url,
                 html_snapshot_path=raw_path,
                 raw_data={"html_snippet": html, "is_detail_page": True},
-                fetched_at=datetime.now()
+                fetched_at=utcnow()
             )
             results.append(raw_listing)
             

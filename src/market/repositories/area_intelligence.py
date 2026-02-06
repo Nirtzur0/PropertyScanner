@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 
 from src.platform.db.base import RepositoryBase
+from src.platform.utils.time import utcnow
 
 
 class AreaIntelligenceRepository(RepositoryBase):
@@ -78,7 +79,7 @@ class AreaIntelligenceRepository(RepositoryBase):
         )
         payload = {
             "area_id": area_id,
-            "last_updated": datetime.now().isoformat(),
+            "last_updated": utcnow().isoformat(),
             "sentiment_score": data.get("sentiment_score"),
             "sentiment_as_of": data.get("sentiment_as_of"),
             "sentiment_credibility": data.get("sentiment_credibility"),

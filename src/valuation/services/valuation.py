@@ -51,6 +51,7 @@ from src.market.services.eri_signals import ERISignalsService
 from src.market.services.area_intelligence import AreaIntelligenceService
 from src.platform.settings import AppConfig, ValuationConfig
 from src.platform.config import DEFAULT_DB_PATH
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -460,7 +461,7 @@ class ValuationService:
         Returns:
             DealAnalysis with fair value, projections, and evidence
         """
-        valuation_date = valuation_date or datetime.now()
+        valuation_date = valuation_date or utcnow()
         sanitize_listing_features(listing)
         
         if tracer:

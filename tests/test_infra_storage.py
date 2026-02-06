@@ -1,10 +1,10 @@
 import pytest
-from datetime import datetime
 from src.platform.domain.schema import CanonicalListing, GeoLocation, ListingStatus
 from src.platform.domain.models import DBListing
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.listing_persistence import ListingPersistenceService
 from src.platform.storage import StorageService
+from src.platform.utils.time import utcnow
 
 def test_storage_service_init(test_db_path):
     """Test that StorageService initializes correctly with a file path."""
@@ -43,7 +43,7 @@ def test_save_and_retrieve_listing(db_session, test_db_path):
         listing_type="sale",
         property_type="apartment",
         status=ListingStatus.ACTIVE,
-        listed_at=datetime.utcnow()
+        listed_at=utcnow()
     )
     
     # Save

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from src.platform.domain.listing_updates import ListingUpsertPayload
 from src.platform.domain.models import DBListing
 from src.platform.db.base import RepositoryBase
+from src.platform.utils.time import utcnow
 
 
 class ListingsRepository(RepositoryBase):
@@ -201,7 +202,7 @@ class ListingsRepository(RepositoryBase):
             WHERE fetched_at IS NULL
             """
         )
-        default_value = (default_ts or datetime.utcnow()).isoformat()
+        default_value = (default_ts or utcnow()).isoformat()
         with self.engine.begin() as conn:
             result = conn.execute(query, {"default_ts": default_value})
         return int(result.rowcount or 0)

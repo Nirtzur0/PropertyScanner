@@ -10,6 +10,7 @@ from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -179,7 +180,7 @@ class RightmoveCrawlerAgent(BaseAgent):
                     "html_snippet": html_content,
                     "is_detail_page": True,
                 },
-                fetched_at=datetime.utcnow(),
+                fetched_at=utcnow(),
                 html_snapshot_path=snapshot_path,
             )
             listings.append(raw_listing)

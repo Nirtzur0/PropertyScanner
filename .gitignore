@@ -5,10 +5,16 @@ env/
 
 # Data and snapshots
 *.db-journal
+data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.sqlite3
 data/vector_index.lancedb/
+data/*.lancedb/
+data/vector_metadata.json
+
+# Crawl outputs
+crawl_results*.json
 
 # Python
 __pycache__/
@@ -32,3 +38,6 @@ data/snapshots/
 
 # Models
 models/comp_cache.json
+models/*.pt
+models/*.pth
+models/*.ckpt

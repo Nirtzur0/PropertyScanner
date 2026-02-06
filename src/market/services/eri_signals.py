@@ -14,6 +14,7 @@ from src.market.repositories.market_indices import MarketIndicesRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -146,7 +147,7 @@ class ERISignalsService:
         return df, proxy_used
 
     def _effective_date(self, as_of_date: Optional[datetime], provider: RegistryProvider) -> datetime:
-        base = as_of_date or datetime.utcnow()
+        base = as_of_date or utcnow()
         return base - timedelta(days=provider.lag_days)
 
     def _window_size(self, df: pd.DataFrame) -> int:

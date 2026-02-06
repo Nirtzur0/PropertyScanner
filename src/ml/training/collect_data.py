@@ -17,6 +17,7 @@ from src.listings.agents.crawlers.spain.pisos import PisosCrawlerAgent
 from src.listings.agents.processors.pisos import PisosNormalizerAgent
 from src.platform.utils.compliance import ComplianceManager
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.serialize import model_to_dict
 
 logger = structlog.get_logger()
 
@@ -188,12 +189,7 @@ def collect_data(
             # Convert to dict format for DB
             listing_dicts = []
             for listing in canonical_listings:
-                if hasattr(listing, "model_dump"):
-                    listing_dicts.append(listing.model_dump())
-                elif hasattr(listing, "dict"):
-                    listing_dicts.append(listing.dict())
-                else:
-                    listing_dicts.append(listing)
+                listing_dicts.append(model_to_dict(listing))
             
             # Save to DB
             inserted = save_listings_to_db(listing_dicts, db_path, app_config=app_config)

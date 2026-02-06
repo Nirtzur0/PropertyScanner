@@ -1,0 +1,5 @@
+[submodule "third_party/pydoll"]
+	path = third_party/pydoll
+	url = https://github.com/autoscrape-labs/pydoll.git
+	branch = main
+

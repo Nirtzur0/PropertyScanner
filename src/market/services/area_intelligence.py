@@ -16,6 +16,7 @@ from src.market.services.eri_signals import ERISignalsService
 from src.market.services.registry_canonical import RegistryCanonicalizer
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class AreaIntelligenceService:
                 if data:
                     self.repo.save_area(area_key, data)
                 return
-            now = datetime.utcnow()
+            now = utcnow()
 
             eri_signals = self.eri_service.get_signals(
                 area_key,
@@ -228,7 +229,7 @@ class AreaIntelligenceService:
         if pd.isna(last_upd):
             return True
         # Refresh if older than 30 days (official cadence is monthly/quarterly).
-        return (datetime.utcnow() - last_upd).days > 30
+        return (utcnow() - last_upd).days > 30
 
     def _default_profile(self, area_id: str) -> Dict[str, Any]:
         return {
@@ -327,7 +328,7 @@ class AreaIntelligenceService:
     def _freshness_days(self, as_of: Optional[datetime]) -> Optional[int]:
         if not as_of:
             return None
-        return max(0, (datetime.utcnow().date() - as_of.date()).days)
+        return max(0, (utcnow().date() - as_of.date()).days)
 
     def _freshness_factor(self, days: Optional[int]) -> float:
         if days is None:
@@ -403,7 +404,7 @@ class AreaIntelligenceService:
             return None
 
         df["seen_at"] = pd.to_datetime(df["seen_at"], format="mixed", errors="coerce")
-        cutoff = datetime.utcnow() - timedelta(days=_GEO_LOOKBACK_DAYS)
+        cutoff = utcnow() - timedelta(days=_GEO_LOOKBACK_DAYS)
         df = df[df["seen_at"].isna() | (df["seen_at"] >= cutoff)]
         if df.empty:
             return None
@@ -433,7 +434,7 @@ class AreaIntelligenceService:
         def age_weight(ts: Any) -> float:
             if ts is None or pd.isna(ts):
                 return 0.35
-            age_days = max(0, (datetime.utcnow() - ts).days)
+            age_days = max(0, (utcnow() - ts).days)
             return math.exp(-age_days / _GEO_HALF_LIFE_DAYS)
 
         df["local_sentiment"] = df.apply(combine_sentiment, axis=1)

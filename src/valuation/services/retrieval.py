@@ -20,6 +20,7 @@ from src.platform.config import VECTOR_INDEX_PATH, VECTOR_METADATA_PATH
 from src.platform.domain.schema import CanonicalListing, CompListing
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger()
 
@@ -45,7 +46,7 @@ class IndexedListing:
     listed_at: Optional[str] = None
     updated_at: Optional[str] = None
     status: Optional[str] = None
-    indexed_at: datetime = field(default_factory=datetime.now)
+    indexed_at: datetime = field(default_factory=utcnow)
 
 class CompRetriever:
     """
@@ -179,7 +180,7 @@ class CompRetriever:
                     "model_name": self.model_name,
                     "vlm_policy": self.vlm_policy,
                     "index_fingerprint": self._index_fingerprint(),
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": utcnow().isoformat(),
                     "next_int_id": self.next_int_id,
                     "listings": items
                 }, f)

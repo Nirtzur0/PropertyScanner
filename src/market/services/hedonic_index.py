@@ -34,6 +34,7 @@ from src.listings.repositories.listings import ListingsRepository
 from src.platform.storage import StorageService
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -715,7 +716,7 @@ class HedonicIndexService:
 
         region_id = region_name.lower().strip() if region_name else "all"
         has_nh = self.repo.has_column("hedonic_indices", "n_neighborhoods")
-        updated_at = datetime.now().isoformat()
+        updated_at = utcnow().isoformat()
 
         records = []
         

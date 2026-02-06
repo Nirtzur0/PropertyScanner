@@ -5,6 +5,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from src.platform.db.base import RepositoryBase
+from src.platform.utils.time import utcnow
 
 
 class MacroIndicatorsRepository(RepositoryBase):
@@ -28,7 +29,7 @@ class MacroIndicatorsRepository(RepositoryBase):
                 VALUES (:date, :euribor_12m, :ecb_deposit_rate, :idealista_index_national, :idealista_index_madrid)
                 """
             )
-        now = datetime.utcnow().isoformat()
+        now = utcnow().isoformat()
         payloads = []
         for record in records:
             month, euribor, ecb, ideal_nat, ideal_mad = record

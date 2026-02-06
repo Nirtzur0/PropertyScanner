@@ -17,6 +17,7 @@ from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
 from src.platform.utils.stealth_requests import create_session, request_get
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +42,7 @@ class OfficialSourcesAgent:
         # 2. Fetch ERI
         try:
             # For demo/MVP, we try to fetch the latest available quarters
-            current_year = datetime.now().year
+            current_year = utcnow().year
             self.fetch_eri_stats(year=current_year)
             self.fetch_eri_stats(year=current_year - 1)
         except Exception as e:

@@ -1,8 +1,8 @@
 import pytest
 import os
-from datetime import datetime
 from src.platform.domain.schema import RawListing
 from src.listings.agents.processors.idealista import IdealistaNormalizerAgent
+from src.platform.utils.time import utcnow
 
 def test_idealista_normalization(real_data_dir):
     """
@@ -18,7 +18,7 @@ def test_idealista_normalization(real_data_dir):
         external_id="123456",
         url="https://www.idealista.com/inmueble/123456/",
         raw_data={"html_snippet": html_content},
-        fetched_at=datetime.utcnow()
+        fetched_at=utcnow()
     )
     
     agent = IdealistaNormalizerAgent()

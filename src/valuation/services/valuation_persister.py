@@ -5,6 +5,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from src.platform.domain.models import PropertyValuation, DBListing
 from src.valuation.services.valuation import DealAnalysis
+from src.platform.utils.time import utcnow
 
 class ValuationPersister:
     def __init__(self, session: Session):
@@ -15,7 +16,7 @@ class ValuationPersister:
         Retrieves the latest valuation for a listing if it's recent enough.
         Returns None if no valuation exists or if it's too old.
         """
-        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        cutoff = utcnow() - timedelta(days=max_age_days)
         
         return self.session.query(PropertyValuation)\
             .filter(PropertyValuation.listing_id == listing_id)\
@@ -30,11 +31,11 @@ class ValuationPersister:
         # Serialize evidence/complex types
         evidence_dict = {
             "thesis": analysis.investment_thesis,
-            "projections": [p.dict() for p in analysis.projections],
-            "rent_projections": [p.dict() for p in getattr(analysis, "rent_projections", [])],
-            "yield_projections": [p.dict() for p in getattr(analysis, "yield_projections", [])],
+            "projections": [p.model_dump() for p in analysis.projections],
+            "rent_projections": [p.model_dump() for p in getattr(analysis, "rent_projections", [])],
+            "yield_projections": [p.model_dump() for p in getattr(analysis, "yield_projections", [])],
             "signals": analysis.market_signals,
-            "evidence": analysis.evidence.dict() if analysis.evidence else {}
+            "evidence": analysis.evidence.model_dump() if analysis.evidence else {}
         }
 
         # Calculate a simple confidence score (placeholder logic)
@@ -46,7 +47,7 @@ class ValuationPersister:
             id=str(uuid.uuid4()),
             listing_id=listing_id,
             model_version=model_version,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             fair_value=analysis.fair_value_estimate,
             price_range_low=analysis.fair_value_estimate * 0.9, # precise range is in evidence projections if needed
             price_range_high=analysis.fair_value_estimate * 1.1,

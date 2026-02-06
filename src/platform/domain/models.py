@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Float, Integer, DateTime, JSON, Boolean, 
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 from src.platform.domain.schema import PropertyType, ListingStatus, Currency
+from src.platform.utils.time import utcnow
 
 Base = declarative_base()
 
@@ -60,8 +61,8 @@ class DBListing(Base):
     tags = Column(JSON, default=list)
     
     listed_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    fetched_at = Column(DateTime, default=utcnow)
     
     status = Column(String, default="active")
     sold_at = Column(DateTime, nullable=True)
@@ -80,7 +81,7 @@ class PropertyValuation(Base):
     id = Column(String, primary_key=True) # UUID
     listing_id = Column(String, ForeignKey("listings.id"), index=True)
     model_version = Column(String, default="v1.0")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     # Core Outputs
     fair_value = Column(Float)
@@ -102,7 +103,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id = Column(String, primary_key=True)  # UUID
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     query = Column(Text, nullable=False)
     target_areas = Column(JSON, default=list)
