@@ -6,14 +6,24 @@ import json
 import os
 import re
 import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
+try:
+    import torch
+    from torch.utils.data import Dataset, DataLoader
+    TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    torch = None  # type: ignore[assignment]
+    Dataset = object  # type: ignore[assignment]
+    DataLoader = object  # type: ignore[assignment]
+    TORCH_AVAILABLE = False
 from typing import List, Dict, Tuple, Optional, Any
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime
 import structlog
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover - optional dependency
+    Image = None
 import io
 from src.listings.services.feature_sanitizer import sanitize_listing_dict, sanitize_year_built
 from src.platform.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH, LANCEDB_PATH
@@ -65,6 +75,8 @@ class PropertyDataset(Dataset):
         require_hedonic: bool = True,
         app_config: Optional[AppConfig] = None,
     ):
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("torch_not_available: install torch to use the training dataset")
         """
         Args:
             db_path: Path to database with listings table
