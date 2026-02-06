@@ -57,6 +57,21 @@ def real_data_dir():
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--run-live",
+        action="store_true",
+        default=False,
+        help="Run tests marked as live (real network/browser).",
+    )
+
+    parser.addoption(
+        "--run-e2e",
+        action="store_true",
+        default=False,
+        help="Run tests marked as e2e.",
+    )
+
+    
+    parser.addoption(
         "--run-integration",
         action="store_true",
         default=False,
@@ -66,8 +81,12 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line(
-        "markers", "integration: marks tests that hit live external services"
+        "markers", "integration: offline integration tests (DB/filesystem), no live network"
     )
+    config.addinivalue_line("markers", "e2e: end-to-end tests (offline, minimal mocks)")
+    config.addinivalue_line("markers", "live: live network/browser tests (always opt-in)")
+    config.addinivalue_line("markers", "network: hits the network")
+    config.addinivalue_line("markers", "slow: long-running tests")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -75,11 +94,36 @@ def pytest_collection_modifyitems(config, items):
         config.getoption("--run-integration")
         or os.getenv("RUN_INTEGRATION") == "1"
     )
-    if run_integration:
-        return
+    run_live = (
+        config.getoption("--run-live")
+        or os.getenv("RUN_LIVE") == "1"
+    )
+    run_e2e = (
+        config.getoption("--run-e2e")
+        or os.getenv("RUN_E2E") == "1"
+    )
+
     skip_integration = pytest.mark.skip(
         reason="integration tests require --run-integration or RUN_INTEGRATION=1"
     )
+    skip_live = pytest.mark.skip(
+        reason="live tests require --run-live or RUN_LIVE=1"
+    )
+    skip_e2e = pytest.mark.skip(
+        reason="e2e tests require --run-e2e or RUN_E2E=1"
+    )
+
     for item in items:
+        if "live" in item.keywords or "network" in item.keywords:
+            if not run_live:
+                item.add_marker(skip_live)
+            continue
+
+        if "e2e" in item.keywords:
+            if not run_e2e:
+                item.add_marker(skip_e2e)
+            continue
+
         if "integration" in item.keywords:
-            item.add_marker(skip_integration)
+            if not run_integration:
+                item.add_marker(skip_integration)
