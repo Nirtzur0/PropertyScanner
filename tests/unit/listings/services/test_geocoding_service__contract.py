@@ -1,36 +1,79 @@
-import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock
+
+import pytest
+
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+
 from src.listings.services.geocoding_service import GeocodingService
 
-class TestGeocodingService(unittest.TestCase):
 
-    @patch('src.listings.services.geocoding_service.GeocodingService.geocode_address')
-    def test_geocode_address_success(self, mock_geocode_address):
-        # Arrange
-        mock_geocode_address.return_value = (40.411798, -3.697245)
-        service = GeocodingService()
-        address = "Calle de Atocha, Madrid"
+def test_geocode_address__geolocator_returns_location__returns_lat_lon():
+    # Arrange
+    svc = GeocodingService(user_agent="test")
+    svc.geolocator = MagicMock()
+    svc.geolocator.geocode.return_value = MagicMock(latitude=40.0, longitude=-3.0)
 
-        # Act
-        result = service.geocode_address(address)
+    # Act
+    result = svc.geocode_address("Calle de Atocha, Madrid")
 
-        # Assert
-        self.assertEqual(result, (40.411798, -3.697245))
-        mock_geocode_address.assert_called_once_with(address)
+    # Assert
+    assert result == (40.0, -3.0)
+    svc.geolocator.geocode.assert_called_once_with("Calle de Atocha, Madrid", timeout=5)
 
-    @patch('src.listings.services.geocoding_service.GeocodingService.geocode_address')
-    def test_geocode_address_failure(self, mock_geocode_address):
-        # Arrange
-        mock_geocode_address.return_value = None
-        service = GeocodingService()
-        address = "Invalid Address"
 
-        # Act
-        result = service.geocode_address(address)
+def test_geocode_address__geolocator_returns_none__returns_none():
+    # Arrange
+    svc = GeocodingService(user_agent="test")
+    svc.geolocator = MagicMock()
+    svc.geolocator.geocode.return_value = None
 
-        # Assert
-        self.assertIsNone(result)
-        mock_geocode_address.assert_called_once_with(address)
+    # Act
+    result = svc.geocode_address("Invalid Address")
 
-if __name__ == '__main__':
-    unittest.main()
+    # Assert
+    assert result is None
+
+
+@pytest.mark.parametrize("exc", [GeocoderTimedOut("x"), GeocoderServiceError("y")])
+def test_geocode_address__geolocator_errors__returns_none(exc):
+    # Arrange
+    svc = GeocodingService(user_agent="test")
+    svc.geolocator = MagicMock()
+    svc.geolocator.geocode.side_effect = exc
+
+    # Act
+    result = svc.geocode_address("Some Address")
+
+    # Assert
+    assert result is None
+
+
+def test_geocode_details__geolocator_returns_address_details__returns_country_code_uppercase():
+    # Arrange
+    svc = GeocodingService(user_agent="test")
+    svc.geolocator = MagicMock()
+    svc.geolocator.geocode.return_value = MagicMock(
+        latitude=40.0,
+        longitude=-3.0,
+        raw={"address": {"country": "Spain", "country_code": "es"}},
+    )
+
+    # Act
+    details = svc.geocode_details("Madrid")
+
+    # Assert
+    assert details == {"lat": 40.0, "lon": -3.0, "country": "Spain", "country_code": "ES"}
+    svc.geolocator.geocode.assert_called_once_with("Madrid", timeout=5, addressdetails=True)
+
+
+def test_geocode_details__geolocator_returns_none__returns_none():
+    # Arrange
+    svc = GeocodingService(user_agent="test")
+    svc.geolocator = MagicMock()
+    svc.geolocator.geocode.return_value = None
+
+    # Act
+    details = svc.geocode_details("Nowhere")
+
+    # Assert
+    assert details is None

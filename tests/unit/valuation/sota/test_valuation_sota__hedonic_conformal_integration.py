@@ -81,12 +81,13 @@ def temp_db():
         month = "2024-01" if i < 20 else ("2024-02" if i < 40 else "2024-03")
         neighborhood = "ezjmgu" if i % 2 == 0 else "ezjmgv"
         base_price = 350000 if neighborhood == "ezjmgu" else 280000
-        price = base_price + np.random.normal(0, 20000)
-        
+        price = base_price + ((i % 5) - 2) * 5000
+        sqm = 80 + ((i % 7) - 3) * 2
+
         listings.append((
             f"L{i:03d}",
-            price,
-            80 + np.random.normal(0, 10),
+            float(price),
+            float(sqm),
             2,
             1,
             1,
@@ -103,10 +104,10 @@ def temp_db():
     
     # Insert pre-computed hedonic indices
     indices = [
-        ("all|2024-01", "all", "2024-01", 3000.0, 2900.0, 0.85, 20, 2, "{}", datetime.now().isoformat()),
-        ("all|2024-02", "all", "2024-02", 3100.0, 3000.0, 0.87, 20, 2, "{}", datetime.now().isoformat()),
-        ("all|2024-03", "all", "2024-03", 3200.0, 3100.0, 0.86, 20, 2, "{}", datetime.now().isoformat()),
-        ("all|2024-06", "all", "2024-06", 3300.0, 3200.0, 0.88, 20, 2, "{}", datetime.now().isoformat()),
+        ("all|2024-01", "all", "2024-01", 3000.0, 2900.0, 0.85, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("all|2024-02", "all", "2024-02", 3100.0, 3000.0, 0.87, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("all|2024-03", "all", "2024-03", 3200.0, 3100.0, 0.86, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("all|2024-06", "all", "2024-06", 3300.0, 3200.0, 0.88, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
     ]
     
     cursor.executemany("""

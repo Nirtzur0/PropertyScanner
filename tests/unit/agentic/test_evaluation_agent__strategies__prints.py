@@ -1,35 +1,32 @@
-
-import sys
-import os
 from unittest.mock import MagicMock
 
-# Add src to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import pytest
 
 from src.agentic.agents.evaluation_agent import EvaluationAgent, EvaluationRequest, PRESET_STRATEGIES
 from src.platform.domain.schema import CanonicalListing, GeoLocation, PropertyType
 
-def test_strategies():
-    # Mocking external services to avoid actual retrieval/inference
+
+@pytest.mark.parametrize("strategy", sorted(PRESET_STRATEGIES.keys()))
+def test_evaluation_agent__preset_strategies__returns_scored_result(strategy: str):
+    # Arrange
     agent = EvaluationAgent()
+
     agent._retriever = MagicMock()
     agent._retriever.retrieve_comps.return_value = []
-    
+
     agent._encoder = MagicMock()
     agent._encoder.encode_single.return_value = [0.1] * 384
 
     agent._tab_encoder = MagicMock()
-    agent._tab_encoder.encode.return_value = [0.0] * 8 # 8 dims for tabular
-    
-    agent._fusion = MagicMock()
-    # Mock prediction: Fair value 400k, Rent 2000
-    mock_fusion_output = MagicMock()
-    mock_fusion_output.price_quantiles = {"0.1": 350000.0, "0.5": 400000.0, "0.9": 450000.0}
-    mock_fusion_output.rent_quantiles = {"0.5": 2000.0}
-    mock_fusion_output.attention_weights = None
-    agent._fusion.predict.return_value = mock_fusion_output
+    agent._tab_encoder.encode.return_value = [0.0] * 8
 
-    # Create a test listing
+    agent._fusion = MagicMock()
+    fusion_out = MagicMock()
+    fusion_out.price_quantiles = {"0.1": 350000.0, "0.5": 400000.0, "0.9": 450000.0}
+    fusion_out.rent_quantiles = {"0.5": 2000.0}
+    fusion_out.attention_weights = None
+    agent._fusion.predict.return_value = fusion_out
+
     listing = CanonicalListing(
         id="test1",
         source_id="manual",
@@ -40,26 +37,26 @@ def test_strategies():
         price=350000.0,
         description="A great place",
         location=GeoLocation(
-            lat=40.0, 
-            lon=-3.0, 
-            address_full="Test St", 
-            city="Test City", 
-            country="Test Country"
+            lat=40.0,
+            lon=-3.0,
+            address_full="Test St",
+            city="Test City",
+            country="Test Country",
         ),
         bedrooms=2,
+        bathrooms=1,
         surface_area_sqm=100.0,
-        image_urls=["http://example.com/img.jpg"]
+        image_urls=["http://example.com/img.jpg"],
     )
 
-    strategies = ["balanced", "bargain_hunter", "cash_flow_investor", "safe_bet"]
-    
-    print(f"{'Strategy':<20} | {'Score':<10} | {'Thesis'}")
-    print("-" * 100)
-    
-    for strat in strategies:
-        req = EvaluationRequest(listing=listing, strategy=strat)
-        result = agent.evaluate(req)
-        print(f"{strat:<20} | {result.deal_score:.4f}     | {result.investment_thesis}")
+    # Act
+    result = agent.evaluate(EvaluationRequest(listing=listing, strategy=strategy))
 
-if __name__ == "__main__":
-    test_strategies()
+    # Assert
+    assert result.listing_id == listing.id
+    assert 0.0 <= result.deal_score <= 1.0
+    assert result.investment_thesis
+    assert result.strategy_used == strategy
+
+    assert set(result.fair_value_quantiles.keys()) == {"0.1", "0.5", "0.9"}
+    assert result.fair_value_quantiles["0.1"] < result.fair_value_quantiles["0.5"] < result.fair_value_quantiles["0.9"]

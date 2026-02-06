@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from math import isnan
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -88,12 +89,21 @@ def assert_missing_rate(
 def assert_in_range(
     values: Iterable[Any],
     *,
-    min_value: float | None = None,
-    max_value: float | None = None,
+    min: float | None = None,
+    max: float | None = None,
+    allow_nan: bool = False,
     allow_none: bool = False,
     context: str = "",
     sample: int = 5,
+    # Backwards-compatible kw names.
+    min_value: float | None = None,
+    max_value: float | None = None,
 ) -> None:
+    if min is None:
+        min = min_value
+    if max is None:
+        max = max_value
+
     bad = []
     observed = []
 
@@ -108,17 +118,23 @@ def assert_in_range(
         except (TypeError, ValueError):
             bad.append(v)
             continue
-        observed.append(fv)
-        if min_value is not None and fv < min_value:
+        if isnan(fv):
+            if allow_nan:
+                continue
             bad.append(v)
-        elif max_value is not None and fv > max_value:
+            continue
+
+        observed.append(fv)
+        if min is not None and fv < min:
+            bad.append(v)
+        elif max is not None and fv > max:
             bad.append(v)
 
     if bad:
         msg = ["Range check failed"]
         if context:
             msg.append(f"context={context}")
-        msg.append(f"min={min_value} max={max_value}")
+        msg.append(f"min={min} max={max}")
         if observed:
             msg.append(f"observed_min={min(observed):.6g} observed_max={max(observed):.6g}")
         msg.append(f"sample_invalid={bad[:sample]}")
@@ -156,3 +172,28 @@ def assert_unique(values: Iterable[Any], *, context: str = "", sample: int = 10)
         msg.append(f"duplicates_count={len(dups)}")
         msg.append(f"sample_duplicates={dups[:sample]}")
         raise AssertionError(" | ".join(msg))
+
+
+def assert_probability_vector(vec: Sequence[float], *, tol: float = 1e-6, context: str = "") -> None:
+    if vec is None:
+        raise AssertionError(f"Probability vector is None | context={context}")
+    if len(vec) == 0:
+        raise AssertionError(f"Probability vector is empty | context={context}")
+
+    total = 0.0
+    bad = []
+    for v in vec:
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            bad.append(v)
+            continue
+        if fv < -tol or fv > 1.0 + tol:
+            bad.append(v)
+        total += fv
+
+    if bad:
+        raise AssertionError(f"Probability vector values out of [0,1] | context={context} | sample_invalid={bad[:10]}")
+
+    if abs(total - 1.0) > tol:
+        raise AssertionError(f"Probability vector does not sum to 1 | context={context} | sum={total} tol={tol}")
