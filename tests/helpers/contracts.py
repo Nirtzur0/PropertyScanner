@@ -10,6 +10,7 @@ CANONICAL_LISTING_REQUIRED_FIELDS = [
     "title",
     "price",
     "surface_area_sqm",
+    "property_type",
 ]
 
 # Fields that should generally be present for "valid" normalized listings.
