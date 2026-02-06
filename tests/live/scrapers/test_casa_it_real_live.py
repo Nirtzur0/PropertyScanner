@@ -5,7 +5,8 @@ from src.listings.agents.crawlers.italy.casa_it import CasaItCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
 from src.listings.agents.processors.casa_it import CasaItNormalizerAgent
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_casait_real_search():
     """
     Test real network call to Casa.it search and normalization.

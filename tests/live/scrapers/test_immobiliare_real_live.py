@@ -2,7 +2,8 @@ import pytest
 from src.platform.utils.compliance import ComplianceManager
 from src.listings.agents.crawlers.italy.immobiliare import ImmobiliareCrawlerAgent
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_immobiliare_real_search():
     """
     Test real network call to Immobiliare.it search.

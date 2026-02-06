@@ -4,7 +4,8 @@ import logging
 from src.listings.agents.crawlers.uk.rightmove import RightmoveCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_rightmove_real_search():
     """
     Test real network call to Rightmove.co.uk search.

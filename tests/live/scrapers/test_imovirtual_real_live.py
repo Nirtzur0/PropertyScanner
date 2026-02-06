@@ -4,7 +4,8 @@ import logging
 from src.listings.agents.crawlers.portugal.imovirtual import ImovirtualCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_imovirtual_real_search():
     """
     Test real network call to Imovirtual search.

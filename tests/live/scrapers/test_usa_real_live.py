@@ -9,7 +9,8 @@ from src.listings.utils.seen_url_store import SeenUrlStore
 def compliance():
     return ComplianceManager(user_agent="PropertyScanner/Test/1.0")
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_realtor_real_search(compliance):
     """Test Realtor.com real network call."""
     SeenUrlStore().reset_mode("fetch:realtor")
@@ -35,7 +36,8 @@ def test_realtor_real_search(compliance):
         assert "captcha" not in html.lower(), "Realtor blocked"
         assert "block" not in html.lower(), "Realtor blocked"
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_redfin_real_search(compliance):
     """Test Redfin.com real network call (Expect Success)."""
     SeenUrlStore().reset_mode("fetch:redfin")
@@ -60,7 +62,8 @@ def test_redfin_real_search(compliance):
     html = response.data[0].raw_data.get("html_snippet", "")
     assert "captcha" not in html.lower(), "Redfin blocked"
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_homes_real_search(compliance):
     """Test Homes.com real network call."""
     SeenUrlStore().reset_mode("fetch:homes")

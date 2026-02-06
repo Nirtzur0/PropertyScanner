@@ -3,7 +3,8 @@ from src.platform.utils.compliance import ComplianceManager
 from src.listings.agents.crawlers.spain.idealista import IdealistaCrawlerAgent
 from src.listings.utils.seen_url_store import SeenUrlStore
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_idealista_real_search():
     """
     Test real network call to Idealista search.

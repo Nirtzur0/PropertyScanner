@@ -3,7 +3,8 @@ from src.platform.utils.compliance import ComplianceManager
 from src.listings.agents.crawlers.germany.immowelt import ImmoweltCrawlerAgent
 from src.listings.utils.seen_url_store import SeenUrlStore
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_immowelt_real_search():
     """
     Test real network call to Immowelt search.

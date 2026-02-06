@@ -4,7 +4,8 @@ import logging
 from src.listings.agents.crawlers.uk.zoopla import ZooplaCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_zoopla_real_search():
     """
     Test real network call to Zoopla.co.uk search.

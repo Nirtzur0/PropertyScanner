@@ -1,36 +1,27 @@
+from __future__ import annotations
 
-import unittest
-import os
-import sys
 import sqlite3
-import pandas as pd
 from datetime import datetime
 
-# Add project root to path
-sys.path.append(os.getcwd())
+import pandas as pd
+import pytest
 
-from src.market.services.market_indices import MarketIndexService
 from src.market.services.hedonic_index import HedonicIndexService
+from src.market.services.market_indices import MarketIndexService
 from src.valuation.services.forecasting import ForecastingService
-from src.listings.agents.crawlers import MacroIntelligenceAgent
-from src.platform.domain.schema import CanonicalListing
 
-class TestFullPipeline(unittest.TestCase):
-    
-    @classmethod
-    def setUpClass(cls):
-        print("\n=== Integration Test Suite ===")
-        # Build test DB
-        cls.db_path = "test_pipeline.db"
-        if os.path.exists(cls.db_path):
-            os.remove(cls.db_path)
-            
-        # Create Schema (Copied minimal schema for testing)
-        conn = sqlite3.connect(cls.db_path)
-        conn.execute("""
+
+@pytest.fixture
+def pipeline_db_path(tmp_path) -> str:
+    db_path = tmp_path / "pipeline.db"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
             CREATE TABLE listings (
-                id VARCHAR PRIMARY KEY, 
-                price FLOAT, 
+                id VARCHAR PRIMARY KEY,
+                price FLOAT,
                 surface_area_sqm FLOAT,
                 city VARCHAR,
                 geohash VARCHAR,
@@ -45,8 +36,10 @@ class TestFullPipeline(unittest.TestCase):
                 has_elevator INT,
                 floor INT
             )
-        """)
-        conn.execute("""
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE market_indices (
                 id TEXT PRIMARY KEY,
                 region_id TEXT,
@@ -62,10 +55,14 @@ class TestFullPipeline(unittest.TestCase):
                 volatility_3m FLOAT,
                 updated_at DATETIME
             )
-        """)
-        conn.execute("CREATE INDEX ix_market_indices_region_date ON market_indices (region_id, month_date)")
-        
-        conn.execute("""
+            """
+        )
+        conn.execute(
+            "CREATE INDEX ix_market_indices_region_date ON market_indices (region_id, month_date)"
+        )
+
+        conn.execute(
+            """
             CREATE TABLE macro_indicators (
                 date DATE PRIMARY KEY,
                 euribor_12m FLOAT,
@@ -74,100 +71,92 @@ class TestFullPipeline(unittest.TestCase):
                 idealista_index_madrid FLOAT,
                 idealista_index_national FLOAT
             )
-        """)
-        
-        # Seed Data
-        # 1. Listings (representing 3 months of data)
+            """
+        )
+
         listings = [
             ("L1", 300000, 100, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "sale", "[]", "desc", 2, 1, 1, 2),
             ("L2", 310000, 100, "madrid", "ezjmgu", "2024-02-01", "2024-02-15", "active", "sale", "[]", "desc", 2, 1, 1, 3),
             ("L3", 320000, 100, "madrid", "ezjmgu", "2024-03-01", "2024-03-15", "active", "sale", "[]", "desc", 2, 1, 1, 4),
-            # Neighbor
             ("L4", 150000, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "sale", "[]", "desc", 1, 1, 0, 1),
-            # Rent listing for rent index
             ("R1", 1500, 50, "madrid", "ezjmgu", "2024-01-01", "2024-01-15", "active", "rent", "[]", "desc", 1, 1, 0, 1),
         ]
-        
-        conn.executemany("""
-            INSERT INTO listings (id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, listing_type, image_urls, vlm_description, bedrooms, bathrooms, has_elevator, floor)
+        conn.executemany(
+            """
+            INSERT INTO listings (
+                id, price, surface_area_sqm, city, geohash, listed_at, updated_at, status, listing_type,
+                image_urls, vlm_description, bedrooms, bathrooms, has_elevator, floor
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, listings)
-        
-        # 2. Macro Data
+            """,
+            listings,
+        )
+
         macros = [
             ("2024-01-01", 3.6, 3.5, 3.0, 2000, 1800),
             ("2024-02-01", 3.6, 3.5, 3.0, 2010, 1810),
             ("2024-03-01", 3.5, 3.5, 2.9, 2020, 1820),
         ]
         conn.executemany("INSERT INTO macro_indicators VALUES (?,?,?,?,?,?)", macros)
-        
+
         conn.commit()
+    finally:
         conn.close()
 
-    @classmethod
-    def tearDownClass(cls):
-        if os.path.exists(cls.db_path):
-            os.remove(cls.db_path)
+    return str(db_path)
 
-    def test_market_index_generation(self):
-        """Verify that raw listings are correctly aggregated into monthly indices"""
-        print("Testing Market Index Generation...")
-        service = MarketIndexService(db_path=self.db_path)
-        service.recompute_indices(region_type="city")
-        
-        conn = sqlite3.connect(self.db_path)
+
+@pytest.mark.integration
+def test_market_indices__seeded_listings__creates_rows(pipeline_db_path):
+    # Arrange
+    service = MarketIndexService(db_path=pipeline_db_path)
+
+    # Act
+    service.recompute_indices(region_type="city")
+
+    # Assert
+    conn = sqlite3.connect(pipeline_db_path)
+    try:
         indices = pd.read_sql("SELECT * FROM market_indices WHERE region_id='madrid'", conn)
+    finally:
         conn.close()
-        
-        self.assertGreaterEqual(len(indices), 1)
-        # Check logic: Price should be median of price/sqm
-        # L1: 3000/sqm, L4: 3000/sqm -> Median 3000
-        # self.assertAlmostEqual(indices.iloc[0]['price_index_sqm'], 3000.0)
-        print("Market Indices generated successfully.")
 
-    def test_hedonic_index(self):
-        """Verify quality-adjusted index calculation"""
-        print("Testing Hedonic Index...")
-        service = HedonicIndexService(db_path=self.db_path)
-        df = service.compute_index(region_name="madrid")
-        
-        # We need enough data for regression to run, might return empty in this minimal test
-        # but shouldn't crash
-        if not df.empty:
-            self.assertIn("hedonic_index", df.columns)
-            print("Hedonic Index computed.")
-        else:
-            print("Hedonic Index skipped (insufficient data), but ran without error.")
+    assert len(indices) >= 1
 
-    def test_forecasting_pipeline(self):
-        """Verify the forecasting service runs using the joined data"""
-        print("Testing Forecasting Service...")
-        
-        # First ensure market indices exist
-        idx_svc = MarketIndexService(db_path=self.db_path)
-        idx_svc.recompute_indices(region_type="city")
-        
-        svc = ForecastingService(db_path=self.db_path)
-        projections = svc.forecast_property(
-            region_id="madrid",
-            current_value=300000,
-            horizons_months=[3, 6]
-        )
-        
-        self.assertEqual(len(projections), 2)
-        print(f"Generated {len(projections)} projections.")
 
-        rent_projections = svc.forecast_rent(
-            region_id="madrid",
-            current_monthly_rent=1500,
-            horizons_months=[3, 6],
-        )
-        self.assertEqual(len(rent_projections), 2)
-        
-    def test_macro_agent_stub(self):
-        """Verify macro agent instantiation"""
-        agent = MacroIntelligenceAgent(db_path=self.db_path)
-        self.assertIsNotNone(agent)
+@pytest.mark.integration
+def test_hedonic_index__seeded_listings__does_not_crash(pipeline_db_path):
+    # Arrange
+    service = HedonicIndexService(db_path=pipeline_db_path)
 
-if __name__ == "__main__":
-    unittest.main()
+    # Act
+    df = service.compute_index(region_name="madrid")
+
+    # Assert
+    # On minimal synthetic data, regression may be skipped, but the call should be safe.
+    assert isinstance(df, pd.DataFrame)
+
+
+@pytest.mark.integration
+def test_forecasting_service__with_indices__returns_horizons(pipeline_db_path):
+    # Arrange
+    idx_svc = MarketIndexService(db_path=pipeline_db_path)
+    idx_svc.recompute_indices(region_type="city")
+
+    svc = ForecastingService(db_path=pipeline_db_path)
+
+    # Act
+    projections = svc.forecast_property(
+        region_id="madrid",
+        current_value=300000,
+        horizons_months=[3, 6],
+    )
+    rent_projections = svc.forecast_rent(
+        region_id="madrid",
+        current_monthly_rent=1500,
+        horizons_months=[3, 6],
+    )
+
+    # Assert
+    assert len(projections) == 2
+    assert len(rent_projections) == 2

@@ -4,7 +4,8 @@ import logging
 from src.listings.agents.crawlers.spain.pisos import PisosCrawlerAgent
 from src.platform.utils.compliance import ComplianceManager
 
-@pytest.mark.integration
+@pytest.mark.live
+@pytest.mark.network
 def test_pisos_real_search():
     """
     Test real network call to Pisos.com search.
