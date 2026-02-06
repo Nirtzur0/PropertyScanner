@@ -5,6 +5,9 @@ from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
 from src.market.repositories.it_registry_metrics import ItalyRegistryMetricsRepository
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def omi_sample_csv(tmp_path):
     # OMI Format Mimic (Simplified)

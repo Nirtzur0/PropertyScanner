@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 
 from src.listings.agents.crawlers.uk.rightmove import RightmoveCrawlerAgent
@@ -9,6 +10,9 @@ from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgen
 from src.listings.scraping.client import FetchResult
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.listing_persistence import ListingPersistenceService
+
+pytestmark = pytest.mark.integration
+
 
 
 class DummyCompliance:

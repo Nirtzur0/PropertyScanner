@@ -7,6 +7,9 @@ from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistryConfig, RegistrySourceConfig
 from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def uk_sample_csv(tmp_path):
     # UK Registry Metrics expects aggregated data (e.g. Price Paid Data aggregated by city/month)

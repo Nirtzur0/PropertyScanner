@@ -6,6 +6,9 @@ from src.listings.services.listing_persistence import ListingPersistenceService
 from src.valuation.services.valuation import ValuationService
 from src.platform.storage import StorageService
 
+pytestmark = pytest.mark.integration
+
+
 def create_comps(persistence, city="madrid"):
     """Create comparable listings for valuation."""
     listings = []

@@ -185,7 +185,6 @@ class TestOrchestrator:
         mock_graph.invoke.assert_called_once()
 
 
-@pytest.mark.integration
 class TestIntegration:
     """Semi-integration tests with full graph compilation and mocked LLM."""
 

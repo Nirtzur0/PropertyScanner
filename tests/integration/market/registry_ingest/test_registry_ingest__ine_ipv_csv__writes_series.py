@@ -5,6 +5,9 @@ from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
 from src.market.repositories.ine_ipv import IneIpvRepository
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def ine_ipv_sample_csv(tmp_path):
     # Mimic INE IPV CSV format (usually columns: Periodo; Comunidades...; Índice)

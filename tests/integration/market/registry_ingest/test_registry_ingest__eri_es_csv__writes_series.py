@@ -5,6 +5,9 @@ from src.market.services.registry_ingest import RegistryIngestService
 from src.platform.settings import AppConfig, RegistrySourceConfig
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
 def ine_sample_csv(tmp_path):
     # INE IPV Format Mimic (Simplified)

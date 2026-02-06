@@ -6,6 +6,9 @@ from src.listings.services.listing_persistence import ListingPersistenceService
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
 
+pytestmark = pytest.mark.integration
+
+
 def test_storage_service_init(test_db_path):
     """Test that StorageService initializes correctly with a file path."""
     db_url = f"sqlite:///{test_db_path}"
