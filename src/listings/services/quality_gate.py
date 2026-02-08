@@ -20,8 +20,11 @@ class ListingQualityGate:
             reasons.append("missing_title")
         if not listing.price or listing.price <= 0:
             reasons.append("invalid_price")
+        # Some portals often omit floor area; if we have bedrooms we can still persist
+        # and let downstream models filter or enrich later.
         if not listing.surface_area_sqm or listing.surface_area_sqm <= 0:
-            reasons.append("invalid_surface_area")
+            if listing.bedrooms is None:
+                reasons.append("invalid_surface_area")
         return reasons
 
     def should_halt(self, *, invalid_count: int, total_count: int) -> bool:

@@ -82,6 +82,27 @@ ensure_session_defaults(cities, available_types, available_countries, cities_by_
 def _safe_list(val):
     return val if isinstance(val, list) else []
 
+def _is_finite_num(val: object) -> bool:
+    try:
+        num = float(val)  # type: ignore[arg-type]
+    except Exception:
+        return False
+    return math.isfinite(num)
+
+def _fmt_eur(val: object, digits: int = 0) -> str:
+    num = safe_num(val, None)
+    if num is None or not math.isfinite(float(num)):
+        return "N/A"
+    if digits <= 0:
+        return f"{float(num):,.0f} €"
+    return f"{float(num):,.{digits}f} €"
+
+def _fmt_pct(val: object, digits: int = 1) -> str:
+    num = safe_num(val, None)
+    if num is None or not math.isfinite(float(num)):
+        return "N/A"
+    return f"{float(num):.{digits}%}"
+
 def _resolve_target_areas(selected_city: str, selected_country: str) -> list[str]:
     if selected_city and selected_city != "All":
         return [selected_city]
@@ -354,11 +375,15 @@ with left_col:
 
 # --- Load Data ---
 with st.spinner("Scouting listings..."):
-    df = fetch_listings_dataframe(
-        storage, valuation, retriever, 
-        selected_country, selected_city, selected_types, 
-        max_listings=st.session_state.max_listings
-    )
+    try:
+        df = fetch_listings_dataframe(
+            storage, valuation, retriever,
+            selected_country, selected_city, selected_types,
+            max_listings=st.session_state.max_listings
+        )
+    except Exception as exc:
+        st.error(f"Failed to load listings: {exc}")
+        st.stop()
 
 if df.empty:
     st.markdown(
@@ -699,7 +724,7 @@ with left_panel:
                         if ranked:
                             st.image(ranked[0], use_container_width=True)
                         st.markdown(f"**{row['Title']}**")
-                        st.caption(f"{row['City']}, {row['Country']} • {row['Price']:,.0f} €")
+                        st.caption(f"{row['City']}, {row['Country']} • {_fmt_eur(row.get('Price'))}")
                         why = row.get("Why")
                         if isinstance(why, str) and why:
                             st.caption(why)
@@ -718,7 +743,7 @@ with left_panel:
                             st.image(ranked[0], use_container_width=True)
                     with row_cols[1]:
                         st.markdown(f"**{row['Title']}**")
-                        st.caption(f"{row['City']}, {row['Country']} • {row['Price']:,.0f} €")
+                        st.caption(f"{row['City']}, {row['Country']} • {_fmt_eur(row.get('Price'))}")
                         why = row.get("Why")
                         if isinstance(why, str) and why:
                             st.caption(why)
@@ -731,9 +756,13 @@ with left_panel:
     else:
         st.markdown("### 📑 Memo")
         if st.session_state.selected_title:
-            item = filtered_df[filtered_df["Title"] == st.session_state.selected_title].iloc[0]
+            selected_items = filtered_df[filtered_df["Title"] == st.session_state.selected_title]
+            if selected_items.empty:
+                st.info("Selected listing is not in the current lens.")
+                st.stop()
+            item = selected_items.iloc[0]
             st.markdown(f"**{item['Title']}**")
-            st.caption(f"{item['City']}, {item['Country']} • {item['Price']:,.0f} €")
+            st.caption(f"{item['City']}, {item['Country']} • {_fmt_eur(item.get('Price'))}")
             intel = item.get("Intel Summary")
             if isinstance(intel, str) and intel:
                 st.caption(intel)
@@ -749,8 +778,15 @@ with left_panel:
                 icon = "✅" if i["positive"] else "⚠️"
                 st.write(f"{icon} **{i['label']}**: {i['detail']}")
 
-            st.metric("Asking Price", f"{item['Price']:,.0f} €")
-            st.metric("Fair Value", f"{item['Fair Value']:,.0f} €", delta=f"{item['Value Delta %']:.1%}")
+            ask_price = item.get("Price")
+            fair_value = item.get("Fair Value")
+            value_delta = item.get("Value Delta %")
+            st.metric("Asking Price", _fmt_eur(ask_price))
+            if _is_finite_num(fair_value):
+                delta_text = _fmt_pct(value_delta, digits=1) if _is_finite_num(value_delta) else None
+                st.metric("Fair Value", _fmt_eur(fair_value), delta=delta_text)
+            else:
+                st.metric("Fair Value", "N/A")
 
             st.markdown("#### SWOT")
             swot = build_swot(item, [], "")
@@ -772,20 +808,35 @@ with left_panel:
     )
 
     if insight_choice == "🧪 Signal Lab":
-        fig = px.scatter(
-            filtered_df,
-            x="Yield %",
-            y="Value Delta %",
-            color="Deal Score",
-            size="Price",
-            hover_data=["Title"],
-        )
-        selection = st.plotly_chart(fig, on_select="rerun", selection_mode="lasso", use_container_width=True)
-        selected = resolve_plotly_selection(selection, filtered_df, id_col="ID")
-        if not selected.empty:
-            st.dataframe(selected, use_container_width=True)
+        required_cols = ["Yield %", "Value Delta %", "ID", "Title"]
+        missing = [c for c in required_cols if c not in filtered_df.columns]
+        if missing:
+            st.info(f"Signal Lab unavailable (missing: {', '.join(missing)}).")
         else:
-            st.info("Select points to drill down.")
+            plot_df = filtered_df.dropna(subset=["Yield %", "Value Delta %"]).copy()
+            if plot_df.empty:
+                st.info("No signal points available for the current lens.")
+            else:
+                scatter_kwargs: Dict[str, Any] = dict(
+                    data_frame=plot_df,
+                    x="Yield %",
+                    y="Value Delta %",
+                    hover_data=["Title"],
+                )
+                if "Deal Score" in plot_df.columns:
+                    scatter_kwargs["color"] = "Deal Score"
+                if "Price" in plot_df.columns:
+                    scatter_kwargs["size"] = "Price"
+
+                fig = px.scatter(**scatter_kwargs)
+                selection = st.plotly_chart(
+                    fig, on_select="rerun", selection_mode="lasso", use_container_width=True
+                )
+                selected = resolve_plotly_selection(selection, plot_df, id_col="ID")
+                if not selected.empty:
+                    st.dataframe(selected, use_container_width=True)
+                else:
+                    st.info("Select points to drill down.")
 
     elif insight_choice == "🎯 Scout Picks":
         if not scout_picks:
@@ -801,6 +852,7 @@ with left_panel:
                     st.caption(why)
                 if st.button("Open memo", key=f"pick_{row['ID']}"):
                     st.session_state.selected_title = row["Title"]
+                    st.session_state.left_panel_view = "📑 Memo"
                     st.rerun()
                 st.divider()
 
@@ -868,9 +920,12 @@ with right_panel:
                 filled=True,
                 stroked=True,
             )
+            carto_light = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+            carto_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
             st.pydeck_chart(
                 pdk.Deck(
-                    map_style="dark" if map_is_dark else "light",
+                    # Use CARTO basemaps to avoid requiring a Mapbox token.
+                    map_style=carto_dark if map_is_dark else carto_light,
                     initial_view_state=pdk.ViewState(
                         latitude=center_lat,
                         longitude=center_lon,

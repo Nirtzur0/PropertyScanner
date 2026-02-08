@@ -70,13 +70,38 @@ class PisosNormalizerAgent(BaseAgent):
         sqm = None
         
         def parse_eu_float(t):
-             # Remove thousands separator (.), replace decimal separator (,) with (.)
-             # "1.200,50" -> "1200.50"
-             clean = t.replace('.', '') 
-             clean = clean.replace(',', '.')
-             # Remove non-numeric except dot
-             clean = re.sub(r'[^\d.]', '', clean)
-             return float(clean) if clean else 0.0
+             """
+             Parse a float from European-ish formats.
+
+             Handles:
+             - "1.200,50" -> 1200.50
+             - "1,200.50" (already dot-decimal) -> 1200.50
+             - "58.69" -> 58.69 (dot-decimal, not thousands)
+             - "1.234.567" -> 1234567
+             """
+             raw = re.sub(r"[^0-9.,]", "", str(t or ""))
+             if not raw:
+                 return 0.0
+
+             if "," in raw and "." in raw:
+                 # Assume "." thousands and "," decimal: 1.234,56
+                 raw = raw.replace(".", "").replace(",", ".")
+             elif "," in raw:
+                 # Assume "," decimal: 58,69
+                 raw = raw.replace(",", ".")
+             elif "." in raw:
+                 # Dot could be decimal or thousands. Treat as decimal if last group is 1-2 digits.
+                 parts = raw.split(".")
+                 last = parts[-1]
+                 if last.isdigit() and len(last) in (1, 2) and all(p.isdigit() for p in parts[:-1] if p):
+                     raw = "".join(parts[:-1]) + "." + last
+                 else:
+                     raw = raw.replace(".", "")
+
+             try:
+                 return float(raw)
+             except Exception:
+                 return 0.0
 
         # Strategy 1: Summary list (e.g. "2 habs.", "78 m²")
         chars = soup.select("ul.features-summary li")
@@ -86,8 +111,26 @@ class PisosNormalizerAgent(BaseAgent):
             txt_lower = txt.lower()
             if "hab" in txt_lower or "dorm" in txt_lower:
                 bedrooms = int(re.sub(r'[^\d]', '', txt) or 0)
-            elif "m²" in txt_lower or "m2" in txt_lower:
+            elif ("m²" in txt_lower or "m2" in txt_lower) and not (
+                "€/m" in txt_lower
+                or "eur/m" in txt_lower
+                or (" /m" in txt_lower and ("€" in txt_lower or "eur" in txt_lower))
+                or ("/m" in txt_lower and ("€" in txt_lower or "eur" in txt_lower))
+            ):
                 sqm = parse_eu_float(txt)
+
+        # JSON-LD floorSize (if present)
+        if not sqm and json_data.get("floorSize"):
+            try:
+                floor_size = json_data["floorSize"]
+                if isinstance(floor_size, dict):
+                    sqm_val = floor_size.get("value") or floor_size.get("maxValue") or floor_size.get("minValue")
+                    if sqm_val is not None:
+                        sqm = float(str(sqm_val).replace(",", "."))
+                elif isinstance(floor_size, (int, float, str)):
+                    sqm = float(str(floor_size).replace(",", "."))
+            except Exception:
+                pass
                 
         # DOM Parsing for details
         # Strategy 2: Detailed features block (fallback if chars didn't work or found nothing)
@@ -114,7 +157,12 @@ class PisosNormalizerAgent(BaseAgent):
                 txt = c.get_text(strip=True).lower()
                 if "hab" in txt or "dorm" in txt:
                     bedrooms = int(re.sub(r'[^\d]', '', txt) or 0)
-                elif "m²" in txt or "m2" in txt:
+                elif ("m²" in txt or "m2" in txt) and not (
+                    "€/m" in txt
+                    or "eur/m" in txt
+                    or (" /m" in txt and ("€" in txt or "eur" in txt))
+                    or ("/m" in txt and ("€" in txt or "eur" in txt))
+                ):
                     sqm = parse_eu_float(txt)
         
         # --- NEW: Extended Features (Bathrooms, Floor, Elevator) ---
@@ -134,13 +182,13 @@ class PisosNormalizerAgent(BaseAgent):
         if not bathrooms:
             for c in chars:
                 txt = c.get_text(strip=True).lower()
-                if "baño" in txt:
+                if "baño" in txt or "bano" in txt:
                     bathrooms = int(re.sub(r'[^\d]', '', txt) or 0)
 
         # 2. Parse from Feature Blocks (Generic) if still missing
         if not bathrooms:
             # "2 baños"
-            m = re.search(r'(\d+)\s*baño', full_feat_text)
+            m = re.search(r'(\d+)\s*ba(?:ñ|n)o', full_feat_text)
             if m:
                 bathrooms = int(m.group(1))
 
@@ -245,20 +293,45 @@ class PisosNormalizerAgent(BaseAgent):
         
         # 2. Try Breadcrumbs (Very reliable)
         if city == "Unknown":
-            breadcrumbs = soup.select("div.bread-crumbs ul li a, ul.breadcrumbs li a")
+            breadcrumbs = soup.select(
+                "div.bread-crumbs ul li a, ul.breadcrumbs li a, nav.breadcrumb a, ol.breadcrumb li a, .breadcrumb a"
+            )
             if breadcrumbs:
                 # Usually: Home > Sale > Province > City > Zone
                 # We try to grab the City (index -2 or -3 usually?)
                 # Or just grab the text of the one containing "Pisos en..."
+                candidates = []
                 for b in breadcrumbs:
                     txt = b.get_text(strip=True)
-                    if txt not in ["pisos.com", "Venta", "Alquiler"] and "Pisos en" not in txt:
-                        # Likely a place name
-                        # Filter out "Pisos en Madrid" -> "Madrid"
-                        clean_city = txt.replace("Pisos en ", "").replace("Casas en ", "").strip()
-                        if clean_city:
-                            city = clean_city
-                            # Keep looking for more specific ones? usually last reliable one is fine.
+                    if not txt or txt in ["pisos.com", "Venta", "Alquiler", "Inicio", "Home"]:
+                        continue
+                    clean_city = (
+                        txt.replace("Pisos en ", "")
+                        .replace("Casas en ", "")
+                        .strip()
+                    )
+                    if clean_city:
+                        candidates.append(clean_city)
+
+                # Prefer the actual city over neighborhood/zone crumbs.
+                if candidates:
+                    candidates_norm = [c.strip() for c in candidates if c.strip()]
+                    common_cities = {
+                        "madrid",
+                        "barcelona",
+                        "valencia",
+                        "sevilla",
+                        "zaragoza",
+                        "malaga",
+                        "alicante",
+                        "bilbao",
+                    }
+                    chosen = None
+                    for c in candidates_norm:
+                        if c.lower() in common_cities:
+                            chosen = c
+                            break
+                    city = chosen or candidates_norm[0]
         
         # 3. Fallback to URL extraction if still Unknown
         if city == "Unknown":
@@ -379,6 +452,17 @@ class PisosNormalizerAgent(BaseAgent):
                 city=city, # Might be "Unknown"
                 country="ES"
             )
+
+        # Final fallback for sqm: scan full text for "NN m2"/"NN m²".
+        # We keep it conservative to avoid capturing prices/years.
+        if canonical.surface_area_sqm is None or canonical.surface_area_sqm <= 0:
+            try:
+                text_content = soup.get_text(" ", strip=True).lower()
+                m = re.search(r"\b(\d{2,3}(?:[.,]\d+)?)\s*(?:m2|m²)\b", text_content)
+                if m:
+                    canonical.surface_area_sqm = float(m.group(1).replace(".", "").replace(",", "."))
+            except Exception:
+                pass
 
         # Timestamps (Source)
         if json_data.get("datePosted"):

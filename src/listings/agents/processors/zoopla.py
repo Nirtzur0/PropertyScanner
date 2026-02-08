@@ -143,6 +143,53 @@ class ZooplaNormalizerAgent(BaseAgent):
         cleaned = [str(p).strip() for p in parts if p]
         return ", ".join(cleaned) if cleaned else fallback
 
+    def _extract_price_from_text(self, *candidates: str) -> Optional[float]:
+        for text in candidates:
+            if not text:
+                continue
+            match = re.search(r"£\\s*([\\d,]+)", str(text))
+            if match:
+                return self._parse_float(match.group(1))
+        return None
+
+    def _extract_area_sqm_from_text(self, text: str) -> Optional[float]:
+        if not text:
+            return None
+
+        # Prefer sqm when present, but avoid SVG path fragments like ".28m2.95".
+        sqm_values = []
+        sqm_pat = re.compile(
+            r"(?<![\\w.])(\\d{2,4}(?:\\.\\d+)?)\\s*(?:sq\\.?\\s*m|sqm|m2|m²)(?![\\w.])",
+            re.IGNORECASE,
+        )
+        for match in sqm_pat.finditer(text):
+            value = self._parse_float(match.group(1))
+            if value is None:
+                continue
+            if 5 <= value <= 5000:
+                sqm_values.append(value)
+        if sqm_values:
+            return max(sqm_values)
+
+        # Fallback to sqft -> sqm.
+        sqft_values = []
+        sqft_pat = re.compile(
+            r"(?<![\\w.])(\\d{2,5}(?:,\\d{3})?)\\s*(?:sq\\.?\\s*ft|sqft)(?![\\w.])",
+            re.IGNORECASE,
+        )
+        for match in sqft_pat.finditer(text):
+            raw = match.group(1)
+            cleaned = raw.replace(",", "")
+            value = self._parse_float(cleaned)
+            if value is None:
+                continue
+            if 50 <= value <= 20000:
+                sqft_values.append(value)
+        if sqft_values:
+            return float(max(sqft_values) * 0.092903)
+
+        return None
+
     def _parse_item(self, raw: RawListing) -> Optional[CanonicalListing]:
         html = raw.raw_data.get("html_snippet", "")
         if not html:
@@ -166,6 +213,10 @@ class ZooplaNormalizerAgent(BaseAgent):
             offers = offers[0]
         price = self._parse_float(offers.get("price")) or 0.0
         currency = offers.get("priceCurrency") or "GBP"
+        if price == 0.0:
+            price_from_text = self._extract_price_from_text(title, description)
+            if price_from_text:
+                price = price_from_text
 
         bedrooms = self._parse_float(data.get("numberOfRooms"))
         if bedrooms is not None:
@@ -176,6 +227,18 @@ class ZooplaNormalizerAgent(BaseAgent):
 
         floor_size = data.get("floorSize") or {}
         sqm = self._area_to_sqm(floor_size.get("value"), floor_size.get("unitCode"))
+        if sqm is None or sqm <= 0:
+            # Some Zoopla pages omit JSON-LD, but include sqft/sqm in rendered text or embedded scripts.
+            # Use both visible text and raw HTML for best coverage.
+            text_blob = " ".join(
+                [
+                    title or "",
+                    description or "",
+                    soup.get_text(" ", strip=True) or "",
+                    html,
+                ]
+            )
+            sqm = self._extract_area_sqm_from_text(text_blob)
 
         if bedrooms is None:
             match = re.search(r"(\d+)\s*bed", title.lower())
@@ -203,6 +266,10 @@ class ZooplaNormalizerAgent(BaseAgent):
         city = address.get("addressLocality") or address.get("addressRegion") or "Unknown"
         country = address.get("addressCountry") or "GB"
         address_full = self._compose_address(address, title)
+        if (not city or city == "Unknown") and title:
+            parts = [p.strip() for p in title.split(",") if p and p.strip()]
+            if len(parts) >= 2:
+                city = parts[1]
 
         lat = None
         lon = None

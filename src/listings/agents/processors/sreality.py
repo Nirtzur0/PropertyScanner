@@ -4,6 +4,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 import structlog
 import re
+import hashlib
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import CanonicalListing, RawListing, GeoLocation
@@ -31,22 +32,47 @@ class SrealityNormalizerAgent(BaseAgent):
              result["title"] = title_el.get_text(strip=True)
 
         # Price
-        # Look for text containing CZK or Kč
-        price_text = None
-        for el in soup.find_all(["p", "span", "div", "strong"]):
-            txt = el.get_text(strip=True)
-            if ("CZK" in txt or "Kč" in txt) and len(txt) < 30:
-                 price_text = txt
-                 break
-        
-        if price_text:
-             clean = re.sub(r"[^\d]", "", price_text)
-             if clean:
-                 try:
-                     result["price_amount"] = float(clean)
-                     result["currency"] = "CZK"
-                 except:
-                     pass
+        def _parse_czk(text: str) -> Optional[float]:
+            if not text:
+                return None
+            m = re.search(r"(\d[\d\s\u00a0]{3,})\s*(?:Kč|CZK)", text)
+            if not m:
+                return None
+            clean = re.sub(r"[^\d]", "", m.group(1))
+            # Guard against accidentally grabbing huge digit blobs from embedded JSON.
+            if not clean or len(clean) > 11:
+                return None
+            try:
+                value = float(clean)
+            except Exception:
+                return None
+            if value <= 0:
+                return None
+            return value
+
+        # Prefer meta descriptions which usually include price in a tight, reliable string.
+        meta_desc = soup.select_one("meta[name='description']")
+        if meta_desc and meta_desc.get("content"):
+            parsed = _parse_czk(str(meta_desc.get("content")))
+            if parsed is not None:
+                result["price_amount"] = parsed
+                result["currency"] = "CZK"
+
+        if not result.get("price_amount"):
+            og_desc = soup.select_one("meta[property='og:description']")
+            if og_desc and og_desc.get("content"):
+                parsed = _parse_czk(str(og_desc.get("content")))
+                if parsed is not None:
+                    result["price_amount"] = parsed
+                    result["currency"] = "CZK"
+
+        if not result.get("price_amount"):
+            # Last resort: scan rendered text.
+            text_content = soup.get_text(" ", strip=True)
+            parsed = _parse_czk(text_content)
+            if parsed is not None:
+                result["price_amount"] = parsed
+                result["currency"] = "CZK"
 
         # Location/Address
         # Heuristic: title often contains address in Sreality
@@ -146,21 +172,32 @@ class SrealityNormalizerAgent(BaseAgent):
                 
                 data = self.normalize(html, url)
                 
-                # Construct CanonicalListing
-                listing_id = raw.external_id or "unknown"
-                
-                
+                external_id = raw.external_id or "unknown"
+                # Canonical ids must be globally unique across sources.
+                listing_id = hashlib.md5(f"{raw.source_id}_{external_id}".encode("utf-8")).hexdigest()
+
                 # Construct GeoLocation
+                address = data.get("address", "") or ""
+                city = data.get("city") or ""
+                if not city:
+                    # Heuristic: "..., Praha - ..." or "... Praha ..."
+                    if re.search(r"\bprah", address.lower()) or re.search(r"\bprah", (data.get("title") or "").lower()):
+                        city = "Prague"
+                    elif "," in address:
+                        city = address.split(",")[-1].strip() or "Unknown"
+                    else:
+                        city = "Unknown"
+
                 location = GeoLocation(
-                    address_full=data.get("address", ""),
-                    city=data.get("city", "Unknown"),
+                    address_full=address,
+                    city=city,
                     country="CZ",
                     zip_code=data.get("zip_code"),
                 )
 
                 listing = CanonicalListing(
                     id=listing_id,
-                    external_id=raw.external_id,
+                    external_id=external_id,
                     source_id=raw.source_id,
                     url=url,
                     title=data.get("title", "Unknown Property"),

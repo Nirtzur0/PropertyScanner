@@ -11,18 +11,9 @@ Projects that want plugins can still enable them explicitly via env vars.
 from __future__ import annotations
 
 import os
-import sys
 
-
-def _looks_like_pytest_invocation(argv0: str) -> bool:
-    base = os.path.basename(argv0 or "")
-    if base.startswith("pytest"):
-        return True
-    # "python -m pytest" style
-    if base.startswith("python") and any(arg == "pytest" for arg in sys.argv[1:3]):
-        return True
-    return False
-
-
-if _looks_like_pytest_invocation(sys.argv[0] if sys.argv else ""):
-    os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+# Pytest plugin auto-loading is the common source of "it works on my machine"
+# failures when dev machines have globally-installed pytest plugins (LangSmith,
+# etc.) that don't match our dependency pins. Setting this env var is harmless
+# for non-pytest processes: pytest is the only consumer.
+os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")

@@ -1,87 +1,30 @@
-# 🦅 Property Scanner: The Scout V2
+# Property Scanner (The Scout V2)
 
-> **Comparable sales tell you the price. The Scout tells you the story.**
+Local-first, agentic property intelligence: crawl listings, enrich them with market + multimodal signals, and produce valuations you can explore in a Streamlit dashboard.
 
-**Property Scanner (The Scout V2)** is a local-first, agentic property intelligence stack. It crawls listings, enriches them with multimodal and market signals, and produces valuations that blend **time-safe comps**, **income potential**, and **area intelligence**.
+For: building a repeatable pipeline for deal discovery, comp retrieval/indexing, training, and valuation workflows on your own machine (SQLite by default).
 
-If you like your deal flow like your espresso: strong, fast, and mildly judgmental, you’re in the right place.
-
----
-
-## What You Get
-
-- **Scout dashboard** (Streamlit): Deal Flow, Atlas map, Investment Memo, Signal Lab, Pipeline Status.
-- **Canonical orchestration**: `preflight` checks freshness and runs only what’s stale.
-- **Unified crawler**: multi-source scraping with quality gates so bad data doesn’t pollute the lake.
-- **Time-safe comp retrieval**: LanceDB-backed vector index + metadata locks.
-- **Fusion valuation**: comp baseline + residual model + income blend + area adjustments.
-- **Agents**: a cognitive orchestrator that can plan work, ask for approval on sensitive steps, and explain picks.
+Quick Links: [Docs](./docs/00_docs_index.md) | [Dashboard](./src/interfaces/dashboard/app.py) | [CLI](./src/interfaces/cli.py) | [Config](./config/app.yaml) | [Crawler status](./docs/crawler_status.md)
 
 ---
 
-## What Makes It Different (The “No, Really” Bits)
+## What It Does
 
-- **Multimodal fusion model** predicts log-residuals on top of a robust comp baseline.
-- **Time-safe comps** with retriever metadata enforcement (encoder + VLM policy locks).
-- **Income-aware valuation** blends rent estimates with local yield distributions and comp coverage weighting.
-- **Area intelligence** adds sentiment/development signals with credibility and freshness scaling.
-- **Sold-price labels preferred**: training labels favor transaction prices when available.
-- **Preflight orchestration is canonical**: freshness checks first, work only if stale.
-- **Quality gates + run logs**: bad crawls stop early; everything is recorded in `pipeline_runs`.
+- Crawls listings (multi-source) and normalizes them into a canonical schema.
+- Runs enrichment and optional LLM/VLM feature fusion (via Ollama + LiteLLM fallbacks).
+- Builds market data artifacts and a comp retriever index (LanceDB).
+- Trains a fusion model and backfills valuations.
+- Exposes everything via the Streamlit dashboard (`./src/interfaces/dashboard/app.py`), CLI (`./src/interfaces/cli.py`), and Python API (`./src/interfaces/api/pipeline.py`).
 
 ---
 
-## How It Works (60 Seconds)
+## Quickstart
 
-1. **Crawl backfill**: crawl listings, normalize, fuse signals, augment, persist.
-2. **Transactions**: ingest sold/registry data so “sale” labels are real, not vibes.
-3. **Market data**: build macro signals, market indices, hedonic indices, and area intelligence.
-4. **Vector index**: build the LanceDB comp index with time-safe metadata locks.
-5. **Training**: train the fusion model (time+geo splits supported).
-6. **Valuation**: time-adjusted comps + fusion residuals + income blend + area adjustments.
-
----
-
-## UI Tour (With Real UI Examples)
-
-The Scout UI keeps controls minimal and intent maximal: pick your **lens** (country/city/type/budget), then let the system rank and explain.
-
-### Example 1: “Scout Command” (Mission Control)
-
-In the UI’s **Scout Command** box you’ll see built-in examples like:
-
-```text
-💰 High Yield deals
-📉 Undervalued gems
-🚀 High Momentum
-📍 Only Barcelona
-```
-
-Pick one, and the orchestrator will propose (and sometimes auto-run) a plan, then return:
-- **Scout Picks** (curated shortlist for your current lens)
-- **Deal Flow** sorted for your current strategy (Balanced/Yield/Value/Momentum)
-- Optional **Agent Lens** blocks (comparison table, deal score chart, map focus)
-
-### Example 2: “Signal Lab” (Explain The Landscape)
-
-Open **Insights → 🧪 Signal Lab** and you get a scatter plot (Yield vs Value Delta, colored by Deal Score).
-
-```text
-Lasso a cluster → drill down into the exact listings behind the pattern.
-```
-
-It’s the quickest way to answer: “Are we seeing one weird outlier… or a whole pocket of mispricing?”
-
----
-
-## Quick Start (Choose Your Adventure)
+### 1) Run the dashboard (local)
 
 Prereqs:
-- Python 3.10+ (Docker image uses 3.10)
-- For dynamic sources: Playwright browsers (`python3 -m playwright install`)
-- Optional: Ollama for local LLM/VLM features (`ollama serve`)
-
-### A) “Show me deals” (Dashboard)
+- Python 3.10+
+- Playwright browsers (needed for `html_browser` sources)
 
 ```bash
 python3 -m venv .venv
@@ -93,113 +36,154 @@ python3 -m playwright install
 python3 -m src.interfaces.cli dashboard
 ```
 
-Notes:
-- The dashboard **runs `preflight` by default**. To launch UI only: `python3 -m src.interfaces.cli dashboard -- --skip-preflight`
-- If you use local LLM/VLM features via Ollama: `ollama serve` (then see `config/llm.yaml`)
-- Convenience: `./run_dashboard.sh` kills port `8501` and launches the dashboard
+Open Streamlit at: `http://localhost:8501`
 
-### B) “Run the pipeline” (Preflight)
+Notes:
+- `dashboard` runs a `preflight` refresh first. To skip: `python3 -m src.interfaces.cli dashboard --skip-preflight`
+- Convenience script: `./run_dashboard.sh` (kills port `8501` then launches the dashboard)
+
+<details>
+<summary>Install with Poetry (optional)</summary>
 
 ```bash
-python3 -m src.interfaces.cli preflight
+poetry install --no-root
+poetry run python -m playwright install
+poetry run python -m src.interfaces.cli dashboard
 ```
 
-Preflight is the canonical entry point. It checks freshness and only runs what’s stale: crawl, transactions, market data, vector index, training, backfill, calibrators (as configured).
+</details>
 
-### C) “Just run it in Docker” (Dashboard on `:8505`)
+### 2) Run with Docker Compose (dashboard on :8505)
 
 ```bash
 docker compose up --build dashboard
 ```
 
+Open Streamlit at: `http://localhost:8505`
+
+Note: Compose mounts the repo into the container (`.:/app`), so the dashboard reads/writes `./data/` and `./models/` from your working tree by default.
+
 ---
 
-## CLI Cheat Sheet
+## CLI Usage
 
-All commands run from the project root:
+The CLI is a thin wrapper around the real modules. Start here:
 
 ```bash
-python3 -m src.interfaces.cli dashboard                  # Streamlit UI (runs preflight by default)
-python3 -m src.interfaces.cli preflight                  # Refresh stale data and artifacts (Prefect flow)
-python3 -m src.interfaces.cli unified-crawl              # Unified multi-source crawl
-python3 -m src.interfaces.cli transactions -- --path data/transactions.csv
-python3 -m src.interfaces.cli market-data                # Macro + market + hedonic + area intelligence
-python3 -m src.interfaces.cli build-index                # Build comp vector index (LanceDB)
-python3 -m src.interfaces.cli train                      # Train fusion model
-python3 -m src.interfaces.cli train-pipeline             # VLM prep + fusion training (Prefect flow)
-python3 -m src.interfaces.cli backfill                   # Backfill cached valuations (Prefect flow)
-python3 -m src.interfaces.cli calibrators -- --input <samples.jsonl>
-python3 -m src.interfaces.cli agent "Find deals" <areas>
-python3 -m src.interfaces.cli migrate                    # DB schema migrations
+python3 -m src.interfaces.cli -h
 ```
 
-Vector backend note:
-- LanceDB is the default retriever backend. Customize paths via `config/paths.yaml` and `config/valuation.yaml`.
-
----
-
-## Configuration (The Knobs That Matter)
-
-Configuration is Hydra-composed via `config/app.yaml`. The most-used files:
-
-| File | What it controls | You’ll change it when… |
-| --- | --- | --- |
-| `config/paths.yaml` | data/model/index locations (and env var overrides) | you want the DB/index somewhere else |
-| `config/sources.yaml` | enabled sources + crawl defaults | you’re turning sources on/off or tuning crawl limits |
-| `config/llm.yaml` | LiteLLM fallback list (Ollama/Gemini/OpenAI/etc.) | you’re switching models/providers |
-| `config/valuation.yaml` | retriever + valuation policy | you’re changing comp/index behavior |
-| `config/quality_gate.yaml` | “stop the crawl if it’s garbage” thresholds | a source got flaky or stricter validation is needed |
-
-Path overrides are supported via env vars (examples):
-- `PROPERTY_SCANNER_DATA_DIR`
-- `PROPERTY_SCANNER_DB_PATH`
-- `PROPERTY_SCANNER_VECTOR_INDEX_PATH`
-
----
-
-## Data And Artifacts (What Shows Up On Disk)
-
-Most of the system of record is SQLite-backed, plus a few model/index artifacts:
-
-| Artifact | What it is | Produced by |
-| --- | --- | --- |
-| `data/listings.db` | listings + derived tables + run logs | pipeline workflows + `StorageService` |
-| `data/unified_seen_urls.sqlite3` | URL de-dupe store | unified crawler |
-| `data/vector_index.lancedb` | comp retriever index | `build-index` |
-| `data/vector_metadata.json` | retriever metadata lock | `build-index` |
-| `data/models/*` | model artifacts (quantiles, calibrators, etc.) | training/calibration workflows |
-
-For the full “what depends on what” map: `docs/02_data_pipeline.md`.
-
----
-
-## Crawler Status
-
-Live crawling can vary with rate limits and anti-bot defenses. The short version:
-
-| Source id | Region | Status | Notes |
-| --- | --- | --- | --- |
-| `idealista` | ES | flaky live | parsing tests pass; live crawling often blocked |
-| `pisos` | ES | works | rate limited |
-| `rightmove_uk` | UK | works | pagination limit (42 pages) |
-| `zoopla_uk` | UK | works | HTML/JSON-LD; no public API |
-| `immobiliare_it` | IT | works | HTML snapshots; optional Insights APIs later |
-
-The longer, constantly-updated version lives in `docs/crawler_status.md`.
-
-Local harness (writes normalized JSON/JSONL without touching the full pipeline):
+Common commands:
 
 ```bash
-python3 scripts/source_harness.py --source rightmove_uk --search-url "<RIGHTMOVE_SEARCH_URL>" --output data/rightmove.jsonl --jsonl
-python3 scripts/source_harness.py --source zoopla_uk --search-url "<ZOOPLA_SEARCH_URL>" --output data/zoopla.jsonl --jsonl
-python3 scripts/source_harness.py --source immobiliare_it --search-url "<IMMOBILIARE_SEARCH_URL>" --output data/immobiliare.jsonl --jsonl
+python3 -m src.interfaces.cli preflight
+python3 -m src.interfaces.cli unified-crawl --source rightmove_uk --search-url "<SEARCH_URL>" --max-pages 1
+python3 -m src.interfaces.cli market-data
+python3 -m src.interfaces.cli build-index --listing-type sale
+python3 -m src.interfaces.cli train --epochs 50
+python3 -m src.interfaces.cli backfill --listing-type sale --max-age-days 7
+python3 -m src.interfaces.cli calibrators --input "<samples.jsonl>"
+python3 -m src.interfaces.cli migrate
+```
+
+Run the cognitive agent:
+
+```bash
+python3 -m src.interfaces.cli agent "Find undervalued apartments in Madrid" "/venta-viviendas/madrid/centro/"
+python3 -m src.interfaces.cli agent "Find investment opportunities in Barcelona" "https://www.pisos.com/venta/pisos-barcelona/"
 ```
 
 ---
 
-## Automation (Prefect)
+## Configuration
 
-If you want observability, retries, run history, and scheduling, use Prefect:
+Config is Hydra-composed from `./config/app.yaml` and the files it includes. Most edits happen in:
+
+- `./config/sources.yaml` (enabled sources + templates + rate limits)
+- `./config/valuation.yaml` (retriever + valuation policy)
+- `./config/llm.yaml` and `./config/vlm.yaml` (LLM/VLM defaults)
+- `./config/paths.yaml` (where DB/models/index live)
+
+Environment variable overrides (from `./config/paths.yaml`):
+
+| Variable | Default |
+| --- | --- |
+| `PROPERTY_SCANNER_DATA_DIR` | `./data` |
+| `PROPERTY_SCANNER_MODELS_DIR` | `./models` |
+| `PROPERTY_SCANNER_DB_PATH` | `./data/listings.db` |
+| `PROPERTY_SCANNER_DB_URL` | `sqlite:///...` |
+| `PROPERTY_SCANNER_VECTOR_INDEX_PATH` | `./data/vector_index.lancedb` |
+| `PROPERTY_SCANNER_VECTOR_METADATA_PATH` | `./data/vector_metadata.json` |
+| `PROPERTY_SCANNER_LANCEDB_PATH` | `./data/vector_index.lancedb` |
+
+Other runtime knobs:
+- `PROPERTY_SCANNER_TEXT_DEVICE` (used by embedding/encoder code paths)
+
+---
+
+## Data & Artifacts
+
+By default the system of record is SQLite plus a few on-disk artifacts:
+
+- `./data/listings.db` (listings + derived tables + `pipeline_runs`/`agent_runs`)
+- `./data/unified_seen_urls.sqlite3` (URL de-dupe for unified crawl)
+- `./data/vector_index.lancedb` and `./data/vector_metadata.json` (comp retriever index + metadata)
+- `./models/` (model artifacts, e.g. `fusion_model.pt`, `calibration_registry.json`)
+
+Deep dive: `./docs/02_data_pipeline.md`
+
+---
+
+## Crawling Notes (Read This First)
+
+> [!WARNING]
+> Many real-estate portals employ aggressive anti-bot protections. Live crawling reliability varies by source and may require additional infrastructure.
+
+Status and blocking analysis: `./docs/crawler_status.md`
+
+If you want a small, local harness (crawl + normalize with optional fusion, without running the full pipeline), use:
+
+```bash
+python3 scripts/source_harness.py --source rightmove_uk --search-url "<SEARCH_URL>" --output data/rightmove.jsonl --jsonl
+```
+
+---
+
+## Python API
+
+The CLI/dashboard sit on top of `PipelineAPI`:
+
+```python
+from src.interfaces.api import PipelineAPI
+
+api = PipelineAPI()
+api.preflight()
+api.crawl_backfill(max_pages=1)
+api.build_market_data()
+api.build_vector_index(listing_type="sale")
+analysis = api.evaluate_listing_id("listing-id", persist=True)
+```
+
+Source: `./src/interfaces/api/pipeline.py`
+
+---
+
+## Development
+
+### Tests
+
+By default, integration/e2e/live suites are opt-in (see `./tests/conftest.py`).
+
+```bash
+pytest
+pytest --run-integration -m integration
+pytest --run-e2e -m e2e
+pytest --run-live -m live
+```
+
+### Prefect (optional)
+
+You can run flows locally without a server, but a server adds run history and a UI:
 
 ```bash
 prefect server start
@@ -210,44 +194,66 @@ prefect agent start -q default
 
 ---
 
-## Library API (Python)
+## Project Layout
 
-The CLI, agent, and dashboard are thin wrappers over a shared API:
+- `./src/interfaces/`: CLI, dashboard, and public API
+- `./src/listings/`: crawlers, normalizers, listing workflows
+- `./src/market/`: transactions + market/hedonic/macro workflows
+- `./src/valuation/`: retrieval, valuation, calibration, backfill
+- `./src/ml/`: models, encoders, training
+- `./src/platform/`: config, storage, migrations, pipeline state/runs
+- `./docs/`: architecture and operational docs
+- `./scripts/`: harnesses and debug tools
 
-```python
-from src.interfaces.api import PipelineAPI
+---
 
-api = PipelineAPI()
-api.preflight()
-api.crawl_backfill(max_pages=1)
-api.ingest_transactions(path="data/transactions.jsonl")
-api.build_market_data()
-api.build_vector_index(listing_type="sale")
-analysis = api.evaluate_listing_id("listing-id", persist=True)
+## Architecture (deep dive)
+
+See `./docs/01_system_overview.md` for the full system map and data domains.
+
+<details>
+<summary>Mermaid system map</summary>
+
+```mermaid
+flowchart LR
+  CLI["CLI"] --> Preflight["Preflight (Prefect)"]
+  Dash["Streamlit dashboard"] --> Preflight
+  Agent["Cognitive agent"] --> Preflight
+
+  Preflight --> Crawl["Unified crawl + normalize"]
+  Preflight --> Market["Market data + registries"]
+  Preflight --> Index["Build comp index (LanceDB)"]
+  Preflight --> Train["Train fusion model"]
+  Preflight --> Value["Backfill valuations"]
+
+  Crawl --> DB[("SQLite: data/listings.db")]
+  Market --> DB
+  Index --> VDB[("vector_index.lancedb + metadata")]
+  Train --> Models[("models/*")]
+  DB --> Dash
 ```
 
----
-
-## Repo Map (Where Things Live)
-
-- `src/interfaces/`: CLI, API, and dashboard entry points
-- `src/agentic/`: LangGraph tools + cognitive orchestrator + agent memory
-- `src/listings/`: crawlers, normalizers, listing services, crawl workflows
-- `src/market/`: macro/indices/registry signals + workflows
-- `src/valuation/`: retrieval + valuation services/workflows
-- `src/ml/`: models/encoders + training pipelines
-- `src/platform/`: config, storage, migrations, pipeline state/runs
-- `scripts/`: workflow wrappers + debug harnesses
+</details>
 
 ---
 
-## Docs
+## Contributing
 
-Start here: `docs/00_docs_index.md`
+No `CONTRIBUTING.md` yet. If you want to contribute:
 
-- `docs/01_system_overview.md` (system map + services)
-- `docs/02_data_pipeline.md` (artifacts + quality gates + run order)
-- `docs/03_unified_scraping_architecture.md` (scraping stack internals)
-- `docs/05_agents_map.md` + `docs/06_agent_workflow.md` (agent contracts + flow)
-- `docs/07_model_architecture.md` (ML and valuation inputs)
-- `docs/08_path_to_production.md` (reliability, ops, productionization)
+- Open an issue describing the target change (source, workflow, model, UI).
+- Include reproduction steps (commands + config) and relevant logs.
+- Add/adjust tests under `./tests/` where practical.
+
+---
+
+## License
+
+No top-level license file is present in this repository.
+
+---
+
+## TODO (missing project metadata)
+
+- Add a top-level license file (e.g. `./LICENSE`) and state the intended license in this README.
+- Add `CONTRIBUTING.md` with contribution workflow and code quality expectations.

@@ -162,6 +162,47 @@ class RightmoveNormalizerAgent(BaseAgent):
                 pass
         return {}
 
+    def _extract_area_sqm_from_page_model(self, page_model: Dict[str, Any]) -> Optional[float]:
+        """
+        Rightmove's window.PAGE_MODEL can include sizing blocks even when JSON-LD is incomplete.
+        We normalize to square meters.
+        """
+        if not isinstance(page_model, dict):
+            return None
+        prop = page_model.get("propertyData") or {}
+        if not isinstance(prop, dict):
+            return None
+        sizings = prop.get("sizings") or []
+        if not isinstance(sizings, list):
+            return None
+
+        def pick_value(item: Dict[str, Any]) -> Optional[float]:
+            min_v = item.get("minimumSize")
+            max_v = item.get("maximumSize")
+            val = None
+            if isinstance(min_v, (int, float)) and isinstance(max_v, (int, float)):
+                val = (float(min_v) + float(max_v)) / 2.0
+            elif isinstance(min_v, (int, float)):
+                val = float(min_v)
+            elif isinstance(max_v, (int, float)):
+                val = float(max_v)
+            return val
+
+        for item in sizings:
+            if not isinstance(item, dict):
+                continue
+            unit = str(item.get("unit") or item.get("displayUnit") or "").strip().lower()
+            val = pick_value(item)
+            if val is None:
+                continue
+            if unit in {"sqm", "sq m", "sq. m.", "square metres", "square meters"}:
+                return val
+            if unit in {"sqft", "sq ft", "sq. ft.", "ft2", "ftk", "ft²"}:
+                return float(val * 0.092903)
+            if unit in {"ac", "acre", "acres"}:
+                return float(val * 4046.8564224)
+        return None
+
     def _parse_item(self, raw: RawListing) -> Optional[CanonicalListing]:
         html = raw.raw_data.get("html_snippet", "")
         if not html:
@@ -178,52 +219,63 @@ class RightmoveNormalizerAgent(BaseAgent):
             offers = offers[0]
         price = self._parse_float(offers.get("price")) or 0.0
 
-        # 3. If critical data missing, try PAGE_MODEL
+        # Optional PAGE_MODEL fallback. Some listings omit floor size in JSON-LD but include it here.
         page_model = {}
-        if price == 0.0:
+        needs_page_model = (
+            price == 0.0
+            or not data.get("floorSize")
+            or not data.get("address")
+            or not data.get("geo")
+            or not data.get("numberOfRooms")
+        )
+        if needs_page_model:
             page_model = self._extract_page_model(html)
-            if page_model:
-                # Merge or use page_model data
-                analytics = page_model.get("analyticsInfo", {}).get("analyticsProperty", {})
-                property_data = page_model.get("propertyData", {})
-                
-                # Price
-                if price == 0.0:
-                    price = self._parse_float(analytics.get("price")) or self._parse_float(property_data.get("prices", {}).get("primaryPrice")) or 0.0
-                
-                # Title/Desc
-                if not data.get("name"):
-                    data["name"] = property_data.get("text", {}).get("pageTitle")
-                if not data.get("description"):
-                    data["description"] = property_data.get("text", {}).get("description")
-                
-                # Beds/Baths
-                if not data.get("numberOfRooms"):
-                    data["numberOfRooms"] = analytics.get("beds") or property_data.get("bedrooms")
-                if not data.get("numberOfBathroomsTotal"):
-                    data["numberOfBathroomsTotal"] = property_data.get("bathrooms")
-                
-                # Location from Analytics
-                if not data.get("geo"):
-                    data["geo"] = {
-                        "latitude": analytics.get("latitude"),
-                        "longitude": analytics.get("longitude")
-                    }
-                
-                # Address
-                if not data.get("address"):
-                    addr = property_data.get("address", {})
-                    data["address"] = {
-                        "streetAddress": addr.get("displayAddress") or analytics.get("displayAddress"),
-                        "postalCode": analytics.get("postcode"),
-                        "addressCountry": analytics.get("country")
-                    }
-                
-                # Images
-                if not data.get("image"):
-                    images = property_data.get("images", [])
-                    if images:
-                        data["image"] = [img.get("url") for img in images if img.get("url")]
+
+        if page_model:
+            analytics = page_model.get("analyticsInfo", {}).get("analyticsProperty", {})
+            property_data = page_model.get("propertyData", {})
+
+            # Price
+            if price == 0.0:
+                price = (
+                    self._parse_float(analytics.get("price"))
+                    or self._parse_float(property_data.get("prices", {}).get("primaryPrice"))
+                    or 0.0
+                )
+
+            # Title/Desc
+            if not data.get("name"):
+                data["name"] = property_data.get("text", {}).get("pageTitle")
+            if not data.get("description"):
+                data["description"] = property_data.get("text", {}).get("description")
+
+            # Beds/Baths
+            if not data.get("numberOfRooms"):
+                data["numberOfRooms"] = analytics.get("beds") or property_data.get("bedrooms")
+            if not data.get("numberOfBathroomsTotal"):
+                data["numberOfBathroomsTotal"] = property_data.get("bathrooms")
+
+            # Location from Analytics
+            if not data.get("geo"):
+                data["geo"] = {
+                    "latitude": analytics.get("latitude"),
+                    "longitude": analytics.get("longitude"),
+                }
+
+            # Address
+            if not data.get("address"):
+                addr = property_data.get("address", {})
+                data["address"] = {
+                    "streetAddress": addr.get("displayAddress") or analytics.get("displayAddress"),
+                    "postalCode": analytics.get("postcode"),
+                    "addressCountry": analytics.get("country"),
+                }
+
+            # Images
+            if not data.get("image"):
+                images = property_data.get("images", [])
+                if images:
+                    data["image"] = [img.get("url") for img in images if img.get("url")]
 
         title = data.get("name") or ""
         if not title:
@@ -256,6 +308,8 @@ class RightmoveNormalizerAgent(BaseAgent):
 
         floor_size = data.get("floorSize") or {}
         sqm = self._area_to_sqm(floor_size.get("value"), floor_size.get("unitCode"))
+        if sqm is None and page_model:
+            sqm = self._extract_area_sqm_from_page_model(page_model)
 
         if bedrooms is None:
             match = re.search(r"(\d+)\s*bed", title.lower())

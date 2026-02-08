@@ -215,7 +215,19 @@ class UnifiedCrawlRunner:
         return [item for item in raw_listings if getattr(item, "url", None) in new_urls]
 
     def run_source(self, plan: UnifiedSourcePlan) -> Dict[str, Any]:
-        crawler_config = {"id": plan.source_id}
+        # Start from the configured source settings (config/sources.yaml), then apply any per-run overrides.
+        source_cfg = next(
+            (s for s in (self.app_config.sources.sources or []) if getattr(s, "id", None) == plan.source_id),
+            None,
+        )
+        if source_cfg is not None and hasattr(source_cfg, "model_dump"):
+            crawler_config = source_cfg.model_dump()
+        elif source_cfg is not None and isinstance(source_cfg, dict):
+            crawler_config = dict(source_cfg)
+        else:
+            crawler_config = {"id": plan.source_id}
+
+        crawler_config["id"] = plan.source_id
         crawler_config.update(plan.crawler_config or {})
         payload = self._build_payload(plan)
         logger.info("unified_crawl_start", source=plan.source_id, payload=payload)

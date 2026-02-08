@@ -1,4 +1,5 @@
 import hashlib
+import re
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -60,7 +61,26 @@ class ZooplaCrawlerAgent(BaseAgent):
                 include=["/details/"],
             ),
         )
-        return [u.split("#")[0] for u in urls]
+        cleaned = [u.split("#")[0] for u in urls]
+
+        # Next.js pages can embed listing routes in scripts/JSON without explicit <a> tags.
+        for match in re.findall(r"/for-sale/details/\d+/?", html):
+            cleaned.append(urljoin(self.base_url, match))
+        # Zoopla also serves "contact" routes under `/for-sale/details/contact/<id>/`.
+        # Keep only true listing detail URLs: `/for-sale/details/<digits>/`.
+        filtered = []
+        for url in cleaned:
+            if "/details/contact/" in url:
+                continue
+            if "/new-homes/" in url:
+                continue
+            if re.search(r"/for-sale/details/\d+/?$", url):
+                filtered.append(url)
+                continue
+            # Some pages link to `/details/<id>/` directly.
+            if re.search(r"/details/\d+/?$", url):
+                filtered.append(url)
+        return filtered
 
     def _extract_external_id(self, url: str) -> str:
         try:

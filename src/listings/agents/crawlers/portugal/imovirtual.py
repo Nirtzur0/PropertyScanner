@@ -31,13 +31,15 @@ class ImovirtualCrawlerAgent(BaseAgent):
         browser_max_concurrency = int(
             config.get("browser_max_concurrency", 4)
         )
+
+        rate_conf = config.get("rate_limit", {}) or {}
         
         self.scrape_client = ScrapeClient(
             source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
-            rate_limit_seconds=float(config.get("period_seconds", 5)),
+            rate_limit_seconds=float(rate_conf.get("period_seconds", 5)),
             browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),

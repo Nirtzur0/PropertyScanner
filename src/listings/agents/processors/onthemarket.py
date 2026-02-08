@@ -43,9 +43,8 @@ class OnTheMarketNormalizerAgent(BaseAgent):
                     except:
                         pass
         
-        # Strategy 2: JSON-LD
-        json_lat, json_lon = None, None
-        
+        # Strategy 2: JSON-LD (not implemented yet; kept for future extension)
+
         # Title
         title = "Unknown Property"
         t_el = soup.find('h1')
@@ -72,24 +71,45 @@ class OnTheMarketNormalizerAgent(BaseAgent):
         if not full_url and dl_data.get("property-id"):
             full_url = f"https://www.onthemarket.com/details/{dl_data['property-id']}/"
 
+        # Description
+        description = ""
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc and meta_desc.get("content"):
+            description = str(meta_desc.get("content") or "").strip()
+
         # Features
         bedrooms = None
         bathrooms = None
         sqm = None
         
-        # OTM often puts bed count in title "1 bed apartment"
-        if "bed" in title.lower():
-             m = re.search(r'(\d+)\s*bed', title.lower())
-             if m:
-                 bedrooms = int(m.group(1))
+        # OTM often puts bed count in title/meta description ("3 bed", "3 bedroom").
+        bed_text = f"{title} {description}".lower()
+        m = re.search(r'(\d+)\s*bed(?:room)?', bed_text)
+        if m:
+            try:
+                bedrooms = int(m.group(1))
+            except Exception:
+                bedrooms = bedrooms
                  
-        # Parse description for sqm (sq ft usually in UK)
+        # Parse for area. Prefer sqm when present, otherwise convert sqft -> sqm.
         all_text = soup.get_text(" ", strip=True)
-        if not sqm:
-             # "578 sq ft / 54 sq m"
-             m = re.search(r'(\d+)\s*sq\s*m', all_text, re.IGNORECASE)
-             if m:
-                 sqm = float(m.group(1))
+        if sqm is None:
+            # "54 sq m", "54 sqm", "54 m2", "54 m²"
+            m = re.search(r"(\d+(?:\.\d+)?)\s*(?:sq\s*m|sqm|m2|m²)\b", all_text, re.IGNORECASE)
+            if m:
+                try:
+                    sqm = float(m.group(1))
+                except Exception:
+                    sqm = None
+        if sqm is None:
+            # "581 sq ft"
+            m = re.search(r"(\d+(?:\.\d+)?)\s*sq\s*ft\b", all_text, re.IGNORECASE)
+            if m:
+                try:
+                    sqft = float(m.group(1))
+                    sqm = round(sqft * 0.092903, 2)
+                except Exception:
+                    sqm = None
 
         # Images
         image_urls = []
@@ -125,11 +145,11 @@ class OnTheMarketNormalizerAgent(BaseAgent):
 
         canonical = CanonicalListing(
             id=unique_hash,
-            source_id="onthemarket",
+            source_id=raw.source_id,
             external_id=str(pid),
             url=full_url,
             title=title,
-            description=title, # Description usually in meta description
+            description=description or title,
             price=price,
             currency=Currency.GBP,
             property_type=PropertyType.APARTMENT if "apartment" in title.lower() or "flat" in title.lower() else PropertyType.HOUSE,

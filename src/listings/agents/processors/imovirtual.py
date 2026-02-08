@@ -70,9 +70,7 @@ class ImovirtualNormalizerAgent(BaseAgent):
         price = 0.0
         if json_data.get("offers", {}).get("price"):
             price = float(json_data["offers"]["price"])
-            print(f"DEBUG: Found price in JSON-LD: {price}")
         else:
-            print("DEBUG: No price in JSON-LD offers")
             p_el = soup.select_one("strong[data-cy='ad-price']") or soup.select_one(".css-1wxc2al")
             if p_el:
                 price = self._clean_price(p_el.get_text())

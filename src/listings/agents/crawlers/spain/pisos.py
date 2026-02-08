@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -124,12 +125,12 @@ class PisosCrawlerAgent(BaseAgent):
             
             try:
                 # Extract ID: /inmueble/piso-madrid_capital_centro-ID/
-                if "/inmueble/" in url:
-                    # Pisos IDs are usually at the end of the slug or the slug itself is ID-like
-                    # example: .../piso-zona-id12345/
-                    # Let's just use hash for safety or try split
-                    lid = hashlib.md5(url.encode()).hexdigest()[:12]
-                else:
+                lid = None
+                # Common patterns include a numeric suffix: "...-12345678/" or ".../12345678/"
+                m = re.search(r"(?:-|/)(\d{4,})(?:/|$)", url)
+                if m:
+                    lid = m.group(1)
+                if not lid:
                     lid = hashlib.md5(url.encode()).hexdigest()[:12]
             except:
                 lid = hashlib.md5(url.encode()).hexdigest()[:12]

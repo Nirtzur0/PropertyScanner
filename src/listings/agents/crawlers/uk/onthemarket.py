@@ -31,13 +31,15 @@ class OnTheMarketCrawlerAgent(BaseAgent):
         browser_max_concurrency = int(
             config.get("browser_max_concurrency", 6)
         )
+
+        rate_conf = config.get("rate_limit", {}) or {}
         
         self.scrape_client = ScrapeClient(
             source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
-            rate_limit_seconds=float(config.get("period_seconds", 5)),
+            rate_limit_seconds=float(rate_conf.get("period_seconds", 5)),
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )
@@ -73,6 +75,23 @@ class OnTheMarketCrawlerAgent(BaseAgent):
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
         listing_urls = list(input_payload.get("target_urls") or [])
+
+        listing_url = input_payload.get("listing_url")
+        if listing_url:
+            listing_urls.append(str(listing_url))
+
+        listing_id = input_payload.get("listing_id")
+        if listing_id:
+            listing_urls.append(f"{self.base_url}/details/{listing_id}/")
+
+        listing_ids = input_payload.get("listing_ids") or []
+        for lid in listing_ids:
+            if lid:
+                listing_urls.append(f"{self.base_url}/details/{lid}/")
+
+        # De-dupe early so listing-id runs don't also kick off search discovery.
+        listing_urls = list(dict.fromkeys(listing_urls))
+
         start_urls = []
         raw_start_urls = input_payload.get("start_urls") or []
         for url in raw_start_urls:
