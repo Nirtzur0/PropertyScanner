@@ -3,3 +3,6 @@
 	url = https://github.com/autoscrape-labs/pydoll.git
 	branch = main
 
+[submodule "prompts"]
+	path = prompts
+	url = https://github.com/Nirtzur0/project-prompts.git

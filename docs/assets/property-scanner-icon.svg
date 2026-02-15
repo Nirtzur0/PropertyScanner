@@ -1,0 +1,30 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Property Scanner Icon</title>
+  <desc id="desc">Rounded-square gradient icon with a white house and magnifier mark.</desc>
+  <defs>
+    <linearGradient id="bg" x1="120" y1="100" x2="900" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F2A43"/>
+      <stop offset="1" stop-color="#0A6E8E"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="180" y1="160" x2="760" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4FD1FF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#4FD1FF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#051421" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#bg)"/>
+    <rect x="72" y="72" width="880" height="880" rx="214" fill="url(#glow)"/>
+  </g>
+
+  <g stroke="#FFFFFF" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M304 508L512 332L720 508"/>
+    <path d="M372 485V708H650V551"/>
+    <path d="M445 708V600H557V708"/>
+    <circle cx="676" cy="620" r="98"/>
+    <path d="M744 688L816 760"/>
+  </g>
+</svg>
