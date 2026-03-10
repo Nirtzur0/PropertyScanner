@@ -1,0 +1,230 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: Analyst dense mode
+        - heading "Spatial triage first" [level=2] [ref=e31]
+        - paragraph [ref=e32]: The map is the primary exploration surface. Filters, saved lenses, and source states now orbit around location rather than the old table-first workflow.
+      - generic [ref=e33]:
+        - generic [ref=e34]: Search lens
+        - generic [ref=e35]:
+          - text: Search
+          - textbox "Search" [ref=e36]:
+            - /placeholder: City, title, source, memo…
+        - generic [ref=e37]:
+          - text: Country
+          - textbox "Country" [ref=e38]: ES
+        - generic [ref=e39]:
+          - text: City
+          - textbox "City" [ref=e40]:
+            - /placeholder: Madrid
+        - generic [ref=e41]:
+          - text: Listing type
+          - combobox "Listing type" [ref=e42]:
+            - option "Any"
+            - option "Sale" [selected]
+            - option "Rent"
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - text: Min price
+            - textbox "Min price" [ref=e45]:
+              - /placeholder: "120000"
+          - generic [ref=e46]:
+            - text: Max price
+            - textbox "Max price" [ref=e47]:
+              - /placeholder: "900000"
+        - generic [ref=e48]:
+          - text: Support floor
+          - textbox "Support floor" [ref=e49]:
+            - /placeholder: "0.72"
+            - text: "0.72"
+        - generic [ref=e50]:
+          - text: Source state
+          - combobox "Source state" [ref=e51]:
+            - option "Any" [selected]
+            - option "Supported"
+            - option "Degraded"
+            - option "Experimental"
+            - option "Blocked"
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - checkbox "Only watchlisted" [ref=e54]
+            - text: Only watchlisted
+          - generic [ref=e55]:
+            - checkbox "Memo-linked only" [ref=e56]
+            - text: Memo-linked only
+          - generic [ref=e57]:
+            - checkbox "Comp-review only" [ref=e58]
+            - text: Comp-review only
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - checkbox "Density heat" [checked] [ref=e61]
+            - text: Density heat
+          - generic [ref=e62]:
+            - checkbox "Delta labels" [checked] [ref=e63]
+            - text: Delta labels
+      - generic [ref=e64]:
+        - generic [ref=e65]: Save current lens
+        - generic [ref=e66]:
+          - text: Saved search name
+          - textbox "Saved search name" [ref=e67]: Map lens
+        - button "Save lens" [ref=e68] [cursor=pointer]
+      - generic [ref=e69]:
+        - generic [ref=e70]: Layer semantics
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - strong [ref=e73]: Value opportunity
+            - paragraph [ref=e74]: Marker size follows value delta and deal score.
+          - generic [ref=e75]:
+            - strong [ref=e76]: Support / confidence
+            - paragraph [ref=e77]: Marker color and legend reflect support bands and unavailable states.
+          - generic [ref=e78]:
+            - strong [ref=e79]: Yield
+            - paragraph [ref=e80]: Highlights listings with rental yield support where available.
+          - generic [ref=e81]:
+            - strong [ref=e82]: Source health
+            - paragraph [ref=e83]: Highlights degraded and blocked source states.
+          - generic [ref=e84]:
+            - strong [ref=e85]: Watchlist hits
+            - paragraph [ref=e86]: Adds watchlist rings and saved-lens context.
+          - generic [ref=e87]:
+            - strong [ref=e88]: Comp density
+            - paragraph [ref=e89]: Shows heat/grid aggregation for dense zoomed-out exploration.
+          - generic [ref=e90]:
+            - strong [ref=e91]: Benchmark gate
+            - paragraph [ref=e92]: Operational alert overlay for model/benchmark readiness.
+            - generic [ref=e93]: "Blocked: benchmark_runs_empty"
+    - main [ref=e94]:
+      - generic [ref=e95]:
+        - generic [ref=e96]:
+          - generic [ref=e97]: Map-centric workbench
+          - heading "Spatial exploration drives the workflow" [level=2] [ref=e98]
+          - paragraph [ref=e99]: Marker size shows value opportunity, color shows source/support state, and the dock stays synchronized with selection instead of competing with it.
+        - generic [ref=e100]:
+          - link "Pipeline" [ref=e101] [cursor=pointer]:
+            - /url: /pipeline
+          - link "Watchlists" [ref=e102] [cursor=pointer]:
+            - /url: /watchlists
+          - link "Memos" [ref=e103] [cursor=pointer]:
+            - /url: /memos
+      - generic [ref=e104]:
+        - generic [ref=e105]:
+          - generic [ref=e106]: Tracked
+          - strong [ref=e107]: "58"
+          - paragraph [ref=e108]: Listings in the current local corpus
+        - generic [ref=e109]:
+          - generic [ref=e110]: Visible
+          - strong [ref=e111]: "0"
+          - paragraph [ref=e112]: Assets matching the active map lens
+        - generic [ref=e113]:
+          - generic [ref=e114]: Watchlist hits
+          - strong [ref=e115]: "0"
+          - paragraph [ref=e116]: Saved or memo-linked assets in view
+        - generic [ref=e117]:
+          - generic [ref=e118]: Median support
+          - strong [ref=e119]: N/A
+          - paragraph [ref=e120]: Calibrated support for visible valued listings
+      - generic [ref=e121]:
+        - generic [ref=e125]:
+          - region "Map" [ref=e126]
+          - generic:
+            - generic [ref=e127]:
+              - button "Zoom in" [ref=e128] [cursor=pointer]
+              - button "Zoom out" [ref=e130] [cursor=pointer]
+              - button "Drag to rotate map, click to reset north" [ref=e132]
+            - group [ref=e134]:
+              - generic "Toggle attribution" [ref=e135] [cursor=pointer]
+              - generic [ref=e136]:
+                - link "MapLibre" [ref=e137] [cursor=pointer]:
+                  - /url: https://maplibre.org/
+                - text: "| ©"
+                - link "CARTO" [ref=e138] [cursor=pointer]:
+                  - /url: https://carto.com/about-carto/
+                - text: ", ©"
+                - link "OpenStreetMap" [ref=e139] [cursor=pointer]:
+                  - /url: http://www.openstreetmap.org/about/
+                - text: contributors
+        - generic [ref=e142]:
+          - paragraph [ref=e143]: Analyst dense map
+          - generic [ref=e144]:
+            - generic [ref=e145]: Color = support / source state
+            - generic [ref=e146]: Size = value opportunity
+            - generic [ref=e147]: Labels = delta or ask
+        - generic [ref=e149]:
+          - strong [ref=e150]: Legend
+          - generic [ref=e151]:
+            - generic [ref=e152]: "Teal: supported"
+            - generic [ref=e153]: "Amber: degraded"
+            - generic [ref=e154]: "Red: unavailable"
+            - generic [ref=e155]: "Ring: watchlist / memo / selection"
+      - generic [ref=e156]:
+        - generic [ref=e157]:
+          - generic [ref=e158]:
+            - heading "Listings dock" [level=3] [ref=e159]
+            - paragraph [ref=e160]: Shift-click to build a basket. Single click to pin the active dossier.
+          - generic [ref=e161]:
+            - generic [ref=e162]: 0 pinned
+            - generic [ref=e163]: 0 unavailable
+            - generic [ref=e164]: 0 degraded
+        - table [ref=e166]:
+          - rowgroup [ref=e167]:
+            - row "Listing Ask Fair value Support Source Next action" [ref=e168] [cursor=pointer]:
+              - columnheader "Listing" [ref=e169]
+              - columnheader "Ask" [ref=e170]
+              - columnheader "Fair value" [ref=e171]
+              - columnheader "Support" [ref=e172]
+              - columnheader "Source" [ref=e173]
+              - columnheader "Next action" [ref=e174]
+          - rowgroup
+    - complementary [ref=e175]:
+      - generic [ref=e176]:
+        - generic [ref=e177]: Selected listing
+        - paragraph [ref=e178]: Select a marker to open the dossier rail.
+      - generic [ref=e179]:
+        - generic [ref=e180]: Alerts + jobs
+        - generic [ref=e181]:
+          - generic [ref=e182]:
+            - strong [ref=e183]: crawler_status_blocked
+            - paragraph [ref=e184]: funda_nl
+          - generic [ref=e185]:
+            - strong [ref=e186]: crawler_status_blocked
+            - paragraph [ref=e187]: idealista
+          - generic [ref=e188]:
+            - strong [ref=e189]: crawler_status_blocked
+            - paragraph [ref=e190]: idealista_it
+          - generic [ref=e191]:
+            - strong [ref=e192]: crawler_status_blocked
+            - paragraph [ref=e193]: idealista_local_test
+          - generic [ref=e194]:
+            - strong [ref=e195]: crawler_status_blocked
+            - paragraph [ref=e196]: immobiliare_it
+          - generic [ref=e197]:
+            - strong [ref=e198]: preflight
+            - paragraph [ref=e199]: succeeded
+      - generic [ref=e201]: Saved lenses

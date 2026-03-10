@@ -100,10 +100,17 @@ class ComplianceManager:
     """
     Unified interface for compliance checks.
     """
-    def __init__(self, user_agent: str, seen_check: Optional[Callable[[str], bool]] = None):
+    def __init__(
+        self,
+        user_agent: str,
+        seen_check: Optional[Callable[[str], bool]] = None,
+        *,
+        enforce_robots: bool = True,
+    ):
         self.rate_limiter = RateLimiter()
         self.robots_validator = RobotsTxtValidator(user_agent)
         self.seen_check = seen_check
+        self.enforce_robots = enforce_robots
 
     def check_and_wait(self, url: str, rate_limit_seconds: float = 1.0) -> bool:
         """
@@ -114,10 +121,9 @@ class ComplianceManager:
             logger.info("skipped_seen_url", url=url)
             return False
 
-        # Disabled robots.txt check as requested
-        # if not self.robots_validator.can_fetch(url):
-        #    logger.warning("blocked_by_robots_txt", url=url)
-        #    return False
+        if self.enforce_robots and not self.robots_validator.can_fetch(url):
+            logger.warning("blocked_by_robots_txt", url=url)
+            return False
         
         self.rate_limiter.wait_for_slot(url, period_seconds=rate_limit_seconds)
         return True

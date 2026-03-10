@@ -15,12 +15,14 @@ from src.listings.agents.factory import AgentFactory
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.feature_fusion import FeatureFusionService
 from src.listings.services.listing_augmenter import ListingAugmentor
+from src.listings.services.observation_persistence import ObservationPersistenceService
 from src.listings.services.listing_persistence import ListingPersistenceService
 from src.listings.services.quality_gate import ListingQualityGate
 from src.listings.utils.seen_url_store import SeenUrlStore
 from src.platform.db.base import resolve_db_url
 from src.platform.domain.schema import RawListing, CanonicalListing
 from src.platform.settings import AppConfig
+from src.platform.storage import StorageService
 from src.platform.utils.compliance import ComplianceManager
 from src.platform.utils.config import ConfigLoader, load_app_config_safe
 
@@ -129,6 +131,7 @@ class UnifiedCrawlRunner:
         self.persistence = ListingPersistenceService(self.listings_repo)
         self.augmenter = ListingAugmentor(self.db_url)
         self.quality_gate = ListingQualityGate(self.app_config.quality_gate)
+        self.observations = ObservationPersistenceService(storage=StorageService(db_url=self.db_url))
         self.compliance = ComplianceManager(self.app_config.agents.defaults.uastring)
         seen_path = seen_urls_db or str(Path(self.app_config.paths.data_dir) / "unified_seen_urls.sqlite3")
         self.seen_store = SeenUrlStore(path=seen_path)
@@ -247,6 +250,7 @@ class UnifiedCrawlRunner:
         crawler = AgentFactory.create_crawler(plan.source_id, crawler_config, compliance)
         crawl_response = crawler.run(payload)
         raw_listings = self._normalize_raw(crawl_response.data or [])
+        self.observations.record_raw_observations(raw_listings)
 
         raw_listings = self._dedupe_raw(plan.source_id, raw_listings)
         if not raw_listings:
@@ -264,12 +268,25 @@ class UnifiedCrawlRunner:
         canonical_listings = list(norm_response.data or [])
 
         valid, invalid = self._apply_quality_gate(canonical_listings)
+        invalid_reason_map = {
+            str(item["id"]): list(item["reasons"])
+            for item in invalid
+            if item.get("id")
+        }
+        self.observations.record_normalized_observations(valid, status="silver_validated")
+        invalid_listings = [item for item in canonical_listings if str(item.id) in invalid_reason_map]
+        self.observations.record_normalized_observations(
+            invalid_listings,
+            status="silver_rejected",
+            rejection_reasons=invalid_reason_map,
+        )
         if self.settings.enable_fusion and valid and self.fusion_pool:
             valid = self.fusion_pool.process(valid)
         if self.settings.enable_augment and valid:
             valid = self.augmenter.augment_listings(valid)
 
         saved = self._persist_listings(valid)
+        self.observations.upsert_listing_entities(valid)
         errors = []
         if crawl_response.errors:
             errors.extend(crawl_response.errors)

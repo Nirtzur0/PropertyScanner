@@ -147,7 +147,7 @@ class ImovirtualCrawlerAgent(BaseAgent):
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=45, retries=3):
             if not result.html:
-                errors.append(f"fetch_failed:{result.url}")
+                errors.append(result.error or f"fetch_failed:{result.url}")
                 continue
             url = result.url
             html = result.html

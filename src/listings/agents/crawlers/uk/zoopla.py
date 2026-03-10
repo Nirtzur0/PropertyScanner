@@ -163,7 +163,7 @@ class ZooplaCrawlerAgent(BaseAgent):
 
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
             if not result.html:
-                errors.append(f"fetch_failed:{result.url}")
+                errors.append(result.error or f"fetch_failed:{result.url}")
                 continue
             html_content = result.html
             url = result.url

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Property Scanner Comp Workbench</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <nav class="site-nav">
+        <a href="./index.html">Foundations</a>
+        <a href="./workbench.html">Workbench</a>
+        <a href="./listing-detail.html">Listing Detail</a>
+        <a class="active" href="./comp-workbench.html">Comp Workbench</a>
+        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a href="./pipeline-health.html">Pipeline</a>
+        <a href="./command-center.html">Command Center</a>
+      </nav>
+
+      <section class="artboard">
+        <div class="artboard-header">
+          <div>
+            <div class="eyebrow">12 Comp Workbench</div>
+            <h2>Manual review, overrides, and valuation deltas</h2>
+          </div>
+          <div class="tool-row">
+            <div class="toolbar-pill">Pin / reject</div>
+            <div class="toolbar-pill">Adjustment matrix</div>
+            <div class="toolbar-pill">Audit history</div>
+          </div>
+        </div>
+
+        <div class="screen-shell">
+          <aside class="sidebar">
+            <div class="brand-lockup">
+              <div class="brand-mark"></div>
+              <h3>Comp workbench</h3>
+              <p>Controlled analyst intervention</p>
+            </div>
+            <div class="nav-stack">
+              <div class="nav-item active">Candidate pool</div>
+              <div class="nav-item">Pinned comps</div>
+              <div class="nav-item">Rejected comps</div>
+              <div class="nav-item">Override log</div>
+            </div>
+            <div class="sidebar-footer">
+              <h4>Effect-on-value</h4>
+              <p>Current override set adds +11k EUR to fair value and narrows interval 4%.</p>
+            </div>
+          </aside>
+
+          <main class="main-column">
+            <div class="topbar">
+              <div>
+                <div class="eyebrow">Target: Rua da Boavista 114</div>
+                <h3 style="margin-top: 10px">Curate comps before memo publication.</h3>
+              </div>
+              <div class="chip-row">
+                <div class="chip">Save override set</div>
+                <div class="chip">Publish to memo</div>
+              </div>
+            </div>
+
+            <div class="split-grid">
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Candidate pool</h4>
+                  <div class="chip-row">
+                    <div class="chip">12 visible</div>
+                    <div class="chip">3 pinned</div>
+                  </div>
+                </div>
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Comp</th>
+                      <th>Distance</th>
+                      <th>Size delta</th>
+                      <th>Support</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Rua do Almada 52</td>
+                      <td>0.4 km</td>
+                      <td>+3%</td>
+                      <td>0.93</td>
+                      <td>Pin</td>
+                    </tr>
+                    <tr>
+                      <td>Rua de Cedofeita 201</td>
+                      <td>0.8 km</td>
+                      <td>-6%</td>
+                      <td>0.87</td>
+                      <td>Keep</td>
+                    </tr>
+                    <tr>
+                      <td>Rua Miguel Bombarda 78</td>
+                      <td>1.7 km</td>
+                      <td>+11%</td>
+                      <td>0.68</td>
+                      <td>Reject</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Adjustment matrix</h4>
+                  <div class="status-pill status-good">Live delta</div>
+                </div>
+                <div class="list-stack">
+                  <div class="metric-card">Floor premium: +2.0%</div>
+                  <div class="metric-card">Outdoor space penalty: -1.4%</div>
+                  <div class="metric-card">Transit edge bonus: +1.1%</div>
+                  <div class="metric-card">Manual renovation uplift: +3.5%</div>
+                </div>
+              </section>
+            </div>
+
+            <div class="two-col">
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Value delta simulator</h4>
+                  <div class="toolbar-pill">What changed</div>
+                </div>
+                <div class="bar-chart">
+                  <div class="bar" style="height: 56%"><span>Base</span></div>
+                  <div class="bar accent" style="height: 73%"><span>Pinned</span></div>
+                  <div class="bar gold" style="height: 66%"><span>Adjusted</span></div>
+                  <div class="bar" style="height: 61%"><span>Memo</span></div>
+                </div>
+                <p style="margin-top: 18px">
+                  Every override updates the interval, confidence, and memo rationale in one place.
+                </p>
+              </section>
+
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Override log</h4>
+                  <div class="toolbar-pill">Auditable</div>
+                </div>
+                <div class="timeline">
+                  <div class="timeline-item">Pinned Rua do Almada 52 because fit is superior despite smaller image set.</div>
+                  <div class="timeline-item">Rejected Rua Miguel Bombarda 78 due to low location similarity and weak support.</div>
+                  <div class="timeline-item">Manual renovation uplift applied and marked as analyst assumption.</div>
+                </div>
+              </section>
+            </div>
+          </main>
+
+          <aside class="rail">
+            <div class="rail-card">
+              <div class="panel-title">
+                <h4>Current result</h4>
+                <div class="status-pill status-warn">Pending publish</div>
+              </div>
+              <div class="stat">
+                <span class="mono">Fair value</span>
+                <strong>370k</strong>
+                <p>+11k vs baseline after override set.</p>
+              </div>
+            </div>
+            <div class="rail-card">
+              <div class="panel-title">
+                <h4>Guardrails</h4>
+              </div>
+              <div class="timeline">
+                <div class="timeline-item">Reject publish if fewer than 5 retained comps remain.</div>
+                <div class="timeline-item">Manual assumptions must appear in memo risk section.</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </body>
+  </html>

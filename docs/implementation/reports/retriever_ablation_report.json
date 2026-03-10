@@ -1,0 +1,142 @@
+{
+  "config": {
+    "label_source": "auto",
+    "listing_type": "sale",
+    "max_radius_km": 5.0,
+    "max_targets": 80,
+    "num_comps": 5,
+    "size_ratio_tolerance": 0.2
+  },
+  "dataset": {
+    "max_obs_date": "2026-01-20T19:36:11.860014+00:00",
+    "min_obs_date": "2026-01-14T18:29:32.845629+00:00",
+    "rows": 4308,
+    "target_rows": 80
+  },
+  "decisions": {
+    "decomposition_diagnostics": {
+      "comparison": {
+        "land_n": 0,
+        "structure_n": 23
+      },
+      "decision": "keep_gap_visible",
+      "reasons": [
+        "segment_sample_floor_not_met"
+      ],
+      "status": "insufficient_segment_samples",
+      "thresholds": {
+        "mae_gap_threshold": 0.25,
+        "min_segment_samples": 20
+      }
+    },
+    "embedding_drift_proxy": {
+      "actual_model_name": "all-MiniLM-L6-v2",
+      "actual_vlm_policy": "gated",
+      "expected_model_name": "all-MiniLM-L6-v2",
+      "expected_vlm_policy": "gated",
+      "index_age_days": 20,
+      "max_index_age_days": 45,
+      "reasons": [],
+      "status": "ok"
+    },
+    "semantic_retrieval": {
+      "comparison": {
+        "coverage_drop": 0.0,
+        "geo_structure_coverage": 0.2125,
+        "geo_structure_mae": 85962.6163,
+        "mae_improvement_ratio": -1.6979,
+        "semantic_coverage": 0.2875,
+        "semantic_mae": 231918.8006
+      },
+      "decision": "simplify",
+      "reasons": [
+        "semantic_mae_improvement_below_threshold"
+      ],
+      "status": "supported",
+      "thresholds": {
+        "max_coverage_drop": 0.05,
+        "min_mae_improvement": 0.02
+      }
+    }
+  },
+  "generated_at": "2026-02-09T12:56:04.951312",
+  "modes": {
+    "geo_only": {
+      "coverage_ratio": 0.8625,
+      "metrics": {
+        "mae": 380073.94473932945,
+        "mape": 68.19688056057697,
+        "medae": 199420.2031248263
+      },
+      "n_attempted": 80,
+      "n_success": 69,
+      "segment_metrics": {
+        "land": {
+          "n": 0.0
+        },
+        "structure": {
+          "mae": 380073.94473932945,
+          "mape": 68.19688056057697,
+          "medae": 199420.2031248263,
+          "n": 69.0
+        }
+      },
+      "status": "ok"
+    },
+    "geo_structure": {
+      "coverage_ratio": 0.2125,
+      "metrics": {
+        "mae": 85962.6162894388,
+        "mape": 20.77985721588346,
+        "medae": 76519.48319969093
+      },
+      "n_attempted": 80,
+      "n_success": 17,
+      "segment_metrics": {
+        "land": {
+          "n": 0.0
+        },
+        "structure": {
+          "mae": 85962.6162894388,
+          "mape": 20.77985721588346,
+          "medae": 76519.48319969093,
+          "n": 17.0
+        }
+      },
+      "status": "ok"
+    },
+    "geo_structure_semantic": {
+      "coverage_ratio": 0.2875,
+      "metrics": {
+        "mae": 231918.80059444887,
+        "mape": 24.965772831356688,
+        "medae": 79220.22753909067
+      },
+      "n_attempted": 80,
+      "n_success": 23,
+      "segment_metrics": {
+        "land": {
+          "n": 0.0
+        },
+        "structure": {
+          "mae": 231918.80059444887,
+          "mape": 24.965772831356688,
+          "medae": 79220.22753909067,
+          "n": 23.0
+        }
+      },
+      "status": "ok"
+    }
+  },
+  "retriever_metadata": {
+    "index_fingerprint": {
+      "mtime": 1768844879,
+      "size": 96
+    },
+    "index_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_index.lancedb",
+    "metadata_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_metadata.json",
+    "model_name": "all-MiniLM-L6-v2",
+    "version": 2,
+    "vlm_policy": "gated"
+  }
+}

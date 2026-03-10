@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Property Scanner Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <nav class="site-nav">
+        <a href="./index.html">Foundations</a>
+        <a href="./workbench.html">Workbench</a>
+        <a href="./listing-detail.html">Listing Detail</a>
+        <a href="./comp-workbench.html">Comp Workbench</a>
+        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a href="./pipeline-health.html">Pipeline</a>
+        <a class="active" href="./command-center.html">Command Center</a>
+      </nav>
+
+      <section class="artboard">
+        <div class="artboard-header">
+          <div>
+            <div class="eyebrow">15 Command Center</div>
+            <h2>Advisory intelligence with guarded actions</h2>
+          </div>
+          <div class="tool-row">
+            <div class="toolbar-pill">Read mostly</div>
+            <div class="toolbar-pill">Cited actions</div>
+            <div class="toolbar-pill">User confirmation</div>
+          </div>
+        </div>
+
+        <div class="screen-shell">
+          <aside class="sidebar">
+            <div class="brand-lockup">
+              <div class="brand-mark"></div>
+              <h3>Command Center</h3>
+              <p>Guided analyst execution</p>
+            </div>
+            <div class="nav-stack">
+              <div class="nav-item active">Briefing</div>
+              <div class="nav-item">Suggestions</div>
+              <div class="nav-item">Queued actions</div>
+              <div class="nav-item">Memory</div>
+            </div>
+            <div class="sidebar-footer">
+              <h4>Guardrail policy</h4>
+              <p>Any job mutation requires explicit review and confirmation.</p>
+            </div>
+          </aside>
+
+          <main class="main-column">
+            <div class="topbar">
+              <div>
+                <div class="eyebrow">Morning briefing</div>
+                <h3 style="margin-top: 10px">Three issues need attention before the memo queue is trustworthy.</h3>
+              </div>
+              <div class="chip-row">
+                <div class="chip">Open queue</div>
+                <div class="chip">Dismiss low priority</div>
+              </div>
+            </div>
+
+            <div class="two-col">
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Advisor thread</h4>
+                  <div class="status-pill status-good">Cited</div>
+                </div>
+                <div class="list-stack">
+                  <div class="memory-item">Benchmark gate failed on Barcelona rentals because fusion coverage fell below threshold.</div>
+                  <div class="memory-item">Pisos remains degraded; recommend excluding it from any memo-facing shortlist until cleaned.</div>
+                  <div class="memory-item">Two Porto listings are memo-ready and support thresholds remain healthy.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Suggested action</h4>
+                  <div class="status-pill status-warn">Awaiting user</div>
+                </div>
+                <div class="list-stack">
+                  <div class="metric-card">Action: queue benchmark rerun after market-data refresh.</div>
+                  <div class="metric-card">Reason: current benchmark gate is stale relative to latest ingest.</div>
+                  <div class="metric-card">Impact: refresh model confidence surfaces before memo export.</div>
+                </div>
+              </section>
+            </div>
+
+            <div class="split-grid">
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Confirmation drawer</h4>
+                  <div class="toolbar-pill">Explicit</div>
+                </div>
+                <div class="list-stack">
+                  <div class="list-card">Job type: benchmark</div>
+                  <div class="list-card">Precondition: market-data job must run first</div>
+                  <div class="list-card">Output: benchmark_runs row + updated gate state</div>
+                  <div class="list-card">Buttons: approve queue / edit params / cancel</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-title">
+                  <h4>Memory and provenance</h4>
+                  <div class="toolbar-pill">Replayable</div>
+                </div>
+                <div class="timeline">
+                  <div class="timeline-item">09:12 | Suggested exclude degraded source from memo workflow.</div>
+                  <div class="timeline-item">09:17 | User approved rerun of market-data job.</div>
+                  <div class="timeline-item">09:43 | Benchmark rerun recommended after ingest completion.</div>
+                </div>
+              </section>
+            </div>
+          </main>
+
+          <aside class="rail">
+            <div class="rail-card">
+              <div class="panel-title">
+                <h4>Queue</h4>
+                <div class="status-pill status-warn">1 pending</div>
+              </div>
+              <div class="list-stack">
+                <div class="list-card">Benchmark rerun pending approval</div>
+                <div class="list-card">Pisos exclusion suggestion dismissed</div>
+              </div>
+            </div>
+
+            <div class="rail-card">
+              <div class="panel-title">
+                <h4>Trust rules</h4>
+              </div>
+              <div class="timeline">
+                <div class="timeline-item">Never auto-run preflight on open.</div>
+                <div class="timeline-item">Never hide benchmark failure from memo views.</div>
+                <div class="timeline-item">Never show confidence without reasons.</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </body>
+  </html>

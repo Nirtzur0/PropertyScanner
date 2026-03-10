@@ -1,0 +1,52 @@
+\begin{thebibliography}{1}
+
+\bibitem{AngelopoulosBates2021}
+Anastasios~N. Angelopoulos and Stephen Bates.
+\newblock A gentle introduction to conformal prediction and distribution-free
+  uncertainty quantification.
+\newblock {\em arXiv}, 2021.
+
+\bibitem{BaileyMuthNourse1963}
+Martin~J. Bailey, Richard~F. Muth, and Hugh~O. Nourse.
+\newblock A regression method for real estate price index construction.
+\newblock {\em Journal of the American Statistical Association}, 1963.
+
+\bibitem{BarberEtAl2021}
+Rina~Foygel Barber, Emmanuel~J. Candes, Aaditya Ramdas, and Ryan~J. Tibshirani.
+\newblock Predictive inference with the jackknife+.
+\newblock {\em The Annals of Statistics}, 2021.
+
+\bibitem{CaseShiller1987}
+Karl Case and Robert Shiller.
+\newblock Prices of single family homes since 1970: New indexes for four
+  cities.
+\newblock Technical report, NBER, 1987.
+
+\bibitem{KoenkerBassett1978}
+Roger Koenker and Gilbert Bassett.
+\newblock Regression quantiles.
+\newblock {\em Econometrica}, 1978.
+
+\bibitem{ReimersGurevych2019}
+Nils Reimers and Iryna Gurevych.
+\newblock Sentence-bert: Sentence embeddings using siamese bert-networks.
+\newblock {\em arXiv}, 2019.
+
+\bibitem{RomanoPattersonCandes2019}
+Yaniv Romano, Evan Patterson, and Emmanuel Candes.
+\newblock Conformalized quantile regression.
+\newblock {\em arXiv}, 2019.
+
+\bibitem{Rosen1974}
+Sherwin Rosen.
+\newblock Hedonic prices and implicit markets: Product differentiation in pure
+  competition.
+\newblock {\em Journal of Political Economy}, 1974.
+
+\bibitem{Vaswani2017}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+  Aidan~N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock {\em arXiv}, 2017.
+
+\end{thebibliography}

@@ -176,7 +176,17 @@ class ScrapeClient:
                 results.append(FetchResult(url=url, html=html, error=str(exc)))
             return results
 
-        results = [FetchResult(url=item.url, html=item.html) for item in browser_results]
+        results: list[FetchResult] = []
+        for item in browser_results:
+            html = item.html
+            error = item.error
+            if not html:
+                html = self.fetch_html(url=item.url, retries=max(1, retries), timeout_s=timeout_s)
+                if html:
+                    error = None
+                elif not error:
+                    error = f"fetch_failed:{item.url}"
+            results.append(FetchResult(url=item.url, html=html, error=error))
         return results
 
     async def fetch_html_batch_async(
@@ -213,7 +223,7 @@ class ScrapeClient:
             logger.warning("browser_batch_failed", error=str(exc))
             raise
 
-        results = [FetchResult(url=item.url, html=item.html) for item in browser_results]
+        results = [FetchResult(url=item.url, html=item.html, error=item.error) for item in browser_results]
         return results
 
     def extract_links(self, html: str, spec: LinkExtractorSpec) -> list[str]:

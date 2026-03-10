@@ -67,7 +67,7 @@ def batch_process_vlm(
         image_selector_config=app_config.image_selector,
     )
     if not describer._check_availability():
-        print("VLM not available. Ensure Ollama is running.")
+        print("VLM not available. Ensure the configured OpenAI-compatible or Ollama backend is running.")
         return
 
     repo = ListingsRepository(db_path=db_path)
@@ -82,9 +82,9 @@ def batch_process_vlm(
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
-            # Note: We pass 'describer' to workers. Since VLMImageDescriber creates 
+            # Note: We pass 'describer' to workers. Since VLMImageDescriber creates
             # new requests/connections inside describe_images, it should be thread-safe enough
-            # for this simple usage (Ollama client is HTTP based).
+            # for this simple usage (HTTP backend).
             future_to_id = {
                 executor.submit(process_single_listing, describer, row): row['id'] 
                 for row in rows

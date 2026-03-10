@@ -1,7 +1,11 @@
 # vlm.yaml
 
 vlm:
-  model: "llava"
+  provider: "chatmock"
+  api_base: "http://127.0.0.1:8000/v1"
+  api_key_env: "CHATMOCK_API_KEY"
+  model: "gpt-4o-mini"
+  supports_vision: true
   max_images: 2
   debug_max_images: 4
   timeout_seconds: 60

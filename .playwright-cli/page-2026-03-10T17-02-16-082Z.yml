@@ -1,0 +1,28 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: loading
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Fresh
+  - generic [ref=e27]: Loading map-centric workbench…

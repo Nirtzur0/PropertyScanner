@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.platform.domain.models import DBListing
@@ -17,12 +19,113 @@ from src.valuation.services.valuation_persister import ValuationPersister
 from src.ml.training.train import train_model as train_model_workflow
 from src.market.services.transactions import TransactionsIngestService
 from src.listings.workflows.unified_crawl import run_backfill
-from src.valuation.workflows.indexing import build_vector_index as build_vector_index_workflow
-from src.market.workflows.market_data import build_market_data as build_market_data_workflow
-from src.platform.workflows.prefect_orchestration import preflight_flow as run_preflight_workflow
+from src.platform.pipeline.state import PipelineStateService
 from src.platform.utils.config import load_app_config_safe
 
 logger = structlog.get_logger(__name__)
+
+_ROOT_DIR = Path(__file__).resolve().parents[3]
+_CRAWLER_STATUS_DOC_PATH = _ROOT_DIR / "docs" / "crawler_status.md"
+_SOURCE_SUFFIX_RE = re.compile(r"(?:_|-)([a-z]{2})$")
+_OBSERVABILITY_DOC_PATH = "docs/manifest/07_observability.md"
+_RUNBOOK_DOC_PATH = "docs/manifest/09_runbook.md"
+_ARTIFACT_ALIGNMENT_REPORT_PATH = "docs/implementation/reports/artifact_feature_alignment.md"
+_ARTIFACT_ALIGNMENT_CHECKLIST_PATH = "docs/implementation/checklists/08_artifact_feature_alignment.md"
+
+
+def _strip_md(value: str) -> str:
+    cleaned = value.replace("`", "").replace("*", "")
+    cleaned = cleaned.replace("✅", "").replace("❌", "")
+    return " ".join(cleaned.split()).strip()
+
+
+def _norm_key(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _parse_crawler_status_doc(path: Path) -> Dict[str, str]:
+    if not path.exists():
+        return {}
+
+    status_by_name: Dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+
+        cells = [_strip_md(cell.strip()) for cell in line.split("|")[1:-1]]
+        if len(cells) < 3:
+            continue
+
+        crawler_name = cells[0]
+        status_text = cells[2].lower()
+        if not crawler_name or crawler_name.lower() == "crawler" or crawler_name.startswith(":---"):
+            continue
+
+        if "operational" in status_text:
+            status_by_name[_norm_key(crawler_name)] = "operational"
+        elif "blocked" in status_text:
+            status_by_name[_norm_key(crawler_name)] = "blocked"
+
+    return status_by_name
+
+
+def _source_candidates(source_id: str, source_name: Optional[str]) -> List[str]:
+    candidates: List[str] = []
+
+    if source_name:
+        norm_name = _norm_key(source_name)
+        if norm_name:
+            candidates.append(norm_name)
+
+    norm_id = _norm_key(source_id)
+    if norm_id and norm_id not in candidates:
+        candidates.append(norm_id)
+
+    suffix_match = _SOURCE_SUFFIX_RE.search(source_id)
+    if suffix_match:
+        id_without_suffix = _norm_key(source_id[: suffix_match.start()])
+        if id_without_suffix and id_without_suffix not in candidates:
+            candidates.append(id_without_suffix)
+
+    return candidates
+
+
+def _resolve_crawler_status(source_id: str, source_name: Optional[str], status_by_name: Dict[str, str]) -> str:
+    if not status_by_name:
+        return "unknown"
+
+    candidates = _source_candidates(source_id, source_name)
+    for candidate in candidates:
+        if candidate in status_by_name:
+            return status_by_name[candidate]
+
+    best_status = "unknown"
+    best_len = -1
+    for candidate in candidates:
+        for report_key, report_status in status_by_name.items():
+            if candidate and candidate in report_key:
+                if len(report_key) > best_len:
+                    best_status = report_status
+                    best_len = len(report_key)
+    return best_status
+
+
+def _classify_runtime_label(enabled: bool, crawler_status: str) -> Tuple[str, str]:
+    if crawler_status == "blocked":
+        return "blocked", "crawler_status_blocked"
+    if enabled and crawler_status == "operational":
+        return "supported", "enabled_and_operational"
+    if enabled:
+        return "fallback", "enabled_but_unverified"
+    return "fallback", "disabled_or_unverified"
+
+
+def _repo_relative_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(_ROOT_DIR.resolve()))
+    except ValueError:
+        return str(path.resolve())
 
 
 class PipelineAPI:
@@ -93,8 +196,123 @@ class PipelineAPI:
 
     def preflight(self, **kwargs: Any) -> Dict[str, Any]:
         """Run preflight freshness checks and refresh stale artifacts."""
-        db_path = kwargs.pop("db_path", self.config.db_path)
-        return run_preflight_workflow(db_path=db_path, app_config=self.app_config, **kwargs)
+        from src.application.container import get_container
+
+        payload = {
+            "source_ids": kwargs.pop("source_ids", kwargs.pop("crawl_source", None)),
+            "max_listings": kwargs.pop("max_listings", 0),
+            "max_pages": kwargs.pop("max_pages", 1),
+            "page_size": kwargs.pop("page_size", 24),
+            "skip_crawl": kwargs.pop("skip_crawl", False),
+            "skip_market_data": kwargs.pop("skip_market_data", False),
+            "skip_index": kwargs.pop("skip_index", False),
+            "skip_training": kwargs.pop("skip_training", False),
+        }
+        return get_container().pipeline.run_preflight(**payload)
+
+    def source_support_summary(self, *, crawler_status_path: Optional[str] = None) -> Dict[str, Any]:
+        """Classify source runtime labels as supported/blocked/fallback."""
+        doc_path = Path(crawler_status_path) if crawler_status_path else _CRAWLER_STATUS_DOC_PATH
+        status_by_name = _parse_crawler_status_doc(doc_path)
+
+        summary = {"supported": 0, "blocked": 0, "fallback": 0}
+        sources: List[Dict[str, Any]] = []
+
+        for source in self.app_config.sources.sources:
+            crawler_status = _resolve_crawler_status(source.id, source.name, status_by_name)
+            runtime_label, reason = _classify_runtime_label(bool(source.enabled), crawler_status)
+            summary[runtime_label] += 1
+            sources.append(
+                {
+                    "id": source.id,
+                    "name": source.name or source.id,
+                    "countries": list(source.countries),
+                    "enabled": bool(source.enabled),
+                    "crawler_status": crawler_status,
+                    "runtime_label": runtime_label,
+                    "reason": reason,
+                }
+            )
+
+        return {
+            "doc_path": _repo_relative_path(doc_path),
+            "summary": summary,
+            "sources": sources,
+        }
+
+    def assumption_badges(self, *, source_support: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return artifact-backed runtime assumption badges used by API/dashboard status surfaces."""
+        summary = source_support.get("summary", {}) if isinstance(source_support, dict) else {}
+        if not isinstance(summary, dict):
+            summary = {}
+
+        supported = int(summary.get("supported", 0) or 0)
+        blocked = int(summary.get("blocked", 0) or 0)
+        fallback = int(summary.get("fallback", 0) or 0)
+        source_doc = str(source_support.get("doc_path") or "docs/crawler_status.md")
+
+        if blocked > 0 or fallback > 0:
+            source_status = "caution"
+            source_summary = (
+                f"{supported} supported, {blocked} blocked, {fallback} fallback sources; "
+                "review crawler caveats before relying on aggregate outputs."
+            )
+        else:
+            source_status = "ok"
+            source_summary = (
+                f"{supported} supported sources with no blocked/fallback entries in runtime status."
+            )
+
+        return [
+            {
+                "id": "source_coverage",
+                "label": "Source coverage caveat",
+                "status": source_status,
+                "artifact_ids": ["lit-case-shiller-1988"],
+                "summary": source_summary,
+                "guide_path": source_doc,
+            },
+            {
+                "id": "conditional_coverage",
+                "label": "Conformal coverage scope",
+                "status": "caution",
+                "artifact_ids": ["lit-conformal-tutorial-2021"],
+                "summary": (
+                    "Conformal intervals are marginal guarantees; monitor segmented coverage "
+                    "before treating confidence as certainty."
+                ),
+                "guide_path": _OBSERVABILITY_DOC_PATH,
+            },
+            {
+                "id": "jackknife_fallback",
+                "label": "Fallback interval policy",
+                "status": "caution",
+                "artifact_ids": ["lit-jackknifeplus-2021"],
+                "summary": (
+                    "Segmented conformal remains primary; wider bootstrap fallback intervals "
+                    "are used for unseen, under-sampled, or under-covered segments."
+                ),
+                "guide_path": _RUNBOOK_DOC_PATH,
+            },
+            {
+                "id": "decomposition_diagnostics",
+                "label": "Land/structure decomposition",
+                "status": "gap",
+                "artifact_ids": ["lit-deng-gyourko-wu-2012"],
+                "summary": "Land/structure decomposition diagnostics are still a planned packet.",
+                "guide_path": _ARTIFACT_ALIGNMENT_CHECKLIST_PATH,
+            },
+        ]
+
+    def pipeline_status(self, *, crawler_status_path: Optional[str] = None) -> Dict[str, Any]:
+        """Return pipeline freshness state plus source-support runtime labels."""
+        from src.application.container import get_container
+
+        state = get_container().pipeline.pipeline_status()
+        source_support = self.source_support_summary(crawler_status_path=crawler_status_path)
+        state["source_support"] = source_support
+        state["assumption_badges"] = self.assumption_badges(source_support=source_support)
+        return state
 
     def crawl_backfill(
         self,
@@ -133,8 +351,9 @@ class PipelineAPI:
 
     def build_market_data(self, **kwargs: Any) -> None:
         """Build macro data + market/hedonic indices."""
-        db_path = kwargs.pop("db_path", self.config.db_path)
-        build_market_data_workflow(db_path=db_path, app_config=self.app_config, **kwargs)
+        from src.application.container import get_container
+
+        get_container().pipeline.run_market_data()
 
     def ingest_transactions(
         self,
@@ -153,16 +372,13 @@ class PipelineAPI:
 
     def build_vector_index(self, **kwargs: Any) -> int:
         """Build the vector index for comps."""
-        db_url = kwargs.pop("db_url", self._db_url)
-        index_path = kwargs.pop("index_path", self.config.index_path)
-        metadata_path = kwargs.pop("metadata_path", self.config.metadata_path)
-        return build_vector_index_workflow(
-            db_url=db_url,
-            index_path=index_path,
-            metadata_path=metadata_path,
-            app_config=self.app_config,
-            **kwargs,
+        from src.application.container import get_container
+
+        result = get_container().pipeline.run_index(
+            listing_type=str(kwargs.pop("listing_type", "all")),
+            limit=int(kwargs.pop("limit", 0)),
         )
+        return int(result.get("indexed", 0))
 
     def train_model(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """Train the fusion model."""

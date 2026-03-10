@@ -1,0 +1,40 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [active] [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - generic [ref=e101]: Watchlists
+      - heading "Tracked property groups" [level=2] [ref=e102]
+      - generic [ref=e104]:
+        - strong [ref=e105]: AUDIT Watchlist 20260310
+        - paragraph [ref=e106]: Empirical audit artifact
+    - generic [ref=e107]:
+      - generic [ref=e108]: Saved searches
+      - heading "Reusable lenses" [level=2] [ref=e109]
+      - generic [ref=e111]:
+        - strong [ref=e112]: AUDIT Search 20260310
+        - paragraph [ref=e113]: "{\"country\":\"ES\",\"listing_type\":\"sale\"}"

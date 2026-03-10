@@ -1,0 +1,123 @@
+# System Overview
+
+Property Scanner is a local-first pipeline that crawls listings, enriches them, and produces valuations, projections, and recommendations with strict data and freshness requirements.
+
+For canonical architecture controls and boundaries, see:
+- `docs/manifest/01_architecture.md`
+- `docs/manifest/04_api_contracts.md`
+- `docs/manifest/05_data_model.md`
+
+## System Map
+
+```mermaid
+flowchart LR
+    subgraph Interfaces
+        CLI["CLI"]
+        Dash["Scout dashboard"]
+        API["PipelineAPI"]
+    end
+
+    subgraph Agents
+        Agent["LangGraph agents"]
+    end
+
+    subgraph Orchestration
+        Prefect["Prefect flow"]
+        Preflight["Preflight workflow"]
+    end
+
+    subgraph Listings
+        CrawlBackfill["Crawl backfill workflow"]
+        Norm["Normalizer agents"]
+        Fusion["Feature fusion (VLM + sentiment)"]
+        Aug["Listing augmentor"]
+        Store["StorageService"]
+    end
+
+    subgraph Market
+        Transactions["Transactions ingest"]
+        MarketData["Market data workflow"]
+        Hedonic["HedonicIndexService"]
+        Area["AreaIntelligenceService"]
+        MarketAnalytics["MarketAnalyticsService"]
+        Gov["OfficialSourcesAgent (official metrics)"]
+    end
+
+    subgraph ML
+        Train["Training workflow"]
+        Model["PropertyFusionModel (log-residual)"]
+    end
+
+    subgraph Valuation
+        Index["Vector index workflow"]
+        Retriever["CompRetriever"]
+        Forecast["ForecastingService"]
+        Val["ValuationService"]
+    end
+
+    subgraph Data
+        ListingsDB[("SQLite: data/listings.db")]
+        Seen[("unified_seen_urls.sqlite3")]
+        VectorIndex[("vector_index.lancedb + metadata")]
+        MarketTables[("market/hedonic/macro/area tables")]
+        GovData[("official_metrics (provider_id)")]
+        Runs[("pipeline_runs")]
+        AgentRuns[("agent_runs")]
+        ModelArtifacts[("models/fusion_model.pt + fusion_config.json")]
+        Calib[("models/calibration_registry.json")]
+    end
+
+    CLI --> API
+    Dash --> API
+    API --> Preflight
+    Prefect --> Preflight
+    Agent --> Preflight
+    Agent --> AgentRuns
+
+    Preflight --> CrawlBackfill
+    Preflight --> Transactions
+    Preflight --> MarketData
+    Preflight --> Index
+    Preflight --> Train
+    Preflight --> Runs
+
+    CrawlBackfill --> Seen
+    CrawlBackfill --> Norm --> Fusion --> Aug --> Store --> ListingsDB
+    Transactions --> ListingsDB
+
+    ListingsDB --> MarketData --> MarketTables
+    Gov --> GovData --> MarketData
+    MarketTables --> Hedonic --> Val
+    MarketTables --> Area --> Val
+    MarketTables --> MarketAnalytics --> Val
+
+    ListingsDB --> Index --> VectorIndex --> Retriever --> Val
+    ListingsDB --> Train
+    MarketTables --> Train
+    Train --> ModelArtifacts --> Model --> Val
+    Calib --> Val
+    Forecast --> Val
+
+    Val --> Dash
+    Val --> CLI
+```
+
+## System Components At A Glance
+
+- Acquisition: Crawl backfill workflow via `ScrapeClient` (Pydoll) plus LangGraph for agent-driven discovery and `OfficialSourcesAgent` for official metrics.
+- Processing: Normalize listings, fuse VLM/text sentiment signals, ingest sold transactions, then persist via `StorageService`.
+- Data: SQLite is the system of record; `pipeline_runs` tracks operational health and `agent_runs` stores cognitive run history.
+- Intelligence: Time-safe comps with metadata locks, hedonic indices, income-aware valuation, and area intelligence.
+- Interfaces: CLI, `PipelineAPI`, and the Scout Intelligence dashboard.
+- Automation: Prefect preflight flows keep data and artifacts fresh without manual run sequencing.
+
+## Module Boundaries
+
+- Interfaces: CLI, API, and dashboard entry points.
+- Agents: LangGraph tools, orchestrator, and analyst agents.
+- Listings: crawl/normalize/enrich listings, repositories, crawl workflows.
+- Market: macro/indices/official metrics signals, market repositories, market workflows.
+- Valuation: retrieval + valuation services, calibration/backfill/indexing workflows.
+- ML: models/encoders and training pipelines.
+- Platform: config/settings, storage + migrations, pipeline state/runs.
+- Scripts: workflow wrappers, crawl harnesses, and debug utilities.

@@ -4,6 +4,7 @@ Implements quantile regression with early stopping and checkpointing.
 """
 import os
 import json
+import sys
 import structlog
 import numpy as np
 from typing import Optional, Dict, Any, Tuple, List
@@ -16,6 +17,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from src.ml.services.fusion_model import PropertyFusionModel, QuantileLoss, TORCH_AVAILABLE
+from src.ml.training.policy import (
+    ProductReadinessError,
+    enforce_fusion_training_policy,
+    format_product_readiness_error,
+)
 from src.platform.settings import AppConfig
 from src.ml.dataset import create_dataloaders
 from src.platform.utils.config import load_app_config_safe
@@ -353,6 +359,7 @@ def train_model(
     size_ratio_tolerance: float = 0.2,
     require_hedonic: bool = True,
     app_config: Optional[AppConfig] = None,
+    research_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     High-level training function with train/val/test splitting and K-Fold support.
@@ -360,6 +367,13 @@ def train_model(
     app_config = app_config or load_app_config_safe()
     if db_path is None:
         db_path = str(app_config.pipeline.db_path)
+    db_url = f"sqlite:///{db_path}"
+    enforce_fusion_training_policy(
+        db_url=db_url,
+        listing_type=listing_type,
+        label_source=label_source,
+        research_only=research_only,
+    )
     if retriever_index_path is None:
         retriever_index_path = str(app_config.paths.vector_index_path)
     if retriever_metadata_path is None:
@@ -593,106 +607,123 @@ def train_model(
 
 if __name__ == "__main__":
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Train PropertyFusionModel")
-    defaults = load_app_config_safe()
-    parser.add_argument("--db", default=str(defaults.pipeline.db_path), help="SQLite database path")
-    parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--val-split", type=float, default=0.1)
-    parser.add_argument("--test-split", type=float, default=0.1)
-    parser.add_argument(
-        "--split-strategy",
-        default="random",
-        choices=["random", "time_geo"],
-        help="Evaluation split strategy (random or time_geo).",
-    )
-    parser.add_argument(
-        "--geo-split-key",
-        default="city",
-        choices=["city", "geohash"],
-        help="Geographic key for time_geo splits.",
-    )
-    parser.add_argument("--split-seed", type=int, default=42)
-    parser.add_argument("--k-folds", type=int, default=1, help="Number of folds for Cross Validation")
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
-    parser.add_argument("--no-vlm", action="store_true", help="Disable VLM")
-    parser.add_argument("--listing-type", default="sale", choices=["sale", "rent", "all"])
-    parser.add_argument("--label-source", default="auto", choices=["ask", "sold", "auto"])
-    parser.add_argument("--normalize-to", default="latest", help="latest, none, or ISO date for hedonic normalization")
-    parser.add_argument("--time-safe-comps", action="store_true", help="Enforce comp dates <= target date")
-    parser.add_argument("--no-time-safe-comps", dest="time_safe_comps", action="store_false")
-    parser.set_defaults(time_safe_comps=True)
-    parser.add_argument("--use-retriever", action="store_true", help="Use vector retriever for comps (LanceDB)")
-    parser.add_argument("--no-retriever", dest="use_retriever", action="store_false")
-    parser.set_defaults(use_retriever=True)
-    parser.add_argument("--retriever-index", default=str(defaults.paths.vector_index_path))
-    parser.add_argument("--retriever-metadata", default=str(defaults.paths.vector_metadata_path))
-    parser.add_argument("--retriever-model", default=defaults.valuation.retriever_model_name)
-    parser.add_argument(
-        "--retriever-vlm-policy",
-        default=defaults.valuation.retriever_vlm_policy,
-        choices=["gated", "off"],
-    )
-    parser.add_argument("--comp-cache", default=None, help="Optional path to persist comp IDs.")
-    parser.add_argument(
-        "--comp-cache-mode",
-        default="auto",
-        choices=["auto", "read", "write"],
-        help="Comp cache behavior (auto/read/write).",
-    )
-    parser.add_argument("--num-comps", type=int, default=5, help="Number of comps per listing")
-    parser.add_argument("--geo-radius-km", type=float, default=5.0, help="Radius for spatial comps")
-    parser.add_argument("--size-tolerance", type=float, default=0.2, help="Size ratio tolerance (0.2 = +/- 20%)")
-    parser.add_argument("--require-hedonic", action="store_true", help="Require hedonic normalization")
-    parser.add_argument("--no-hedonic", dest="require_hedonic", action="store_false")
-    parser.set_defaults(require_hedonic=True)
-    
-    args = parser.parse_args()
-    
-    histories = train_model(
-        db_path=args.db,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        num_comps=args.num_comps,
-        patience=args.patience,
-        val_split=args.val_split,
-        test_split=args.test_split,
-        split_strategy=args.split_strategy,
-        geo_split_key=args.geo_split_key,
-        split_seed=args.split_seed,
-        device=args.device,
-        use_vlm=not args.no_vlm,
-        k_folds=args.k_folds,
-        listing_type=args.listing_type,
-        label_source=args.label_source,
-        time_safe_comps=args.time_safe_comps,
-        normalize_to=args.normalize_to,
-        use_retriever=args.use_retriever,
-        retriever_index_path=args.retriever_index,
-        retriever_metadata_path=args.retriever_metadata,
-        retriever_model_name=args.retriever_model,
-        retriever_vlm_policy=args.retriever_vlm_policy,
-        comp_cache_path=args.comp_cache,
-        comp_cache_mode=args.comp_cache_mode,
-        geo_radius_km=args.geo_radius_km,
-        size_ratio_tolerance=args.size_tolerance,
-        require_hedonic=args.require_hedonic,
-        app_config=defaults,
-    )
-    
-    # Aggregate results
-    avg_mae = np.mean([h['best_metrics'].get('mae', 0) for h in histories])
-    avg_mape = np.mean([h['best_metrics'].get('mape', 0) for h in histories])
-    avg_test_mae = np.mean([h.get('test_metrics', {}).get('mae', 0) for h in histories])
-    avg_test_mape = np.mean([h.get('test_metrics', {}).get('mape', 0) for h in histories])
-    
-    print(f"\nTraining complete!")
-    print(f"Average MAE: €{avg_mae:,.0f}")
-    print(f"Average MAPE: {avg_mape:.1f}%")
-    if avg_test_mae or avg_test_mape:
-        print(f"Average Test MAE: €{avg_test_mae:,.0f}")
-        print(f"Average Test MAPE: {avg_test_mape:.1f}%")
+
+    def build_parser() -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser(description="Train PropertyFusionModel")
+        defaults = load_app_config_safe()
+        parser.add_argument("--db", default=str(defaults.pipeline.db_path), help="SQLite database path")
+        parser.add_argument("--epochs", type=int, default=100)
+        parser.add_argument("--batch-size", type=int, default=16)
+        parser.add_argument("--lr", type=float, default=1e-4)
+        parser.add_argument("--patience", type=int, default=10)
+        parser.add_argument("--val-split", type=float, default=0.1)
+        parser.add_argument("--test-split", type=float, default=0.1)
+        parser.add_argument(
+            "--split-strategy",
+            default="random",
+            choices=["random", "time_geo"],
+            help="Evaluation split strategy (random or time_geo).",
+        )
+        parser.add_argument(
+            "--geo-split-key",
+            default="city",
+            choices=["city", "geohash"],
+            help="Geographic key for time_geo splits.",
+        )
+        parser.add_argument("--split-seed", type=int, default=42)
+        parser.add_argument("--k-folds", type=int, default=1, help="Number of folds for Cross Validation")
+        parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
+        parser.add_argument("--no-vlm", action="store_true", help="Disable VLM")
+        parser.add_argument("--listing-type", default="sale", choices=["sale", "rent", "all"])
+        parser.add_argument("--label-source", default="auto", choices=["ask", "sold", "auto"])
+        parser.add_argument("--normalize-to", default="latest", help="latest, none, or ISO date for hedonic normalization")
+        parser.add_argument("--time-safe-comps", action="store_true", help="Enforce comp dates <= target date")
+        parser.add_argument("--no-time-safe-comps", dest="time_safe_comps", action="store_false")
+        parser.set_defaults(time_safe_comps=True)
+        parser.add_argument("--use-retriever", action="store_true", help="Use vector retriever for comps (LanceDB)")
+        parser.add_argument("--no-retriever", dest="use_retriever", action="store_false")
+        parser.set_defaults(use_retriever=True)
+        parser.add_argument("--retriever-index", default=str(defaults.paths.vector_index_path))
+        parser.add_argument("--retriever-metadata", default=str(defaults.paths.vector_metadata_path))
+        parser.add_argument("--retriever-model", default=defaults.valuation.retriever_model_name)
+        parser.add_argument(
+            "--retriever-vlm-policy",
+            default=defaults.valuation.retriever_vlm_policy,
+            choices=["gated", "off"],
+        )
+        parser.add_argument("--comp-cache", default=None, help="Optional path to persist comp IDs.")
+        parser.add_argument(
+            "--comp-cache-mode",
+            default="auto",
+            choices=["auto", "read", "write"],
+            help="Comp cache behavior (auto/read/write).",
+        )
+        parser.add_argument("--num-comps", type=int, default=5, help="Number of comps per listing")
+        parser.add_argument("--geo-radius-km", type=float, default=5.0, help="Radius for spatial comps")
+        parser.add_argument("--size-tolerance", type=float, default=0.2, help="Size ratio tolerance (0.2 = +/- 20 percent)")
+        parser.add_argument("--require-hedonic", action="store_true", help="Require hedonic normalization")
+        parser.add_argument("--no-hedonic", dest="require_hedonic", action="store_false")
+        parser.set_defaults(require_hedonic=True)
+        parser.add_argument(
+            "--research-only",
+            action="store_true",
+            help="Deprecated compatibility flag. Training now gates on dataset readiness instead.",
+        )
+        return parser
+
+    def main() -> int:
+        defaults = load_app_config_safe()
+        parser = build_parser()
+        args = parser.parse_args()
+
+        try:
+            histories = train_model(
+                db_path=args.db,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                lr=args.lr,
+                num_comps=args.num_comps,
+                patience=args.patience,
+                val_split=args.val_split,
+                test_split=args.test_split,
+                split_strategy=args.split_strategy,
+                geo_split_key=args.geo_split_key,
+                split_seed=args.split_seed,
+                device=args.device,
+                use_vlm=not args.no_vlm,
+                k_folds=args.k_folds,
+                listing_type=args.listing_type,
+                label_source=args.label_source,
+                time_safe_comps=args.time_safe_comps,
+                normalize_to=args.normalize_to,
+                use_retriever=args.use_retriever,
+                retriever_index_path=args.retriever_index,
+                retriever_metadata_path=args.retriever_metadata,
+                retriever_model_name=args.retriever_model,
+                retriever_vlm_policy=args.retriever_vlm_policy,
+                comp_cache_path=args.comp_cache,
+                comp_cache_mode=args.comp_cache_mode,
+                geo_radius_km=args.geo_radius_km,
+                size_ratio_tolerance=args.size_tolerance,
+                require_hedonic=args.require_hedonic,
+                app_config=defaults,
+                research_only=args.research_only,
+            )
+        except ProductReadinessError as exc:
+            print(format_product_readiness_error(exc), file=sys.stderr)
+            return 2
+
+        avg_mae = np.mean([h["best_metrics"].get("mae", 0) for h in histories])
+        avg_mape = np.mean([h["best_metrics"].get("mape", 0) for h in histories])
+        avg_test_mae = np.mean([h.get("test_metrics", {}).get("mae", 0) for h in histories])
+        avg_test_mape = np.mean([h.get("test_metrics", {}).get("mape", 0) for h in histories])
+
+        print("\nTraining complete!")
+        print(f"Average MAE: €{avg_mae:,.0f}")
+        print(f"Average MAPE: {avg_mape:.1f}%")
+        if avg_test_mae or avg_test_mape:
+            print(f"Average Test MAE: €{avg_test_mae:,.0f}")
+            print(f"Average Test MAPE: {avg_test_mape:.1f}%")
+        return 0
+
+    raise SystemExit(main())

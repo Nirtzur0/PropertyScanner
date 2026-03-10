@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Property Scanner Redesign Foundations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <nav class="site-nav">
+        <a class="active" href="./index.html">Foundations</a>
+        <a href="./workbench.html">Workbench</a>
+        <a href="./listing-detail.html">Listing Detail</a>
+        <a href="./comp-workbench.html">Comp Workbench</a>
+        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a href="./pipeline-health.html">Pipeline</a>
+        <a href="./command-center.html">Command Center</a>
+      </nav>
+
+      <section class="masthead">
+        <div class="hero-card">
+          <div class="eyebrow">Property Scanner redesign system</div>
+          <h1>Premium analytical UI for a local-first property workbench.</h1>
+          <p class="hero-copy">
+            This redesign shifts the product from a single dense dashboard into a
+            coherent multi-surface analyst platform: discovery, dossier,
+            comp review, memo export, source health, benchmarking, and a guarded
+            command center.
+          </p>
+          <div class="hero-meta">
+            <div class="meta-pill">Desktop-first power workflow</div>
+            <div class="meta-pill">FastAPI + React target</div>
+            <div class="meta-pill">Memo, comps, and ops all first-class</div>
+          </div>
+        </div>
+        <div class="context-card">
+          <h3>Design intent</h3>
+          <p>
+            Editorial typography, warm analytical surfaces, restrained luxury,
+            and dense information modules that still breathe. Charts and maps are
+            product building blocks, not afterthoughts.
+          </p>
+          <div class="metric-grid">
+            <div class="metric-card">
+              <span class="mono">IA</span>
+              <strong>4</strong>
+              <p>Primary destinations: Workbench, Watchlists, Pipeline, Command Center.</p>
+            </div>
+            <div class="metric-card">
+              <span class="mono">Tone</span>
+              <strong>Trust</strong>
+              <p>Confidence is explained with evidence provenance and support metrics.</p>
+            </div>
+            <div class="metric-card">
+              <span class="mono">Density</span>
+              <strong>Dual</strong>
+              <p>Standard and compact modes for operators and deep analysts.</p>
+            </div>
+            <div class="metric-card">
+              <span class="mono">Behavior</span>
+              <strong>Explicit</strong>
+              <p>No hidden automation. Jobs are always user-triggered and traceable.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">00 Foundations</div>
+            <h2>Visual system</h2>
+          </div>
+          <p class="section-copy">
+            Warm stone backgrounds, dark instrument panels, terracotta action
+            color, and teal data accents create a more intentional, less generic
+            analytical environment.
+          </p>
+        </div>
+        <div class="token-grid">
+          <article class="token-card">
+            <div class="token-swatch surface-light"></div>
+            <h4>Canvas + surfaces</h4>
+            <p>`#f8f2e8`, `#fffaf2`, `#efe5d5` for calm depth and readable contrast.</p>
+          </article>
+          <article class="token-card">
+            <div class="token-swatch surface-dark"></div>
+            <h4>Instrument nav</h4>
+            <p>`#17313a`, `#21444f` for navigation, rails, and high-trust analysis zones.</p>
+          </article>
+          <article class="token-card">
+            <div class="token-swatch surface-accent"></div>
+            <h4>Action + emphasis</h4>
+            <p>Terracotta and amber for actions, overrides, active selections, and annotations.</p>
+          </article>
+          <article class="token-card">
+            <div class="token-swatch surface-data"></div>
+            <h4>Data accents</h4>
+            <p>Teal and mineral blue for evidence modules, charts, maps, and benchmark language.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section foundation-grid">
+        <article class="component-card">
+          <div class="eyebrow">Typography</div>
+          <h2 style="margin-top: 16px">Fraunces</h2>
+          <p class="hero-copy" style="margin-top: 10px">
+            High-contrast serif used for titles, section headers, and value
+            moments. Paired with IBM Plex Sans and IBM Plex Mono for analytical clarity.
+          </p>
+          <div class="type-sample">
+            <h3>260,663 EUR fair value</h3>
+            <p>Headline moments use a slower, editorial cadence.</p>
+          </div>
+          <div class="type-sample">
+            <strong class="mono">Deal score 0.84 | Support 9 comps | Segment coverage 0.91</strong>
+            <p>Operational language stays compact, mono, and precision-focused.</p>
+          </div>
+        </article>
+        <article class="component-card">
+          <div class="eyebrow">Motion + density</div>
+          <h3 style="margin-top: 16px">Measured transitions</h3>
+          <p class="hero-copy" style="margin-top: 10px">
+            Panels expand like drawers, maps and tables cross-highlight, and job
+            progress animates as a persistent tray. Motion signals causality,
+            not decoration.
+          </p>
+          <div class="three-col" style="margin-top: 18px">
+            <div class="metric-card">
+              <span class="mono">Reveal</span>
+              <strong>160ms</strong>
+              <p>Cards and side panels.</p>
+            </div>
+            <div class="metric-card">
+              <span class="mono">Layout</span>
+              <strong>220ms</strong>
+              <p>Table-to-dossier transitions.</p>
+            </div>
+            <div class="metric-card">
+              <span class="mono">Density</span>
+              <strong>2 modes</strong>
+              <p>Standard and compact analyst views.</p>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">01 Design System</div>
+            <h2>Components and modules</h2>
+          </div>
+          <p class="section-copy">
+            Reusable modules are designed around evidence presentation: not just
+            buttons and fields, but comp rows, support rails, benchmark blocks,
+            and memo sections.
+          </p>
+        </div>
+        <div class="component-grid">
+          <article class="component-card">
+            <div class="panel-title">
+              <h4>Primary actions</h4>
+              <div class="status-pill status-good">Trusted</div>
+            </div>
+            <div class="pill-row">
+              <div class="badge">Run valuation</div>
+              <div class="toolbar-pill">Export memo</div>
+              <div class="toolbar-pill">Save watchlist</div>
+            </div>
+            <p style="margin-top: 14px">Strong rounded pills with clear hierarchy and no generic blue-button language.</p>
+          </article>
+          <article class="component-card">
+            <div class="panel-title">
+              <h4>Evidence panels</h4>
+              <div class="status-pill status-warn">Explained</div>
+            </div>
+            <div class="list-stack">
+              <div class="evidence-item">Support score, comp count, calibration state, segment coverage.</div>
+              <div class="evidence-item">Source provenance with blocked or degraded status markers.</div>
+              <div class="evidence-item">Override history, rationale, and memo traceability.</div>
+            </div>
+          </article>
+          <article class="component-card">
+            <div class="panel-title">
+              <h4>Data modules</h4>
+              <div class="status-pill status-bad">Operational</div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-pill">Map module</div>
+              <div class="legend-pill">Benchmark delta</div>
+              <div class="legend-pill">Coverage heatmap</div>
+            </div>
+            <div class="bar-chart">
+              <div class="bar accent" style="height: 72%"><span>Ops</span></div>
+              <div class="bar" style="height: 58%"><span>Coverage</span></div>
+              <div class="bar gold" style="height: 83%"><span>Memo</span></div>
+              <div class="bar" style="height: 49%"><span>Comps</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">02 App Structure</div>
+            <h2>Information architecture</h2>
+          </div>
+          <p class="section-copy">
+            Analyst-first, but not analyst-only. Operations and source trust
+            remain visible through their own destination and persistent tray.
+          </p>
+        </div>
+        <div class="architecture-map">
+          <div class="architecture-node">
+            <h4>Workbench</h4>
+            <p>Discovery, filters, ranking, map/table sync, saved views, instant dossier entry.</p>
+          </div>
+          <div class="architecture-node">
+            <h4>Watchlists</h4>
+            <p>Saved searches, tracked assets, alerts, collaborative notes, memo queue.</p>
+          </div>
+          <div class="architecture-node">
+            <h4>Pipeline</h4>
+            <p>Jobs, freshness, source capability, data quality, benchmark runs, coverage state.</p>
+          </div>
+          <div class="architecture-node">
+            <h4>Command Center</h4>
+            <p>Read-mostly assistant, guided workflows, explicit handoff to queued actions.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">20 Responsive States</div>
+            <h2>Compact adaptations</h2>
+          </div>
+          <p class="section-copy">
+            Mobile and tablet versions are scoped to triage, memo review, and job monitoring rather than full desktop parity.
+          </p>
+        </div>
+        <div class="responsive-grid">
+          <article class="mini-frame">
+            <div class="panel-title">
+              <h4>Desktop workbench</h4>
+              <div class="toolbar-pill">1600 px</div>
+            </div>
+            <div class="split-grid">
+              <div class="map-block">
+                <div class="map-pin" style="top: 26%; left: 31%"></div>
+                <div class="map-pin teal" style="top: 42%; left: 48%"></div>
+                <div class="map-pin gold" style="top: 56%; left: 66%"></div>
+              </div>
+              <div class="list-stack">
+                <div class="list-card">Ranked listing card with score, value delta, confidence, and memo action.</div>
+                <div class="list-card">Pinned listing state with override note and recent comp changes.</div>
+                <div class="list-card">Notification strip for blocked source and stale coverage segment.</div>
+              </div>
+            </div>
+          </article>
+          <article class="mini-frame tablet">
+            <div class="panel-title">
+              <h4>Tablet dossier</h4>
+              <div class="toolbar-pill">960 px</div>
+            </div>
+            <div class="list-stack">
+              <div class="metric-card">Hero value card with confidence explanation.</div>
+              <div class="metric-card">Comp carousel and memo preview.</div>
+              <div class="metric-card">Sticky action rail for approve, export, save.</div>
+            </div>
+          </article>
+          <article class="mini-frame mobile">
+            <div class="panel-title">
+              <h4>Mobile ops</h4>
+              <div class="toolbar-pill">430 px</div>
+            </div>
+            <div class="list-stack">
+              <div class="metric-card">Job tray and source alerts.</div>
+              <div class="metric-card">Memo reader and quick notes.</div>
+              <div class="metric-card">Watchlist exceptions and command suggestions.</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        <h3>Implementation note</h3>
+        <p>
+          These foundations define the visual and structural contract for the
+          captured app screens. The subsequent pages translate this system into
+          concrete workbench, dossier, comp, memo, pipeline, and command-center flows.
+        </p>
+      </div>
+    </div>
+  </body>
+  </html>

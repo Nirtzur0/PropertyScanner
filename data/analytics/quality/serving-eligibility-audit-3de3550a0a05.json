@@ -1,0 +1,23 @@
+{
+  "columns": [
+    "source_id",
+    "invalid_rows"
+  ],
+  "dataset_kind": "source_quality_audit",
+  "generated_at": "2026-03-10T18:44:51.568665",
+  "metadata_path": "/Users/nirtzur/Documents/projects/property_scanner/data/analytics/quality/serving-eligibility-audit-3de3550a0a05.json",
+  "namespace": "quality",
+  "parquet_path": "/Users/nirtzur/Documents/projects/property_scanner/data/analytics/quality/serving-eligibility-audit-3de3550a0a05.parquet",
+  "row_count": 4,
+  "stem": "serving-eligibility-audit",
+  "summary": {
+    "by_source": {
+      "funda": 15,
+      "imovirtual": 1,
+      "otodom_pl": 1,
+      "pisos": 5874
+    },
+    "invalid_rows": 5891,
+    "total_rows": 7851
+  }
+}

@@ -1,0 +1,35 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e114]:
+    - generic [ref=e115]: Memos
+    - heading "Memo queue" [level=2] [ref=e116]
+    - generic [ref=e118]:
+      - strong [ref=e119]: AUDIT Memo 20260310
+      - paragraph [ref=e120]: draft
+      - button "Export memo" [active] [ref=e121] [cursor=pointer]
+    - generic [ref=e122]: "# AUDIT Memo 20260310 Status: draft Listing: 3cddb9e0c75d ## Assumptions - Audit assumption ## Risks - Audit risk ## Audit Created during empirical audit"

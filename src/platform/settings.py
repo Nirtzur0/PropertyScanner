@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.platform.config import (
     CALIBRATION_PATH,
@@ -242,17 +242,41 @@ class TFTConfig(BaseConfigModel):
 
 
 class DescriptionAnalystConfig(BaseConfigModel):
-    model_name: str = "llama3:latest"
-    base_url: str = "http://localhost:11434"
+    provider: str = "chatmock"
+    api_base: str = "http://127.0.0.1:8000/v1"
+    api_key_env: str = "CHATMOCK_API_KEY"
+    model_name: str = "gpt-4o-mini"
+    base_url: Optional[str] = None
     timeout_seconds: int = 60
     min_description_length: int = 50
 
+    @model_validator(mode="after")
+    def _sync_api_base(self) -> "DescriptionAnalystConfig":
+        if self.base_url and "api_base" not in self.model_fields_set:
+            object.__setattr__(self, "api_base", self.base_url)
+        if not self.base_url:
+            object.__setattr__(self, "base_url", self.api_base)
+        return self
+
 
 class VLMConfig(BaseConfigModel):
-    model: str = "llava"
+    provider: str = "chatmock"
+    api_base: str = "http://127.0.0.1:8000/v1"
+    api_key_env: str = "CHATMOCK_API_KEY"
+    model: str = "gpt-4o-mini"
+    base_url: Optional[str] = None
+    supports_vision: bool = True
     max_images: int = 2
     debug_max_images: int = 4
     timeout_seconds: int = 60
+
+    @model_validator(mode="after")
+    def _sync_api_base(self) -> "VLMConfig":
+        if self.base_url and "api_base" not in self.model_fields_set:
+            object.__setattr__(self, "api_base", self.base_url)
+        if not self.base_url:
+            object.__setattr__(self, "base_url", self.api_base)
+        return self
 
 
 class ImageSelectorConfig(BaseConfigModel):
@@ -270,18 +294,32 @@ class DataFrameConfig(BaseConfigModel):
 
 
 class LLMConfig(BaseConfigModel):
-    models: List[str] = Field(
+    provider: str = "chatmock"
+    api_base: str = "http://127.0.0.1:8000/v1"
+    api_key_env: str = "CHATMOCK_API_KEY"
+    text_models: List[str] = Field(
         default_factory=lambda: [
-            "ollama/llama3:latest",
-            "gemini/gemini-1.5-flash",
             "gpt-4o-mini",
+            "gpt-4.1-mini",
         ]
     )
+    vision_model: str = "gpt-4o-mini"
+    models: List[str] = Field(default_factory=list)
     temperature: float = 0.0
     max_tokens: int = 900
     timeout_seconds: int = 60
     normalizer_enabled: bool = False
     normalizer_max_chars: int = 6000
+
+    @model_validator(mode="after")
+    def _sync_models(self) -> "LLMConfig":
+        raw_models = self.models if "models" in self.model_fields_set and "text_models" not in self.model_fields_set else self.text_models
+        canonical = [m.strip() for m in raw_models if m and str(m).strip()]
+        if not canonical:
+            canonical = ["gpt-4o-mini"]
+        object.__setattr__(self, "text_models", canonical)
+        object.__setattr__(self, "models", list(canonical))
+        return self
 
 
 class AppConfig(BaseConfigModel):

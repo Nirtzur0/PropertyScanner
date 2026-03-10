@@ -1,0 +1,25 @@
+app:
+  name: property_scanner
+  api_host: 127.0.0.1
+  api_port: 8000
+
+paths:
+  db_path: data/listings.db
+  docs_crawler_status_path: docs/crawler_status.md
+  sources_config_path: config/sources.yaml
+  benchmark_json_path: docs/implementation/reports/fusion_tree_benchmark.json
+  benchmark_md_path: docs/implementation/reports/fusion_tree_benchmark.md
+
+jobs:
+  max_workers: 2
+
+quality:
+  supported_invalid_ratio_max: 0.005
+  degraded_invalid_ratio_max: 0.05
+  freshness_days: 14
+  experimental_min_rows: 25
+  required_parser_fixture_ratio: 0.95
+
+model_readiness:
+  sale_min_closed_labels: 200
+  sale_min_closed_ratio: 0.05

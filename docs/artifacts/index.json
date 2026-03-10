@@ -1,0 +1,201 @@
+{
+  "artifacts": [
+    {
+      "id": "lit-rosen-1974",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1086/260169"
+      },
+      "tags": [
+        "hedonic",
+        "pricing",
+        "housing"
+      ],
+      "title": "Hedonic Prices and Implicit Markets: Product Differentiation in Pure Competition",
+      "url": "https://doi.org/10.1086/260169"
+    },
+    {
+      "id": "lit-bailey-muth-nourse-1963",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1080/01621459.1963.10480679"
+      },
+      "tags": [
+        "repeat-sales",
+        "index",
+        "real-estate"
+      ],
+      "title": "A Regression Method for Real Estate Price Index Construction",
+      "url": "https://doi.org/10.1080/01621459.1963.10480679"
+    },
+    {
+      "id": "lit-case-shiller-1987",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.3386/w2393"
+      },
+      "tags": [
+        "housing",
+        "index",
+        "repeat-sales"
+      ],
+      "title": "Prices of Single Family Homes Since 1970: New Indexes for Four Cities",
+      "url": "https://doi.org/10.3386/w2393"
+    },
+    {
+      "id": "lit-case-shiller-1988",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.3386/w2506"
+      },
+      "tags": [
+        "housing",
+        "market-efficiency",
+        "repeat-sales"
+      ],
+      "title": "The Efficiency of the Market for Single-Family Homes",
+      "url": "https://doi.org/10.3386/w2506"
+    },
+    {
+      "id": "lit-deng-gyourko-wu-2012",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.3386/w18403"
+      },
+      "tags": [
+        "housing",
+        "index",
+        "data-quality"
+      ],
+      "title": "Land and House Price Measurement in China",
+      "url": "https://doi.org/10.3386/w18403"
+    },
+    {
+      "id": "lit-anselin-1995",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1111/j.1538-4632.1995.tb00338.x"
+      },
+      "tags": [
+        "spatial",
+        "diagnostics",
+        "geography"
+      ],
+      "title": "Local Indicators of Spatial Association\u2014LISA",
+      "url": "https://doi.org/10.1111/j.1538-4632.1995.tb00338.x"
+    },
+    {
+      "id": "lit-koenker-bassett-1978",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.2307/1913643"
+      },
+      "tags": [
+        "quantile-regression",
+        "uncertainty"
+      ],
+      "title": "Regression Quantiles",
+      "url": "https://doi.org/10.2307/1913643"
+    },
+    {
+      "id": "lit-breiman-2001",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1023/A:1010933404324"
+      },
+      "tags": [
+        "ensemble",
+        "tabular",
+        "baseline"
+      ],
+      "title": "Random Forests",
+      "url": "https://doi.org/10.1023/A:1010933404324"
+    },
+    {
+      "id": "lit-xgboost-2016",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1145/2939672.2939785"
+      },
+      "tags": [
+        "boosting",
+        "tabular",
+        "baseline"
+      ],
+      "title": "XGBoost: A Scalable Tree Boosting System",
+      "url": "https://doi.org/10.1145/2939672.2939785"
+    },
+    {
+      "id": "lit-attention-2017",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "tags": [
+        "attention",
+        "transformers"
+      ],
+      "title": "Attention Is All You Need",
+      "url": "https://arxiv.org/abs/1706.03762"
+    },
+    {
+      "id": "lit-sbert-2019",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "tags": [
+        "embeddings",
+        "retrieval",
+        "nlp"
+      ],
+      "title": "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks",
+      "url": "https://arxiv.org/abs/1908.10084"
+    },
+    {
+      "id": "lit-cqr-2019",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "tags": [
+        "conformal",
+        "quantile",
+        "uncertainty"
+      ],
+      "title": "Conformalized Quantile Regression",
+      "url": "https://arxiv.org/abs/1905.03222"
+    },
+    {
+      "id": "lit-jackknifeplus-2021",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "source": {
+        "doi": "10.1214/20-AOS1965"
+      },
+      "tags": [
+        "conformal",
+        "prediction-intervals",
+        "coverage"
+      ],
+      "title": "Predictive inference with the jackknife+",
+      "url": "https://doi.org/10.1214/20-AOS1965"
+    },
+    {
+      "id": "lit-conformal-tutorial-2021",
+      "kind": "paper",
+      "retrieved_at": "2026-02-08T21:02:23+00:00",
+      "tags": [
+        "conformal",
+        "tutorial",
+        "uncertainty"
+      ],
+      "title": "A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification",
+      "url": "https://arxiv.org/abs/2107.07511"
+    }
+  ],
+  "version": 1
+}

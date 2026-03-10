@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Property Scanner Pipeline Health</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <nav class="site-nav">
+        <a href="./index.html">Foundations</a>
+        <a href="./workbench.html">Workbench</a>
+        <a href="./listing-detail.html">Listing Detail</a>
+        <a href="./comp-workbench.html">Comp Workbench</a>
+        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a class="active" href="./pipeline-health.html">Pipeline</a>
+        <a href="./command-center.html">Command Center</a>
+      </nav>
+
+      <section class="artboard">
+        <div class="artboard-header">
+          <div>
+            <div class="eyebrow">14 Pipeline + Source Health</div>
+            <h2>Operational trust surface</h2>
+          </div>
+          <div class="tool-row">
+            <div class="toolbar-pill">Explicit jobs</div>
+            <div class="toolbar-pill">Source capability</div>
+            <div class="toolbar-pill">Benchmark + coverage</div>
+          </div>
+        </div>
+
+        <div class="foundation-grid">
+          <article class="panel">
+            <div class="panel-title">
+              <h4>Job command deck</h4>
+              <div class="status-pill status-warn">Manual only</div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-pill">Preflight</div>
+              <div class="legend-pill">Crawl</div>
+              <div class="legend-pill">Market data</div>
+              <div class="legend-pill">Index</div>
+              <div class="legend-pill">Benchmark</div>
+            </div>
+            <table class="table" style="margin-top: 16px">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Status</th>
+                  <th>Queued by</th>
+                  <th>Last result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Preflight</td>
+                  <td>succeeded</td>
+                  <td>operator</td>
+                  <td>2h ago</td>
+                </tr>
+                <tr>
+                  <td>Benchmark</td>
+                  <td>failed_gate</td>
+                  <td>analyst</td>
+                  <td>42m ago</td>
+                </tr>
+                <tr>
+                  <td>Crawl</td>
+                  <td>queued</td>
+                  <td>command center</td>
+                  <td>pending confirmation</td>
+                </tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="panel">
+            <div class="panel-title">
+              <h4>Source capability board</h4>
+              <div class="toolbar-pill">Contract-backed</div>
+            </div>
+            <div class="list-stack">
+              <div class="source-row">
+                <div class="panel-title">
+                  <h4>Pisos</h4>
+                  <div class="status-pill status-bad">degraded</div>
+                </div>
+                <p>Price corruption high, area corruption high, stale rows.</p>
+              </div>
+              <div class="source-row">
+                <div class="panel-title">
+                  <h4>Rightmove UK</h4>
+                  <div class="status-pill status-warn">experimental</div>
+                </div>
+                <p>No rows yet, operational crawler status, contract test present.</p>
+              </div>
+              <div class="source-row">
+                <div class="panel-title">
+                  <h4>Idealista</h4>
+                  <div class="status-pill status-bad">blocked</div>
+                </div>
+                <p>Blocked in crawler status; visible to users as unreliable.</p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="benchmark-grid section">
+          <article class="panel">
+            <div class="panel-title">
+              <h4>Benchmark gate report</h4>
+              <div class="status-pill status-bad">Regression</div>
+            </div>
+            <div class="bar-chart">
+              <div class="bar accent" style="height: 72%"><span>Fusion MAE</span></div>
+              <div class="bar" style="height: 61%"><span>Tree MAE</span></div>
+              <div class="bar gold" style="height: 49%"><span>Coverage</span></div>
+              <div class="bar" style="height: 66%"><span>Support</span></div>
+            </div>
+            <p style="margin-top: 18px">The UI makes benchmark and model readiness a visible product concern, not an offline report buried in docs.</p>
+          </article>
+
+          <article class="panel">
+            <div class="panel-title">
+              <h4>Coverage report</h4>
+              <div class="toolbar-pill">Segmented</div>
+            </div>
+            <div class="list-stack">
+              <div class="metric-card">Madrid | sale | &lt;= 300k | pass | coverage 0.91</div>
+              <div class="metric-card">Barcelona | rent | &lt;= 1M | fail | coverage 0.73</div>
+              <div class="metric-card">Porto | sale | &lt;= 600k | pass | coverage 0.88</div>
+            </div>
+          </article>
+        </div>
+
+        <section class="panel section">
+          <div class="panel-title">
+            <h4>Data quality event stream</h4>
+            <div class="toolbar-pill">Trendable</div>
+          </div>
+          <div class="timeline">
+            <div class="timeline-item">14:08 | pisos | price_corruption_high | error</div>
+            <div class="timeline-item">14:08 | pisos | area_corruption_high | error</div>
+            <div class="timeline-item">14:08 | rightmove_uk | stale_or_missing_rows | warning</div>
+            <div class="timeline-item">14:08 | idealista | crawler_status_blocked | error</div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </body>
+  </html>

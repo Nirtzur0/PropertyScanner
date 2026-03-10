@@ -1,0 +1,678 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: Analyst dense mode
+        - heading "Spatial triage first" [level=2] [ref=e31]
+        - paragraph [ref=e32]: The map is the primary exploration surface. Filters, saved lenses, and source states now orbit around location rather than the old table-first workflow.
+      - generic [ref=e33]:
+        - generic [ref=e34]: Search lens
+        - generic [ref=e35]:
+          - text: Search
+          - textbox "Search" [ref=e36]:
+            - /placeholder: City, title, source, memo…
+        - generic [ref=e37]:
+          - text: Country
+          - textbox "Country" [ref=e38]: ES
+        - generic [ref=e39]:
+          - text: City
+          - textbox "City" [ref=e40]:
+            - /placeholder: Madrid
+        - generic [ref=e41]:
+          - text: Listing type
+          - combobox "Listing type" [ref=e42]:
+            - option "Any"
+            - option "Sale" [selected]
+            - option "Rent"
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - text: Min price
+            - textbox "Min price" [ref=e45]:
+              - /placeholder: "120000"
+          - generic [ref=e46]:
+            - text: Max price
+            - textbox "Max price" [ref=e47]:
+              - /placeholder: "900000"
+        - generic [ref=e48]:
+          - text: Support floor
+          - textbox "Support floor" [ref=e49]:
+            - /placeholder: "0.72"
+        - generic [ref=e50]:
+          - text: Source state
+          - combobox "Source state" [ref=e51]:
+            - option "Any" [selected]
+            - option "Supported"
+            - option "Degraded"
+            - option "Experimental"
+            - option "Blocked"
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - checkbox "Only watchlisted" [ref=e54]
+            - text: Only watchlisted
+          - generic [ref=e55]:
+            - checkbox "Memo-linked only" [ref=e56]
+            - text: Memo-linked only
+          - generic [ref=e57]:
+            - checkbox "Comp-review only" [ref=e58]
+            - text: Comp-review only
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - checkbox "Density heat" [checked] [ref=e61]
+            - text: Density heat
+          - generic [ref=e62]:
+            - checkbox "Delta labels" [checked] [ref=e63]
+            - text: Delta labels
+      - generic [ref=e64]:
+        - generic [ref=e65]: Save current lens
+        - generic [ref=e66]:
+          - text: Saved search name
+          - textbox "Saved search name" [ref=e67]: Map lens
+        - button "Save lens" [ref=e68] [cursor=pointer]
+      - generic [ref=e69]:
+        - generic [ref=e70]: Layer semantics
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - strong [ref=e73]: Value opportunity
+            - paragraph [ref=e74]: Marker size follows value delta and deal score.
+          - generic [ref=e75]:
+            - strong [ref=e76]: Support / confidence
+            - paragraph [ref=e77]: Marker color and legend reflect support bands and unavailable states.
+          - generic [ref=e78]:
+            - strong [ref=e79]: Yield
+            - paragraph [ref=e80]: Highlights listings with rental yield support where available.
+          - generic [ref=e81]:
+            - strong [ref=e82]: Source health
+            - paragraph [ref=e83]: Highlights degraded and blocked source states.
+          - generic [ref=e84]:
+            - strong [ref=e85]: Watchlist hits
+            - paragraph [ref=e86]: Adds watchlist rings and saved-lens context.
+          - generic [ref=e87]:
+            - strong [ref=e88]: Comp density
+            - paragraph [ref=e89]: Shows heat/grid aggregation for dense zoomed-out exploration.
+          - generic [ref=e90]:
+            - strong [ref=e91]: Benchmark gate
+            - paragraph [ref=e92]: Operational alert overlay for model/benchmark readiness.
+            - generic [ref=e93]: "Blocked: benchmark_runs_empty"
+    - main [ref=e94]:
+      - generic [ref=e95]:
+        - generic [ref=e96]:
+          - generic [ref=e97]: Map-centric workbench
+          - heading "Spatial exploration drives the workflow" [level=2] [ref=e98]
+          - paragraph [ref=e99]: Marker size shows value opportunity, color shows source/support state, and the dock stays synchronized with selection instead of competing with it.
+        - generic [ref=e100]:
+          - link "Pipeline" [ref=e101] [cursor=pointer]:
+            - /url: /pipeline
+          - link "Watchlists" [ref=e102] [cursor=pointer]:
+            - /url: /watchlists
+          - link "Memos" [ref=e103] [cursor=pointer]:
+            - /url: /memos
+      - generic [ref=e104]:
+        - generic [ref=e105]:
+          - generic [ref=e106]: Tracked
+          - strong [ref=e107]: "58"
+          - paragraph [ref=e108]: Listings in the current local corpus
+        - generic [ref=e109]:
+          - generic [ref=e110]: Visible
+          - strong [ref=e111]: "58"
+          - paragraph [ref=e112]: Assets matching the active map lens
+        - generic [ref=e113]:
+          - generic [ref=e114]: Watchlist hits
+          - strong [ref=e115]: "0"
+          - paragraph [ref=e116]: Saved or memo-linked assets in view
+        - generic [ref=e117]:
+          - generic [ref=e118]: Median support
+          - strong [ref=e119]: N/A
+          - paragraph [ref=e120]: Calibrated support for visible valued listings
+      - generic [ref=e121]:
+        - generic [ref=e125]:
+          - region "Map" [ref=e126]
+          - generic:
+            - generic [ref=e127]:
+              - button "Zoom in" [ref=e128] [cursor=pointer]
+              - button "Zoom out" [ref=e130] [cursor=pointer]
+              - button "Drag to rotate map, click to reset north" [ref=e132]
+            - group [ref=e134]:
+              - generic "Toggle attribution" [ref=e135] [cursor=pointer]
+              - generic [ref=e136]:
+                - link "MapLibre" [ref=e137] [cursor=pointer]:
+                  - /url: https://maplibre.org/
+                - text: "| ©"
+                - link "CARTO" [ref=e138] [cursor=pointer]:
+                  - /url: https://carto.com/about-carto/
+                - text: ", ©"
+                - link "OpenStreetMap" [ref=e139] [cursor=pointer]:
+                  - /url: http://www.openstreetmap.org/about/
+                - text: contributors
+        - generic [ref=e142]:
+          - paragraph [ref=e143]: Analyst dense map
+          - generic [ref=e144]:
+            - generic [ref=e145]: Color = support / source state
+            - generic [ref=e146]: Size = value opportunity
+            - generic [ref=e147]: Labels = delta or ask
+        - generic [ref=e149]:
+          - strong [ref=e150]: Legend
+          - generic [ref=e151]:
+            - generic [ref=e152]: "Teal: supported"
+            - generic [ref=e153]: "Amber: degraded"
+            - generic [ref=e154]: "Red: unavailable"
+            - generic [ref=e155]: "Ring: watchlist / memo / selection"
+      - generic [ref=e156]:
+        - generic [ref=e157]:
+          - generic [ref=e158]:
+            - heading "Listings dock" [level=3] [ref=e159]
+            - paragraph [ref=e160]: Shift-click to build a basket. Single click to pin the active dossier.
+          - generic [ref=e161]:
+            - generic [ref=e162]: 1 pinned
+            - generic [ref=e163]: 58 unavailable
+            - generic [ref=e164]: 58 degraded
+        - table [ref=e166]:
+          - rowgroup [ref=e167]:
+            - row "Listing Ask Fair value Support Source Next action" [ref=e168] [cursor=pointer]:
+              - columnheader "Listing" [ref=e169]
+              - columnheader "Ask" [ref=e170]
+              - columnheader "Fair value" [ref=e171]
+              - columnheader "Support" [ref=e172]
+              - columnheader "Source" [ref=e173]
+              - columnheader "Next action" [ref=e174]
+          - rowgroup [ref=e175]:
+            - row "Apartamento en venta en Universidad-Malasaña €850,000 N/A N/A degraded Resolve data gap" [ref=e176] [cursor=pointer]:
+              - cell "Apartamento en venta en Universidad-Malasaña" [ref=e177]
+              - cell "€850,000" [ref=e178]
+              - cell "N/A" [ref=e179]
+              - cell "N/A" [ref=e180]
+              - cell "degraded" [ref=e181]
+              - cell "Resolve data gap" [ref=e182]
+            - row "Ático en venta en Calle Gran Vía, cerca de Calle del Desengaño €3,500,000 N/A N/A degraded Resolve data gap" [ref=e183] [cursor=pointer]:
+              - cell "Ático en venta en Calle Gran Vía, cerca de Calle del Desengaño" [ref=e184]
+              - cell "€3,500,000" [ref=e185]
+              - cell "N/A" [ref=e186]
+              - cell "N/A" [ref=e187]
+              - cell "degraded" [ref=e188]
+              - cell "Resolve data gap" [ref=e189]
+            - row "Apartamento en venta en Cortes-Huertas €1,150,000 N/A N/A degraded Resolve data gap" [ref=e190] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e191]
+              - cell "€1,150,000" [ref=e192]
+              - cell "N/A" [ref=e193]
+              - cell "N/A" [ref=e194]
+              - cell "degraded" [ref=e195]
+              - cell "Resolve data gap" [ref=e196]
+            - row "Apartamento en venta en Calle Gran Vía, cerca de Calle de García Molinas €1,400,000 N/A N/A degraded Resolve data gap" [ref=e197] [cursor=pointer]:
+              - cell "Apartamento en venta en Calle Gran Vía, cerca de Calle de García Molinas" [ref=e198]
+              - cell "€1,400,000" [ref=e199]
+              - cell "N/A" [ref=e200]
+              - cell "N/A" [ref=e201]
+              - cell "degraded" [ref=e202]
+              - cell "Resolve data gap" [ref=e203]
+            - row "Apartamento en venta en Cortes-Huertas €950,000 N/A N/A degraded Resolve data gap" [ref=e204] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e205]
+              - cell "€950,000" [ref=e206]
+              - cell "N/A" [ref=e207]
+              - cell "N/A" [ref=e208]
+              - cell "degraded" [ref=e209]
+              - cell "Resolve data gap" [ref=e210]
+            - row "Piso en venta en Calle de la Montera €840,000 N/A N/A degraded Resolve data gap" [ref=e211] [cursor=pointer]:
+              - cell "Piso en venta en Calle de la Montera" [ref=e212]
+              - cell "€840,000" [ref=e213]
+              - cell "N/A" [ref=e214]
+              - cell "N/A" [ref=e215]
+              - cell "degraded" [ref=e216]
+              - cell "Resolve data gap" [ref=e217]
+            - row "Apartamento en venta en Universidad-Malasaña €1,280,000 N/A N/A degraded Resolve data gap" [ref=e218] [cursor=pointer]:
+              - cell "Apartamento en venta en Universidad-Malasaña" [ref=e219]
+              - cell "€1,280,000" [ref=e220]
+              - cell "N/A" [ref=e221]
+              - cell "N/A" [ref=e222]
+              - cell "degraded" [ref=e223]
+              - cell "Resolve data gap" [ref=e224]
+            - row "Apartamento en venta en Cortes-Huertas €2,450,000 N/A N/A degraded Resolve data gap" [ref=e225] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e226]
+              - cell "€2,450,000" [ref=e227]
+              - cell "N/A" [ref=e228]
+              - cell "N/A" [ref=e229]
+              - cell "degraded" [ref=e230]
+              - cell "Resolve data gap" [ref=e231]
+            - row "Apartamento en venta en Cortes-Huertas €755,000 N/A N/A degraded Resolve data gap" [ref=e232] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e233]
+              - cell "€755,000" [ref=e234]
+              - cell "N/A" [ref=e235]
+              - cell "N/A" [ref=e236]
+              - cell "degraded" [ref=e237]
+              - cell "Resolve data gap" [ref=e238]
+            - row "Piso en venta en Calle de la Princesa, cerca de Calle de Evaristo San Miguel €1,200,000 N/A N/A degraded Resolve data gap" [ref=e239] [cursor=pointer]:
+              - cell "Piso en venta en Calle de la Princesa, cerca de Calle de Evaristo San Miguel" [ref=e240]
+              - cell "€1,200,000" [ref=e241]
+              - cell "N/A" [ref=e242]
+              - cell "N/A" [ref=e243]
+              - cell "degraded" [ref=e244]
+              - cell "Resolve data gap" [ref=e245]
+            - row "Piso en venta en Calle de Colón €1,115,000 N/A N/A degraded Resolve data gap" [ref=e246] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Colón" [ref=e247]
+              - cell "€1,115,000" [ref=e248]
+              - cell "N/A" [ref=e249]
+              - cell "N/A" [ref=e250]
+              - cell "degraded" [ref=e251]
+              - cell "Resolve data gap" [ref=e252]
+            - row "Piso en venta en Calle del Pastor €160,000 N/A N/A degraded Resolve data gap" [ref=e253] [cursor=pointer]:
+              - cell "Piso en venta en Calle del Pastor" [ref=e254]
+              - cell "€160,000" [ref=e255]
+              - cell "N/A" [ref=e256]
+              - cell "N/A" [ref=e257]
+              - cell "degraded" [ref=e258]
+              - cell "Resolve data gap" [ref=e259]
+            - row "Piso en venta en Calle de Casto Plasencia €450,000 N/A N/A degraded Resolve data gap" [ref=e260] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Casto Plasencia" [ref=e261]
+              - cell "€450,000" [ref=e262]
+              - cell "N/A" [ref=e263]
+              - cell "N/A" [ref=e264]
+              - cell "degraded" [ref=e265]
+              - cell "Resolve data gap" [ref=e266]
+            - row "Dúplex en venta en Calle de Valliciergo €1,286,000 N/A N/A degraded Resolve data gap" [ref=e267] [cursor=pointer]:
+              - cell "Dúplex en venta en Calle de Valliciergo" [ref=e268]
+              - cell "€1,286,000" [ref=e269]
+              - cell "N/A" [ref=e270]
+              - cell "N/A" [ref=e271]
+              - cell "degraded" [ref=e272]
+              - cell "Resolve data gap" [ref=e273]
+            - row "Piso en venta en Calle Toledo, cerca de Calle de Calatrava €575,000 N/A N/A degraded Resolve data gap" [ref=e274] [cursor=pointer]:
+              - cell "Piso en venta en Calle Toledo, cerca de Calle de Calatrava" [ref=e275]
+              - cell "€575,000" [ref=e276]
+              - cell "N/A" [ref=e277]
+              - cell "N/A" [ref=e278]
+              - cell "degraded" [ref=e279]
+              - cell "Resolve data gap" [ref=e280]
+            - row "Piso en venta en Calle de Ventura de la Vega €1,050,000 N/A N/A degraded Resolve data gap" [ref=e281] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Ventura de la Vega" [ref=e282]
+              - cell "€1,050,000" [ref=e283]
+              - cell "N/A" [ref=e284]
+              - cell "N/A" [ref=e285]
+              - cell "degraded" [ref=e286]
+              - cell "Resolve data gap" [ref=e287]
+            - row "Apartamento en venta en Calle de la Encomienda €249,000 N/A N/A degraded Resolve data gap" [ref=e288] [cursor=pointer]:
+              - cell "Apartamento en venta en Calle de la Encomienda" [ref=e289]
+              - cell "€249,000" [ref=e290]
+              - cell "N/A" [ref=e291]
+              - cell "N/A" [ref=e292]
+              - cell "degraded" [ref=e293]
+              - cell "Resolve data gap" [ref=e294]
+            - row "Ático en venta en Sol €1,990,000 N/A N/A degraded Resolve data gap" [ref=e295] [cursor=pointer]:
+              - cell "Ático en venta en Sol" [ref=e296]
+              - cell "€1,990,000" [ref=e297]
+              - cell "N/A" [ref=e298]
+              - cell "N/A" [ref=e299]
+              - cell "degraded" [ref=e300]
+              - cell "Resolve data gap" [ref=e301]
+            - row "Estudio en venta en Calle de Buenavista €225,000 N/A N/A degraded Resolve data gap" [ref=e302] [cursor=pointer]:
+              - cell "Estudio en venta en Calle de Buenavista" [ref=e303]
+              - cell "€225,000" [ref=e304]
+              - cell "N/A" [ref=e305]
+              - cell "N/A" [ref=e306]
+              - cell "degraded" [ref=e307]
+              - cell "Resolve data gap" [ref=e308]
+            - row "Piso en venta en Calle de Tetuán, 20 €1,119,000 N/A N/A degraded Resolve data gap" [ref=e309] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Tetuán, 20" [ref=e310]
+              - cell "€1,119,000" [ref=e311]
+              - cell "N/A" [ref=e312]
+              - cell "N/A" [ref=e313]
+              - cell "degraded" [ref=e314]
+              - cell "Resolve data gap" [ref=e315]
+            - row "Piso en venta en Calle de Tetuán €699,000 N/A N/A degraded Resolve data gap" [ref=e316] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Tetuán" [ref=e317]
+              - cell "€699,000" [ref=e318]
+              - cell "N/A" [ref=e319]
+              - cell "N/A" [ref=e320]
+              - cell "degraded" [ref=e321]
+              - cell "Resolve data gap" [ref=e322]
+            - row "Piso en venta en Calle de Leganitos, 18 €3,300,000 N/A N/A degraded Resolve data gap" [ref=e323] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Leganitos, 18" [ref=e324]
+              - cell "€3,300,000" [ref=e325]
+              - cell "N/A" [ref=e326]
+              - cell "N/A" [ref=e327]
+              - cell "degraded" [ref=e328]
+              - cell "Resolve data gap" [ref=e329]
+            - row "Piso en venta en Embajadores-Lavapiés €295,000 N/A N/A degraded Resolve data gap" [ref=e330] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e331]
+              - cell "€295,000" [ref=e332]
+              - cell "N/A" [ref=e333]
+              - cell "N/A" [ref=e334]
+              - cell "degraded" [ref=e335]
+              - cell "Resolve data gap" [ref=e336]
+            - row "Piso en venta en Embajadores-Lavapiés €265,000 N/A N/A degraded Resolve data gap" [ref=e337] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e338]
+              - cell "€265,000" [ref=e339]
+              - cell "N/A" [ref=e340]
+              - cell "N/A" [ref=e341]
+              - cell "degraded" [ref=e342]
+              - cell "Resolve data gap" [ref=e343]
+            - row "Piso en venta en Embajadores-Lavapiés €270,000 N/A N/A degraded Resolve data gap" [ref=e344] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e345]
+              - cell "€270,000" [ref=e346]
+              - cell "N/A" [ref=e347]
+              - cell "N/A" [ref=e348]
+              - cell "degraded" [ref=e349]
+              - cell "Resolve data gap" [ref=e350]
+            - row "Piso en venta en Embajadores-Lavapiés €329,000 N/A N/A degraded Resolve data gap" [ref=e351] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e352]
+              - cell "€329,000" [ref=e353]
+              - cell "N/A" [ref=e354]
+              - cell "N/A" [ref=e355]
+              - cell "degraded" [ref=e356]
+              - cell "Resolve data gap" [ref=e357]
+            - row "Piso en venta en Embajadores-Lavapiés €150,000 N/A N/A degraded Resolve data gap" [ref=e358] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e359]
+              - cell "€150,000" [ref=e360]
+              - cell "N/A" [ref=e361]
+              - cell "N/A" [ref=e362]
+              - cell "degraded" [ref=e363]
+              - cell "Resolve data gap" [ref=e364]
+            - row "Piso en venta en Embajadores-Lavapiés €375,000 N/A N/A degraded Resolve data gap" [ref=e365] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e366]
+              - cell "€375,000" [ref=e367]
+              - cell "N/A" [ref=e368]
+              - cell "N/A" [ref=e369]
+              - cell "degraded" [ref=e370]
+              - cell "Resolve data gap" [ref=e371]
+            - row "Piso en venta en Embajadores-Lavapiés €550,000 N/A N/A degraded Resolve data gap" [ref=e372] [cursor=pointer]:
+              - cell "Piso en venta en Embajadores-Lavapiés" [ref=e373]
+              - cell "€550,000" [ref=e374]
+              - cell "N/A" [ref=e375]
+              - cell "N/A" [ref=e376]
+              - cell "degraded" [ref=e377]
+              - cell "Resolve data gap" [ref=e378]
+            - row "Piso en venta en Universidad-Malasaña €247,000 N/A N/A degraded Resolve data gap" [ref=e379] [cursor=pointer]:
+              - cell "Piso en venta en Universidad-Malasaña" [ref=e380]
+              - cell "€247,000" [ref=e381]
+              - cell "N/A" [ref=e382]
+              - cell "N/A" [ref=e383]
+              - cell "degraded" [ref=e384]
+              - cell "Resolve data gap" [ref=e385]
+            - row "Piso en venta en Travesía de las Pozas €765,000 N/A N/A degraded Resolve data gap" [ref=e386] [cursor=pointer]:
+              - cell "Piso en venta en Travesía de las Pozas" [ref=e387]
+              - cell "€765,000" [ref=e388]
+              - cell "N/A" [ref=e389]
+              - cell "N/A" [ref=e390]
+              - cell "degraded" [ref=e391]
+              - cell "Resolve data gap" [ref=e392]
+            - row "Piso en venta en Calle del Espíritu Santo €410,000 N/A N/A degraded Resolve data gap" [ref=e393] [cursor=pointer]:
+              - cell "Piso en venta en Calle del Espíritu Santo" [ref=e394]
+              - cell "€410,000" [ref=e395]
+              - cell "N/A" [ref=e396]
+              - cell "N/A" [ref=e397]
+              - cell "degraded" [ref=e398]
+              - cell "Resolve data gap" [ref=e399]
+            - row "Piso en venta en Calle del Marqués de Sta. Ana €535,000 N/A N/A degraded Resolve data gap" [ref=e400] [cursor=pointer]:
+              - cell "Piso en venta en Calle del Marqués de Sta. Ana" [ref=e401]
+              - cell "€535,000" [ref=e402]
+              - cell "N/A" [ref=e403]
+              - cell "N/A" [ref=e404]
+              - cell "degraded" [ref=e405]
+              - cell "Resolve data gap" [ref=e406]
+            - row "Dúplex en venta en Calle de Angosta de los Mancebos €350,000 N/A N/A degraded Resolve data gap" [ref=e407] [cursor=pointer]:
+              - cell "Dúplex en venta en Calle de Angosta de los Mancebos" [ref=e408]
+              - cell "€350,000" [ref=e409]
+              - cell "N/A" [ref=e410]
+              - cell "N/A" [ref=e411]
+              - cell "degraded" [ref=e412]
+              - cell "Resolve data gap" [ref=e413]
+            - row "Piso en venta en Calle de Atocha, cerca de Calle de Moratín €1,170,000 N/A N/A degraded Resolve data gap" [ref=e414] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Atocha, cerca de Calle de Moratín" [ref=e415]
+              - cell "€1,170,000" [ref=e416]
+              - cell "N/A" [ref=e417]
+              - cell "N/A" [ref=e418]
+              - cell "degraded" [ref=e419]
+              - cell "Resolve data gap" [ref=e420]
+            - row "Piso en venta en Calle Mayor, 16, cerca de Calle de Felipe III €3,150,000 N/A N/A degraded Resolve data gap" [ref=e421] [cursor=pointer]:
+              - cell "Piso en venta en Calle Mayor, 16, cerca de Calle de Felipe III" [ref=e422]
+              - cell "€3,150,000" [ref=e423]
+              - cell "N/A" [ref=e424]
+              - cell "N/A" [ref=e425]
+              - cell "degraded" [ref=e426]
+              - cell "Resolve data gap" [ref=e427]
+            - row "Piso en venta en Calle de Noblejas, cerca de Calle de Alcalá €1,500,000 N/A N/A degraded Resolve data gap" [ref=e428] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Noblejas, cerca de Calle de Alcalá" [ref=e429]
+              - cell "€1,500,000" [ref=e430]
+              - cell "N/A" [ref=e431]
+              - cell "N/A" [ref=e432]
+              - cell "degraded" [ref=e433]
+              - cell "Resolve data gap" [ref=e434]
+            - row "Dúplex en venta en Calle del Príncipe, 20 €825,000 N/A N/A degraded Resolve data gap" [ref=e435] [cursor=pointer]:
+              - cell "Dúplex en venta en Calle del Príncipe, 20" [ref=e436]
+              - cell "€825,000" [ref=e437]
+              - cell "N/A" [ref=e438]
+              - cell "N/A" [ref=e439]
+              - cell "degraded" [ref=e440]
+              - cell "Resolve data gap" [ref=e441]
+            - row "Ático en venta en Calle de Santa María €540,000 N/A N/A degraded Resolve data gap" [ref=e442] [cursor=pointer]:
+              - cell "Ático en venta en Calle de Santa María" [ref=e443]
+              - cell "€540,000" [ref=e444]
+              - cell "N/A" [ref=e445]
+              - cell "N/A" [ref=e446]
+              - cell "degraded" [ref=e447]
+              - cell "Resolve data gap" [ref=e448]
+            - row "Apartamento en venta en Universidad-Malasaña €1,200,000 N/A N/A degraded Resolve data gap" [ref=e449] [cursor=pointer]:
+              - cell "Apartamento en venta en Universidad-Malasaña" [ref=e450]
+              - cell "€1,200,000" [ref=e451]
+              - cell "N/A" [ref=e452]
+              - cell "N/A" [ref=e453]
+              - cell "degraded" [ref=e454]
+              - cell "Resolve data gap" [ref=e455]
+            - row "Apartamento en venta en Cortes-Huertas €2,475,000 N/A N/A degraded Resolve data gap" [ref=e456] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e457]
+              - cell "€2,475,000" [ref=e458]
+              - cell "N/A" [ref=e459]
+              - cell "N/A" [ref=e460]
+              - cell "degraded" [ref=e461]
+              - cell "Resolve data gap" [ref=e462]
+            - row "Apartamento en venta en Embajadores-Lavapiés €980,000 N/A N/A degraded Resolve data gap" [ref=e463] [cursor=pointer]:
+              - cell "Apartamento en venta en Embajadores-Lavapiés" [ref=e464]
+              - cell "€980,000" [ref=e465]
+              - cell "N/A" [ref=e466]
+              - cell "N/A" [ref=e467]
+              - cell "degraded" [ref=e468]
+              - cell "Resolve data gap" [ref=e469]
+            - row "Apartamento en venta en Sol €337,000 N/A N/A degraded Resolve data gap" [ref=e470] [cursor=pointer]:
+              - cell "Apartamento en venta en Sol" [ref=e471]
+              - cell "€337,000" [ref=e472]
+              - cell "N/A" [ref=e473]
+              - cell "N/A" [ref=e474]
+              - cell "degraded" [ref=e475]
+              - cell "Resolve data gap" [ref=e476]
+            - row "Apartamento en venta en Palacio €420,000 N/A N/A degraded Resolve data gap" [ref=e477] [cursor=pointer]:
+              - cell "Apartamento en venta en Palacio" [ref=e478]
+              - cell "€420,000" [ref=e479]
+              - cell "N/A" [ref=e480]
+              - cell "N/A" [ref=e481]
+              - cell "degraded" [ref=e482]
+              - cell "Resolve data gap" [ref=e483]
+            - row "Apartamento en venta en Cortes-Huertas €1,135,000 N/A N/A degraded Resolve data gap" [ref=e484] [cursor=pointer]:
+              - cell "Apartamento en venta en Cortes-Huertas" [ref=e485]
+              - cell "€1,135,000" [ref=e486]
+              - cell "N/A" [ref=e487]
+              - cell "N/A" [ref=e488]
+              - cell "degraded" [ref=e489]
+              - cell "Resolve data gap" [ref=e490]
+            - row "Apartamento en venta en Calle de Atocha, cerca de Calle de Luis Vélez de Guevara €475,000 N/A N/A degraded Resolve data gap" [ref=e491] [cursor=pointer]:
+              - cell "Apartamento en venta en Calle de Atocha, cerca de Calle de Luis Vélez de Guevara" [ref=e492]
+              - cell "€475,000" [ref=e493]
+              - cell "N/A" [ref=e494]
+              - cell "N/A" [ref=e495]
+              - cell "degraded" [ref=e496]
+              - cell "Resolve data gap" [ref=e497]
+            - row "Apartamento en venta en Palacio €2,000,000 N/A N/A degraded Resolve data gap" [ref=e498] [cursor=pointer]:
+              - cell "Apartamento en venta en Palacio" [ref=e499]
+              - cell "€2,000,000" [ref=e500]
+              - cell "N/A" [ref=e501]
+              - cell "N/A" [ref=e502]
+              - cell "degraded" [ref=e503]
+              - cell "Resolve data gap" [ref=e504]
+            - row "Apartamento en venta en Palacio €599,500 N/A N/A degraded Resolve data gap" [ref=e505] [cursor=pointer]:
+              - cell "Apartamento en venta en Palacio" [ref=e506]
+              - cell "€599,500" [ref=e507]
+              - cell "N/A" [ref=e508]
+              - cell "N/A" [ref=e509]
+              - cell "degraded" [ref=e510]
+              - cell "Resolve data gap" [ref=e511]
+            - row "Apartamento en venta en Sol €1,335,000 N/A N/A degraded Resolve data gap" [ref=e512] [cursor=pointer]:
+              - cell "Apartamento en venta en Sol" [ref=e513]
+              - cell "€1,335,000" [ref=e514]
+              - cell "N/A" [ref=e515]
+              - cell "N/A" [ref=e516]
+              - cell "degraded" [ref=e517]
+              - cell "Resolve data gap" [ref=e518]
+            - row "Piso en venta en Calle de Pizarro €1,236,000 N/A N/A degraded Resolve data gap" [ref=e519] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Pizarro" [ref=e520]
+              - cell "€1,236,000" [ref=e521]
+              - cell "N/A" [ref=e522]
+              - cell "N/A" [ref=e523]
+              - cell "degraded" [ref=e524]
+              - cell "Resolve data gap" [ref=e525]
+            - row "Piso en venta en Calle de Zaragoza, 6 €980,000 N/A N/A degraded Resolve data gap" [ref=e526] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Zaragoza, 6" [ref=e527]
+              - cell "€980,000" [ref=e528]
+              - cell "N/A" [ref=e529]
+              - cell "N/A" [ref=e530]
+              - cell "degraded" [ref=e531]
+              - cell "Resolve data gap" [ref=e532]
+            - row "Piso en venta en Calle de Manuela Malasaña, 9 €1,459,000 N/A N/A degraded Resolve data gap" [ref=e533] [cursor=pointer]:
+              - cell "Piso en venta en Calle de Manuela Malasaña, 9" [ref=e534]
+              - cell "€1,459,000" [ref=e535]
+              - cell "N/A" [ref=e536]
+              - cell "N/A" [ref=e537]
+              - cell "degraded" [ref=e538]
+              - cell "Resolve data gap" [ref=e539]
+            - row "Piso en venta en Lavapiés €425,000 N/A N/A degraded Resolve data gap" [ref=e540] [cursor=pointer]:
+              - cell "Piso en venta en Lavapiés" [ref=e541]
+              - cell "€425,000" [ref=e542]
+              - cell "N/A" [ref=e543]
+              - cell "N/A" [ref=e544]
+              - cell "degraded" [ref=e545]
+              - cell "Resolve data gap" [ref=e546]
+            - row "Piso en venta en Centro €395,000 N/A N/A degraded Resolve data gap" [ref=e547] [cursor=pointer]:
+              - cell "Piso en venta en Centro" [ref=e548]
+              - cell "€395,000" [ref=e549]
+              - cell "N/A" [ref=e550]
+              - cell "N/A" [ref=e551]
+              - cell "degraded" [ref=e552]
+              - cell "Resolve data gap" [ref=e553]
+            - row "Piso en venta en Calle del Príncipe €600,000 N/A N/A degraded Resolve data gap" [ref=e554] [cursor=pointer]:
+              - cell "Piso en venta en Calle del Príncipe" [ref=e555]
+              - cell "€600,000" [ref=e556]
+              - cell "N/A" [ref=e557]
+              - cell "N/A" [ref=e558]
+              - cell "degraded" [ref=e559]
+              - cell "Resolve data gap" [ref=e560]
+            - row "Piso en venta en Sol €399,000 N/A N/A degraded Resolve data gap" [ref=e561] [cursor=pointer]:
+              - cell "Piso en venta en Sol" [ref=e562]
+              - cell "€399,000" [ref=e563]
+              - cell "N/A" [ref=e564]
+              - cell "N/A" [ref=e565]
+              - cell "degraded" [ref=e566]
+              - cell "Resolve data gap" [ref=e567]
+            - row "Piso en venta en Calle del Molino de Viento, 6 €389,000 N/A N/A degraded Resolve data gap" [ref=e568] [cursor=pointer]:
+              - cell "Piso en venta en Calle del Molino de Viento, 6" [ref=e569]
+              - cell "€389,000" [ref=e570]
+              - cell "N/A" [ref=e571]
+              - cell "N/A" [ref=e572]
+              - cell "degraded" [ref=e573]
+              - cell "Resolve data gap" [ref=e574]
+            - row "Piso en venta en Lavapiés €375,000 N/A N/A degraded Resolve data gap" [ref=e575] [cursor=pointer]:
+              - cell "Piso en venta en Lavapiés" [ref=e576]
+              - cell "€375,000" [ref=e577]
+              - cell "N/A" [ref=e578]
+              - cell "N/A" [ref=e579]
+              - cell "degraded" [ref=e580]
+              - cell "Resolve data gap" [ref=e581]
+    - complementary [ref=e582]:
+      - generic [ref=e583]:
+        - generic [ref=e584]: Selected listing
+        - heading "Apartamento en venta en Cortes-Huertas" [level=3] [ref=e649]
+        - paragraph [ref=e586]: Madrid, ES
+        - generic [ref=e587]:
+          - generic [ref=e588]: degraded
+          - generic [ref=e589]: unavailable
+        - generic [ref=e590]:
+          - generic [ref=e591]:
+            - generic [ref=e592]: Ask
+            - strong [ref=e593]: €950,000
+          - generic [ref=e594]:
+            - generic [ref=e595]: Fair value
+            - strong [ref=e596]: N/A
+          - generic [ref=e597]:
+            - generic [ref=e598]: Support
+            - strong [ref=e599]: N/A
+          - generic [ref=e600]:
+            - generic [ref=e601]: Value delta
+            - strong [ref=e602]: N/A
+        - generic [ref=e603]: target_surface_area_required
+        - generic [ref=e604]:
+          - generic [ref=e605]:
+            - text: Watchlist name
+            - textbox "Watchlist name" [ref=e606]: Workbench picks
+          - button "Save selection to watchlist" [ref=e607] [cursor=pointer]
+          - generic [ref=e608]:
+            - text: Memo title
+            - textbox "Memo title" [ref=e609]: Map workbench memo
+          - button "Draft memo" [ref=e610] [cursor=pointer]
+          - button "Start comp review" [ref=e611] [cursor=pointer]
+          - link "Open dossier" [ref=e612] [cursor=pointer]:
+            - /url: /listings/bed9f6f7455a2135c474a4eb1aa851d2
+      - generic [ref=e613]:
+        - generic [ref=e614]: Alerts + jobs
+        - generic [ref=e615]:
+          - generic [ref=e616]:
+            - strong [ref=e617]: crawler_status_blocked
+            - paragraph [ref=e618]: funda_nl
+          - generic [ref=e619]:
+            - strong [ref=e620]: crawler_status_blocked
+            - paragraph [ref=e621]: idealista
+          - generic [ref=e622]:
+            - strong [ref=e623]: crawler_status_blocked
+            - paragraph [ref=e624]: idealista_it
+          - generic [ref=e625]:
+            - strong [ref=e626]: crawler_status_blocked
+            - paragraph [ref=e627]: idealista_local_test
+          - generic [ref=e628]:
+            - strong [ref=e629]: crawler_status_blocked
+            - paragraph [ref=e630]: immobiliare_it
+          - generic [ref=e631]:
+            - strong [ref=e632]: preflight
+            - paragraph [ref=e633]: succeeded
+      - generic [ref=e635]: Saved lenses
+      - generic [ref=e650]:
+        - generic [ref=e651]: Listing context
+        - paragraph [ref=e652]: "Next action: Resolve data gap"
+        - generic [ref=e653]:
+          - generic [ref=e654]:
+            - strong [ref=e655]: price_corruption_high
+            - paragraph [ref=e656]: error
+          - generic [ref=e657]:
+            - strong [ref=e658]: area_corruption_high
+            - paragraph [ref=e659]: error
+          - generic [ref=e660]:
+            - strong [ref=e661]: stale_rows
+            - paragraph [ref=e662]: error

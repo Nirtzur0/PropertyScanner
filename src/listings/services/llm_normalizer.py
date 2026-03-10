@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse
 
@@ -48,11 +49,13 @@ class LLMNormalizerService:
     def __init__(self, *, app_config: Optional[AppConfig] = None) -> None:
         self.app_config = app_config or load_app_config_safe()
         llm_cfg = self.app_config.llm
-        self.models = [m.strip() for m in llm_cfg.models if m and str(m).strip()]
+        self.models = [m.strip() for m in llm_cfg.text_models if m and str(m).strip()]
         self.temperature = llm_cfg.temperature
         self.max_tokens = llm_cfg.max_tokens
         self.timeout_seconds = llm_cfg.timeout_seconds
         self.max_chars = llm_cfg.normalizer_max_chars
+        self.api_base = llm_cfg.api_base
+        self.api_key_env = llm_cfg.api_key_env
         self.client = instructor.from_litellm(completion)
 
     def extract(self, raw: RawListing) -> Optional[CanonicalListing]:
@@ -86,13 +89,20 @@ class LLMNormalizerService:
         last_error: Optional[str] = None
         for model in self.models:
             try:
+                request_kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "response_model": LLMListingExtract,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                    "timeout": self.timeout_seconds,
+                    "api_base": self.api_base,
+                }
+                api_key = os.environ.get(self.api_key_env, "").strip() if self.api_key_env else ""
+                if api_key:
+                    request_kwargs["api_key"] = api_key
                 result = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    response_model=LLMListingExtract,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    timeout=self.timeout_seconds,
+                    **request_kwargs,
                 )
                 listing = self._to_canonical(raw, result, model)
                 if listing is None:

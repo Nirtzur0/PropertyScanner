@@ -118,3 +118,151 @@ class AgentRun(Base):
     evaluations_count = Column(Integer, default=0)
     top_listing_ids = Column(JSON, default=list)
     ui_blocks = Column(JSON, default=list)
+
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id = Column(String, primary_key=True)
+    job_type = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="queued", index=True)
+    payload = Column(JSON, default=dict)
+    result = Column(JSON, default=dict)
+    logs = Column(JSON, default=list)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class SourceContractRun(Base):
+    __tablename__ = "source_contract_runs"
+
+    id = Column(String, primary_key=True)
+    source_id = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="experimental", index=True)
+    metrics = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class DataQualityEvent(Base):
+    __tablename__ = "data_quality_events"
+
+    id = Column(String, primary_key=True)
+    source_id = Column(String, nullable=False, index=True)
+    listing_id = Column(String, nullable=True, index=True)
+    field_name = Column(String, nullable=False)
+    severity = Column(String, nullable=False, index=True)
+    code = Column(String, nullable=False, index=True)
+    details = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class ListingObservation(Base):
+    __tablename__ = "listing_observations"
+
+    id = Column(String, primary_key=True)
+    source_id = Column(String, nullable=False, index=True)
+    external_id = Column(String, nullable=False, index=True)
+    listing_id = Column(String, nullable=True, index=True)
+    observed_at = Column(DateTime, default=utcnow, nullable=False)
+    raw_payload = Column(JSON, default=dict)
+    normalized_payload = Column(JSON, default=dict)
+    status = Column(String, nullable=False, default="observed", index=True)
+    field_confidence = Column(JSON, default=dict)
+
+
+class ListingEntity(Base):
+    __tablename__ = "listing_entities"
+
+    id = Column(String, primary_key=True)
+    canonical_listing_id = Column(String, nullable=False, unique=True, index=True)
+    attributes = Column(JSON, default=dict)
+    source_links = Column(JSON, default=list)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class BenchmarkRun(Base):
+    __tablename__ = "benchmark_runs"
+
+    id = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="queued", index=True)
+    config = Column(JSON, default=dict)
+    metrics = Column(JSON, default=dict)
+    output_json_path = Column(String, nullable=True)
+    output_md_path = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class CoverageReport(Base):
+    __tablename__ = "coverage_reports"
+
+    id = Column(String, primary_key=True)
+    listing_type = Column(String, nullable=False, index=True)
+    segment_key = Column(String, nullable=False, index=True)
+    segment_value = Column(String, nullable=False, index=True)
+    sample_size = Column(Integer, nullable=False, default=0)
+    empirical_coverage = Column(Float, nullable=True)
+    avg_interval_width = Column(Float, nullable=True)
+    status = Column(String, nullable=False, default="pending", index=True)
+    report = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class Watchlist(Base):
+    __tablename__ = "watchlists"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="active", index=True)
+    listing_ids = Column(JSON, default=list)
+    filters = Column(JSON, default=dict)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class SavedSearch(Base):
+    __tablename__ = "saved_searches"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    query = Column(String, nullable=True)
+    filters = Column(JSON, default=dict)
+    sort = Column(JSON, default=dict)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class Memo(Base):
+    __tablename__ = "memos"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=False, index=True)
+    listing_id = Column(String, ForeignKey("listings.id"), nullable=True, index=True)
+    watchlist_id = Column(String, ForeignKey("watchlists.id"), nullable=True, index=True)
+    status = Column(String, nullable=False, default="draft", index=True)
+    assumptions = Column(JSON, default=list)
+    risks = Column(JSON, default=list)
+    sections = Column(JSON, default=list)
+    export_format = Column(String, nullable=False, default="markdown")
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class CompReview(Base):
+    __tablename__ = "comp_reviews"
+
+    id = Column(String, primary_key=True)
+    listing_id = Column(String, ForeignKey("listings.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="draft", index=True)
+    selected_comp_ids = Column(JSON, default=list)
+    rejected_comp_ids = Column(JSON, default=list)
+    overrides = Column(JSON, default=dict)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

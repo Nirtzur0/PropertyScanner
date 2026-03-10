@@ -1,0 +1,51 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e663]:
+    - generic [ref=e664]: Listing detail
+    - heading "Apartamento en venta en Cortes-Huertas" [level=2] [ref=e665]
+    - paragraph [ref=e666]: Madrid ES
+    - generic [ref=e667]:
+      - generic [ref=e668]:
+        - generic [ref=e669]: Ask
+        - strong [ref=e670]: €950,000
+      - generic [ref=e671]:
+        - generic [ref=e672]: Fair value
+        - strong [ref=e673]: N/A
+      - generic [ref=e674]:
+        - generic [ref=e675]: Support
+        - strong [ref=e676]: N/A
+      - generic [ref=e677]:
+        - generic [ref=e678]: Status
+        - strong [ref=e679]: unavailable
+    - generic [ref=e681]:
+      - generic [ref=e682]:
+        - strong [ref=e683]: Next action
+        - paragraph [ref=e684]: Resolve data gap
+      - generic [ref=e685]:
+        - strong [ref=e686]: Source status
+        - paragraph [ref=e687]: degraded

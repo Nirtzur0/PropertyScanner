@@ -59,7 +59,9 @@ from src.agentic.orchestrator import CognitiveOrchestrator
 from src.agentic.memory import AgentMemoryStore
 
 # Page Config
-st.set_page_config(page_title="Property Scanner | The Scout", layout="wide", page_icon="🦅")
+_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets/property-scanner-icon-256.png")
+_PAGE_ICON = _ICON_PATH if os.path.exists(_ICON_PATH) else "🦅"
+st.set_page_config(page_title="Property Scanner | The Scout", layout="wide", page_icon=_PAGE_ICON)
 
 # Custom CSS
 def load_css():
@@ -78,6 +80,9 @@ cities, available_types, available_countries, cities_by_country = load_filter_op
 
 # Initialize Session
 ensure_session_defaults(cities, available_types, available_countries, cities_by_country)
+st.warning(
+    "Legacy dashboard: this Streamlit surface is deprecated and only kept as a temporary operator view while the React workbench replaces it."
+)
 
 def _safe_list(val):
     return val if isinstance(val, list) else []
@@ -190,12 +195,12 @@ def _render_ui_blocks(ui_blocks: List[Dict[str, Any]], data_df: pd.DataFrame) ->
             else:
                 cols = block.get("columns") or []
                 display_cols = ["Title"] + [c for c in cols if c in block_df.columns and c != "Title"]
-                st.dataframe(block_df[display_cols], use_container_width=True)
+                st.dataframe(block_df[display_cols], width="stretch")
 
         elif block_type == "deal_score_chart":
             if "Deal Score" in block_df.columns and not block_df.empty:
                 fig = px.bar(block_df, x="Title", y="Deal Score")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             else:
                 st.info("No deal score data for chart.")
 
@@ -311,6 +316,62 @@ pipeline_needs_refresh = bool(pipeline_status.get("needs_refresh"))
 pipeline_error = pipeline_status.get("error")
 pipeline_listings = int(pipeline_status.get("listings_count", 0) or 0)
 pipeline_listings_at = _format_ts(pipeline_status.get("listings_last_seen"))
+pipeline_source_support = pipeline_status.get("source_support", {})
+if not isinstance(pipeline_source_support, dict):
+    pipeline_source_support = {}
+pipeline_source_summary = pipeline_source_support.get("summary", {})
+if not isinstance(pipeline_source_summary, dict):
+    pipeline_source_summary = {}
+pipeline_source_entries = pipeline_source_support.get("sources", [])
+if not isinstance(pipeline_source_entries, list):
+    pipeline_source_entries = []
+source_supported_count = int(pipeline_source_summary.get("supported", 0) or 0)
+source_blocked_count = int(pipeline_source_summary.get("blocked", 0) or 0)
+source_fallback_count = int(pipeline_source_summary.get("fallback", 0) or 0)
+source_support_doc = str(pipeline_source_support.get("doc_path") or "docs/crawler_status.md")
+pipeline_assumption_badges = pipeline_status.get("assumption_badges", [])
+if not isinstance(pipeline_assumption_badges, list):
+    pipeline_assumption_badges = []
+
+
+def _source_examples(runtime_label: str, limit: int = 3) -> str:
+    names: List[str] = []
+    for entry in pipeline_source_entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("runtime_label") != runtime_label:
+            continue
+        name = entry.get("name") or entry.get("id")
+        if not name:
+            continue
+        names.append(str(name))
+        if len(names) >= limit:
+            break
+    return ", ".join(names) if names else "None"
+
+
+def _assumption_badge_lines(limit: int = 4) -> List[str]:
+    lines: List[str] = []
+    for entry in pipeline_assumption_badges:
+        if not isinstance(entry, dict):
+            continue
+
+        label = str(entry.get("label") or entry.get("id") or "assumption")
+        status = str(entry.get("status") or "unknown").upper()
+        summary = str(entry.get("summary") or "").strip()
+        guide = str(entry.get("guide_path") or "").strip()
+        artifact_ids = entry.get("artifact_ids")
+        if isinstance(artifact_ids, list):
+            artifacts = ", ".join(str(item) for item in artifact_ids if item)
+        else:
+            artifacts = ""
+
+        artifact_suffix = f" [{artifacts}]" if artifacts else ""
+        guide_suffix = f" (Guide: {guide})" if guide else ""
+        lines.append(f"{status} - {label}{artifact_suffix}: {summary}{guide_suffix}")
+        if len(lines) >= limit:
+            break
+    return lines
 
 if pipeline_error:
     pipeline_state_text = "Degraded"
@@ -353,7 +414,7 @@ with left_col:
         )
     with hud_cols[1]:
         toggle_label = "Hide" if st.session_state.lens_expanded else "Tune"
-        if st.button(toggle_label, key="lens_toggle", use_container_width=True):
+        if st.button(toggle_label, key="lens_toggle", width="stretch"):
             st.session_state.lens_expanded = not st.session_state.lens_expanded
             st.rerun()
 
@@ -372,6 +433,16 @@ with left_col:
             st.progress(100 if pipeline_badge == "Live" else 50)
             st.text(f"Listings tracked: {pipeline_listings}")
             st.text(f"Listings updated: {pipeline_listings_at}")
+            st.caption(
+                f"Source support: {source_supported_count} supported | "
+                f"{source_blocked_count} blocked | {source_fallback_count} fallback"
+            )
+            st.caption(f"Guide: {source_support_doc}")
+            assumption_lines = _assumption_badge_lines(limit=3)
+            if assumption_lines:
+                st.caption("Assumption badges:")
+                for line in assumption_lines:
+                    st.caption(line)
 
 # --- Load Data ---
 with st.spinner("Scouting listings..."):
@@ -451,7 +522,7 @@ with st.form("scout_command_center", clear_on_submit=False):
             label_visibility="collapsed"
         )
     with input_cols[1]:
-        submitted = st.form_submit_button("Scout it", use_container_width=True)
+        submitted = st.form_submit_button("Scout it", width="stretch")
 
     # Examples (Inside the floating panel)
     if not submitted and not st.session_state.agent_plan:
@@ -467,7 +538,7 @@ with st.form("scout_command_center", clear_on_submit=False):
         for i, ex in enumerate(examples):
             with example_cols[i % 2]:
                 # In a form, buttons sumbit the form. We check which one was clicked.
-                if st.form_submit_button(ex, use_container_width=True):
+                if st.form_submit_button(ex, width="stretch"):
                     chosen_example = ex
                     submitted = True
         
@@ -536,7 +607,7 @@ if pending_plan and st.session_state.agent_requires_approval:
 
     action_cols = st.columns([1, 1])
     with action_cols[0]:
-        if st.button("Approve & Run Plan", use_container_width=True):
+        if st.button("Approve & Run Plan", width="stretch"):
             result = _run_orchestrator(
                 st.session_state.agent_pending_prompt,
                 st.session_state.agent_pending_areas,
@@ -568,7 +639,7 @@ if pending_plan and st.session_state.agent_requires_approval:
                 st.session_state.selected_title = matched.iloc[0]["Title"]
             st.rerun()
     with action_cols[1]:
-        if st.button("Cancel", use_container_width=True):
+        if st.button("Cancel", width="stretch"):
             st.session_state.agent_pending_plan = None
             st.session_state.agent_requires_approval = False
             st.rerun()
@@ -598,7 +669,7 @@ if st.session_state.agent_trace:
         if not trace_df.empty:
             display_cols = ["action", "status", "duration_ms", "error"]
             display_cols = [c for c in display_cols if c in trace_df.columns]
-            st.dataframe(trace_df[display_cols], use_container_width=True)
+            st.dataframe(trace_df[display_cols], width="stretch")
         else:
             st.caption("No trace data.")
 
@@ -629,14 +700,22 @@ with st.expander("Agent Memory", expanded=False):
 left_panel, right_panel = st.columns([1.35, 1], gap="large")
 
 with left_panel:
+    if (
+        "left_panel_view_selector" not in st.session_state
+        or st.session_state.left_panel_view_selector != st.session_state.left_panel_view
+    ):
+        st.session_state.left_panel_view_selector = st.session_state.left_panel_view
+
+    panel_index = 0 if st.session_state.left_panel_view_selector == "📋 Deal Flow" else 1
     panel_choice = st.radio(
         "Panel",
         ["📋 Deal Flow", "📑 Memo"],
-        index=0 if st.session_state.left_panel_view == "📋 Deal Flow" else 1,
+        index=panel_index,
         horizontal=True,
         label_visibility="collapsed",
-        key="left_panel_view",
+        key="left_panel_view_selector",
     )
+    st.session_state.left_panel_view = panel_choice
 
     if panel_choice == "📋 Deal Flow":
         st.markdown("### 📋 Deal Flow")
@@ -680,7 +759,7 @@ with left_panel:
 
         # 3. Prev
         with ctrl_cols[2]:
-            if st.button("◀", disabled=current_page <= 1, use_container_width=True):
+            if st.button("◀", disabled=current_page <= 1, width="stretch"):
                 st.session_state.deal_page = max(1, current_page - 1)
                 st.rerun()
 
@@ -698,7 +777,7 @@ with left_panel:
 
         # 5. Next
         with ctrl_cols[4]:
-            if st.button("▶", disabled=current_page >= total_pages, use_container_width=True):
+            if st.button("▶", disabled=current_page >= total_pages, width="stretch"):
                 st.session_state.deal_page = min(total_pages, current_page + 1)
                 st.rerun()
 
@@ -722,13 +801,13 @@ with left_panel:
                         imgs = _safe_list(row.get("Images"))
                         ranked = rank_images_sample(imgs, sample_size=4, _image_selector=image_selector)
                         if ranked:
-                            st.image(ranked[0], use_container_width=True)
+                            st.image(ranked[0], width="stretch")
                         st.markdown(f"**{row['Title']}**")
                         st.caption(f"{row['City']}, {row['Country']} • {_fmt_eur(row.get('Price'))}")
                         why = row.get("Why")
                         if isinstance(why, str) and why:
                             st.caption(why)
-                        if st.button("Memo", key=f"memo_grid_{row['ID']}", use_container_width=True):
+                        if st.button("Memo", key=f"memo_grid_{row['ID']}", width="stretch"):
                             st.session_state.selected_title = row["Title"]
                             st.session_state.left_panel_view = "📑 Memo"
                             st.rerun()
@@ -740,7 +819,7 @@ with left_panel:
                         imgs = _safe_list(row.get("Images"))
                         ranked = rank_images_sample(imgs, sample_size=3, _image_selector=image_selector)
                         if ranked:
-                            st.image(ranked[0], use_container_width=True)
+                            st.image(ranked[0], width="stretch")
                     with row_cols[1]:
                         st.markdown(f"**{row['Title']}**")
                         st.caption(f"{row['City']}, {row['Country']} • {_fmt_eur(row.get('Price'))}")
@@ -748,7 +827,7 @@ with left_panel:
                         if isinstance(why, str) and why:
                             st.caption(why)
                     with row_cols[2]:
-                        if st.button("Memo", key=f"memo_list_{row['ID']}", use_container_width=True):
+                        if st.button("Memo", key=f"memo_list_{row['ID']}", width="stretch"):
                             st.session_state.selected_title = row["Title"]
                             st.session_state.left_panel_view = "📑 Memo"
                             st.rerun()
@@ -770,7 +849,7 @@ with left_panel:
             imgs = _safe_list(item.get("Images"))
             ranked = rank_images(imgs, _image_selector=image_selector)
             if ranked:
-                st.image(ranked[0], use_container_width=True)
+                st.image(ranked[0], width="stretch")
 
             st.markdown("#### Scorecard")
             items = build_scorecard_items(item)
@@ -830,11 +909,11 @@ with left_panel:
 
                 fig = px.scatter(**scatter_kwargs)
                 selection = st.plotly_chart(
-                    fig, on_select="rerun", selection_mode="lasso", use_container_width=True
+                    fig, on_select="rerun", selection_mode="lasso", width="stretch"
                 )
                 selected = resolve_plotly_selection(selection, plot_df, id_col="ID")
                 if not selected.empty:
-                    st.dataframe(selected, use_container_width=True)
+                    st.dataframe(selected, width="stretch")
                 else:
                     st.info("Select points to drill down.")
 
@@ -860,6 +939,19 @@ with left_panel:
         st.metric("Pipeline State", pipeline_state_text)
         st.caption(f"Listings tracked: {pipeline_listings}")
         st.caption(f"Listings updated: {pipeline_listings_at}")
+        support_cols = st.columns(3)
+        support_cols[0].metric("Supported", source_supported_count)
+        support_cols[1].metric("Blocked", source_blocked_count)
+        support_cols[2].metric("Fallback", source_fallback_count)
+        st.caption(f"Source labels: supported / blocked / fallback (see {source_support_doc}).")
+        st.caption(f"Supported examples: {_source_examples('supported')}")
+        st.caption(f"Blocked examples: {_source_examples('blocked')}")
+        st.caption(f"Fallback examples: {_source_examples('fallback')}")
+        assumption_lines = _assumption_badge_lines()
+        if assumption_lines:
+            st.caption("Assumption badges:")
+            for line in assumption_lines:
+                st.caption(line)
         if pipeline_error:
             st.error(pipeline_error)
         elif pipeline_needs_refresh:
@@ -944,5 +1036,5 @@ with right_panel:
                         "style": tooltip_style,
                     },
                 ),
-                use_container_width=True,
+                width="stretch",
             )

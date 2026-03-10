@@ -1,0 +1,31 @@
+{
+  "hedonic_adjustment": {
+    "factor": 1.1,
+    "raw_factor": 1.1,
+    "clamped": false
+  },
+  "conformal_calibration": {
+    "raw": [
+      255000.0,
+      300000.0,
+      345000.0
+    ],
+    "calibrated": [
+      255000.0,
+      300000.0,
+      345000.0
+    ]
+  },
+  "monotonicity_example": {
+    "input": [
+      100.0,
+      90.0,
+      80.0
+    ],
+    "output": [
+      80.0,
+      90.0,
+      100.0
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Fresh
+  - generic [ref=e27]:
+    - generic [ref=e28]: Pipeline + source health
+    - heading "Operational trust surface" [level=2] [ref=e29]
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]: Needs refresh
+        - strong [ref=e33]: "no"
+      - generic [ref=e34]:
+        - generic [ref=e35]: Supported
+        - strong [ref=e36]: "0"
+      - generic [ref=e37]:
+        - generic [ref=e38]: Blocked
+        - strong [ref=e39]: "0"
+      - generic [ref=e40]:
+        - generic [ref=e41]: Benchmark runs
+        - strong [ref=e42]: "0"
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - heading "Recent jobs" [level=3] [ref=e45]
+        - generic [ref=e47]:
+          - strong [ref=e48]: preflight
+          - paragraph [ref=e49]: succeeded
+      - generic [ref=e50]:
+        - heading "Coverage" [level=3] [ref=e51]
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - strong [ref=e54]: madrid|sale|<= 300000
+            - paragraph [ref=e55]: pass
+          - generic [ref=e56]:
+            - strong [ref=e57]: madrid|sale|<= 300000
+            - paragraph [ref=e58]: insufficient_samples
+          - generic [ref=e59]:
+            - strong [ref=e60]: madrid|sale|<= 300000
+            - paragraph [ref=e61]: insufficient_samples
+          - generic [ref=e62]:
+            - strong [ref=e63]: madrid|sale|<= 300000
+            - paragraph [ref=e64]: insufficient_samples
+    - heading "Data quality events" [level=3] [ref=e65]
+    - generic [ref=e66]:
+      - generic [ref=e67]:
+        - strong [ref=e68]: crawler_status_blocked
+        - paragraph [ref=e69]: funda_nl
+      - generic [ref=e70]:
+        - strong [ref=e71]: crawler_status_blocked
+        - paragraph [ref=e72]: idealista
+      - generic [ref=e73]:
+        - strong [ref=e74]: crawler_status_blocked
+        - paragraph [ref=e75]: idealista_it
+      - generic [ref=e76]:
+        - strong [ref=e77]: crawler_status_blocked
+        - paragraph [ref=e78]: idealista_local_test
+      - generic [ref=e79]:
+        - strong [ref=e80]: crawler_status_blocked
+        - paragraph [ref=e81]: immobiliare_it
+      - generic [ref=e82]:
+        - strong [ref=e83]: crawler_status_blocked
+        - paragraph [ref=e84]: immowelt_de
+      - generic [ref=e85]:
+        - strong [ref=e86]: crawler_status_blocked
+        - paragraph [ref=e87]: otodom_pl
+      - generic [ref=e88]:
+        - strong [ref=e89]: crawler_status_blocked
+        - paragraph [ref=e90]: pararius_nl

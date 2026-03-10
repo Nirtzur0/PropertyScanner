@@ -1,38 +1,44 @@
 import json
 from typing import Any, Dict, Optional
 
-import requests
 import structlog
 
 from src.platform.settings import DescriptionAnalystConfig
+from src.platform.utils.llm import complete_with_fallback
 
 logger = structlog.get_logger()
 
+
 class DescriptionAnalyst:
     """
-    Analyzes property descriptions using a local LLM (Ollama) to:
+    Analyzes property descriptions using an OpenAI-compatible chat backend to:
     1. Extract structural features (missing fields).
     2. Assess sentiment/value (critical analysis).
     """
-    
+
     def __init__(
         self,
         config: Optional[DescriptionAnalystConfig] = None,
         model_name: Optional[str] = None,
+        api_base: Optional[str] = None,
         base_url: Optional[str] = None,
     ):
         if config is None:
             config = DescriptionAnalystConfig()
         self.config = config
-        self.model_name = model_name or config.model_name
-        self.base_url = base_url or config.base_url
-        self.generate_endpoint = f"{self.base_url}/api/generate"
+        self.provider = config.provider
+        resolved_model = model_name or config.model_name
+        if self.provider == "ollama" and resolved_model and not resolved_model.startswith("ollama/"):
+            resolved_model = f"ollama/{resolved_model}"
+        self.model_name = resolved_model
+        self.api_base = api_base or base_url or config.api_base
+        self.api_key_env = config.api_key_env
         self.timeout_seconds = config.timeout_seconds
         self.min_description_length = config.min_description_length
-        
+
     def analyze(self, description: str) -> Dict[str, Any]:
         """
-        Analyze the description and return structred data.
+        Analyze the description and return structured data.
         """
         if not description or len(description) < self.min_description_length:
             return {}
@@ -123,33 +129,36 @@ Rules:
 - Use 1 decimal for investor_sentiment and 2 decimals for confidence when possible.
 Description: "{description}"
 """
-        
+
         try:
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json" # Ollama JSON mode
-            }
-            
-            response = requests.post(
-                self.generate_endpoint,
-                json=payload,
-                timeout=self.timeout_seconds,
+            response = complete_with_fallback(
+                models=[self.model_name],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Return strict JSON only. Do not wrap the response in markdown.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=900,
+                timeout_seconds=self.timeout_seconds,
+                api_base=self.api_base,
+                api_key_env=self.api_key_env,
+                response_format=(None if self.provider == "ollama" else {"type": "json_object"}),
             )
-            if response.status_code == 200:
-                data = response.json()
-                content = data.get("response", "")
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    # Fallback structural repair if needed, but JSON mode usually works
-                    logger.warning("llm_json_parse_error", content=content)
-                    return {}
-            else:
-                logger.warning("ollama_request_failed", status=response.status_code, body=response.text)
+            try:
+                return json.loads(response.content)
+            except json.JSONDecodeError:
+                logger.warning("llm_json_parse_error", model=response.model, content=response.content)
                 return {}
-                
-        except Exception as e:
-            logger.error("description_analysis_failed", error=str(e))
+
+        except Exception as exc:
+            logger.error(
+                "description_analysis_failed",
+                provider=self.provider,
+                api_base=self.api_base,
+                model=self.model_name,
+                error=str(exc),
+            )
             return {}

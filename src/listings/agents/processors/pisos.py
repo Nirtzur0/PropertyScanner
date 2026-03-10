@@ -11,13 +11,59 @@ class PisosNormalizerAgent(BaseAgent):
     Parses HTML snippets from Pisos.com into CanonicalListings.
     Uses JSON-LD if available, falls back to DOM selectors.
     """
+    MIN_PRICE = 10_000.0
+    MAX_PRICE = 50_000_000.0
+    MIN_SURFACE_AREA = 10.0
+    MAX_SURFACE_AREA = 1_000.0
+
     def __init__(self):
         super().__init__(name="PisosNormalizer")
 
+    def _parse_eu_float(self, text: str) -> float:
+        raw = re.sub(r"[^0-9.,]", "", str(text or ""))
+        if not raw:
+            return 0.0
+
+        if "," in raw and "." in raw:
+            raw = raw.replace(".", "").replace(",", ".")
+        elif "," in raw:
+            raw = raw.replace(",", ".")
+        elif "." in raw:
+            parts = raw.split(".")
+            last = parts[-1]
+            if last.isdigit() and len(last) in (1, 2) and all(p.isdigit() for p in parts[:-1] if p):
+                raw = "".join(parts[:-1]) + "." + last
+            else:
+                raw = raw.replace(".", "")
+
+        try:
+            return float(raw)
+        except Exception:
+            return 0.0
+
+    def _normalize_price(self, value: float) -> float:
+        if self.MIN_PRICE <= float(value) <= self.MAX_PRICE:
+            return float(value)
+        return 0.0
+
+    def _normalize_surface_area(self, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return None
+        value = float(value)
+        if self.MIN_SURFACE_AREA <= value <= self.MAX_SURFACE_AREA:
+            return value
+        return None
+
     def _clean_price(self, text: str) -> float:
-        # "245.000 €" -> 245000.0
-        cleaned = re.sub(r'[^\d]', '', text)
-        return float(cleaned) if cleaned else 0.0
+        normalized = " ".join(str(text or "").split())
+        match = re.search(r"(\d[\d.\s]*(?:,\d+)?)\s*(?:€|eur)\b", normalized, re.IGNORECASE)
+        if match:
+            return self._normalize_price(self._parse_eu_float(match.group(1)))
+
+        fallback = re.search(r"\b(\d[\d.\s]*(?:,\d+)?)\b", normalized)
+        if fallback:
+            return self._normalize_price(self._parse_eu_float(fallback.group(1)))
+        return 0.0
 
     def _parse_item(self, raw: RawListing) -> Optional[CanonicalListing]:
         html = raw.raw_data.get("html_snippet", "")
@@ -69,40 +115,6 @@ class PisosNormalizerAgent(BaseAgent):
         bedrooms = None
         sqm = None
         
-        def parse_eu_float(t):
-             """
-             Parse a float from European-ish formats.
-
-             Handles:
-             - "1.200,50" -> 1200.50
-             - "1,200.50" (already dot-decimal) -> 1200.50
-             - "58.69" -> 58.69 (dot-decimal, not thousands)
-             - "1.234.567" -> 1234567
-             """
-             raw = re.sub(r"[^0-9.,]", "", str(t or ""))
-             if not raw:
-                 return 0.0
-
-             if "," in raw and "." in raw:
-                 # Assume "." thousands and "," decimal: 1.234,56
-                 raw = raw.replace(".", "").replace(",", ".")
-             elif "," in raw:
-                 # Assume "," decimal: 58,69
-                 raw = raw.replace(",", ".")
-             elif "." in raw:
-                 # Dot could be decimal or thousands. Treat as decimal if last group is 1-2 digits.
-                 parts = raw.split(".")
-                 last = parts[-1]
-                 if last.isdigit() and len(last) in (1, 2) and all(p.isdigit() for p in parts[:-1] if p):
-                     raw = "".join(parts[:-1]) + "." + last
-                 else:
-                     raw = raw.replace(".", "")
-
-             try:
-                 return float(raw)
-             except Exception:
-                 return 0.0
-
         # Strategy 1: Summary list (e.g. "2 habs.", "78 m²")
         chars = soup.select("ul.features-summary li")
         
@@ -117,7 +129,7 @@ class PisosNormalizerAgent(BaseAgent):
                 or (" /m" in txt_lower and ("€" in txt_lower or "eur" in txt_lower))
                 or ("/m" in txt_lower and ("€" in txt_lower or "eur" in txt_lower))
             ):
-                sqm = parse_eu_float(txt)
+                sqm = self._normalize_surface_area(self._parse_eu_float(txt))
 
         # JSON-LD floorSize (if present)
         if not sqm and json_data.get("floorSize"):
@@ -126,9 +138,9 @@ class PisosNormalizerAgent(BaseAgent):
                 if isinstance(floor_size, dict):
                     sqm_val = floor_size.get("value") or floor_size.get("maxValue") or floor_size.get("minValue")
                     if sqm_val is not None:
-                        sqm = float(str(sqm_val).replace(",", "."))
+                        sqm = self._normalize_surface_area(self._parse_eu_float(str(sqm_val)))
                 elif isinstance(floor_size, (int, float, str)):
-                    sqm = float(str(floor_size).replace(",", "."))
+                    sqm = self._normalize_surface_area(self._parse_eu_float(str(floor_size)))
             except Exception:
                 pass
                 
@@ -146,7 +158,7 @@ class PisosNormalizerAgent(BaseAgent):
                      if "habitaciones" in l_txt:
                          bedrooms = int(re.sub(r'[^\d]', '', v_txt) or 0)
                      elif "superficie" in l_txt:
-                         sqm = parse_eu_float(v_txt)
+                         sqm = self._normalize_surface_area(self._parse_eu_float(v_txt))
         
         # Process chars list (from Search page fallback if still missing)
         if not bedrooms and not sqm:
@@ -163,7 +175,7 @@ class PisosNormalizerAgent(BaseAgent):
                     or (" /m" in txt and ("€" in txt or "eur" in txt))
                     or ("/m" in txt and ("€" in txt or "eur" in txt))
                 ):
-                    sqm = parse_eu_float(txt)
+                    sqm = self._normalize_surface_area(self._parse_eu_float(txt))
         
         # --- NEW: Extended Features (Bathrooms, Floor, Elevator) ---
         bathrooms = None
@@ -457,10 +469,20 @@ class PisosNormalizerAgent(BaseAgent):
         # We keep it conservative to avoid capturing prices/years.
         if canonical.surface_area_sqm is None or canonical.surface_area_sqm <= 0:
             try:
-                text_content = soup.get_text(" ", strip=True).lower()
-                m = re.search(r"\b(\d{2,3}(?:[.,]\d+)?)\s*(?:m2|m²)\b", text_content)
-                if m:
-                    canonical.surface_area_sqm = float(m.group(1).replace(".", "").replace(",", "."))
+                candidate_blocks = [
+                    description,
+                    soup.find("meta", attrs={"name": "description"}).get("content", "") if soup.find("meta", attrs={"name": "description"}) else "",
+                ]
+                for block in candidate_blocks:
+                    if not block:
+                        continue
+                    m = re.search(r"(?<![\d.,])(\d{2,4}(?:[.,]\d+)?)\s*(?:m2|m²)\b", block.lower())
+                    if not m:
+                        continue
+                    parsed_area = self._normalize_surface_area(self._parse_eu_float(m.group(1)))
+                    if parsed_area is not None:
+                        canonical.surface_area_sqm = parsed_area
+                        break
             except Exception:
                 pass
 

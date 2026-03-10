@@ -28,7 +28,7 @@ class RightmoveCrawlerAgent(BaseAgent):
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
         user_agent = config.get("user_agent", "PropertyScanner/1.0")
         browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 6)
+            config.get("browser_max_concurrency", 1)
         )
         self.scrape_client = ScrapeClient(
             source_id=config.get("id", "rightmove_uk"),
@@ -36,7 +36,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             compliance_manager=self.compliance_manager,
             user_agent=user_agent,
             rate_limit_seconds=self.rate_limit_seconds,
-            browser_wait_s=float(config.get("browser_wait_s", 8.0)),
+            browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
         )
@@ -160,7 +160,7 @@ class RightmoveCrawlerAgent(BaseAgent):
 
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
             if not result.html:
-                errors.append(f"fetch_failed:{result.url}")
+                errors.append(result.error or f"fetch_failed:{result.url}")
                 continue
             html_content = result.html
             url = result.url

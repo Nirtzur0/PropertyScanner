@@ -1,0 +1,15 @@
+{
+  "job_id": "3a59973aa5d44ce99b8cea31bafcc64b",
+  "max_listings": 0,
+  "max_pages": 1,
+  "mode": "search",
+  "page_size": 24,
+  "proxy_policy": {},
+  "result_path": "/Users/nirtzur/Documents/projects/property_scanner/data/crawl_results/3a59973aa5d44ce99b8cea31bafcc64b.ndjson",
+  "session_policy": {},
+  "snapshot_dir": "/Users/nirtzur/Documents/projects/property_scanner/data/crawl_snapshots/3a59973aa5d44ce99b8cea31bafcc64b",
+  "source_id": "pisos",
+  "start_urls": [
+    "https://example.com/search"
+  ]
+}

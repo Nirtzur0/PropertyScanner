@@ -206,6 +206,191 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         )
     """)
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_runs (
+            id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload JSON,
+            result JSON,
+            logs JSON,
+            error TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME,
+            completed_at DATETIME
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_job_runs_type_status ON job_runs (job_type, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_job_runs_created_at ON job_runs (created_at)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_contract_runs (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            metrics JSON,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_source_contract_runs_source_created ON source_contract_runs (source_id, created_at)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS data_quality_events (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            listing_id TEXT,
+            field_name TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            code TEXT NOT NULL,
+            details JSON,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_data_quality_events_source_code ON data_quality_events (source_id, code)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS listing_observations (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            listing_id TEXT,
+            observed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            raw_payload JSON,
+            normalized_payload JSON,
+            status TEXT NOT NULL,
+            field_confidence JSON
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_listing_observations_source_external ON listing_observations (source_id, external_id)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS listing_entities (
+            id TEXT PRIMARY KEY,
+            canonical_listing_id TEXT NOT NULL UNIQUE,
+            attributes JSON,
+            source_links JSON,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_listing_entities_canonical ON listing_entities (canonical_listing_id)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_runs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            config JSON,
+            metrics JSON,
+            output_json_path TEXT,
+            output_md_path TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_benchmark_runs_created ON benchmark_runs (created_at)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coverage_reports (
+            id TEXT PRIMARY KEY,
+            listing_type TEXT NOT NULL,
+            segment_key TEXT NOT NULL,
+            segment_value TEXT NOT NULL,
+            sample_size INT NOT NULL DEFAULT 0,
+            empirical_coverage FLOAT,
+            avg_interval_width FLOAT,
+            status TEXT NOT NULL,
+            report JSON,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_coverage_reports_segment ON coverage_reports "
+        "(listing_type, segment_key, segment_value)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS watchlists (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            listing_ids JSON,
+            filters JSON,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_watchlists_status ON watchlists (status)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saved_searches (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            query TEXT,
+            filters JSON,
+            sort JSON,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_saved_searches_name ON saved_searches (name)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memos (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            listing_id TEXT,
+            watchlist_id TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            assumptions JSON,
+            risks JSON,
+            sections JSON,
+            export_format TEXT NOT NULL DEFAULT 'markdown',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_memos_status_created ON memos (status, created_at)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS comp_reviews (
+            id TEXT PRIMARY KEY,
+            listing_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            selected_comp_ids JSON,
+            rejected_comp_ids JSON,
+            overrides JSON,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_comp_reviews_listing_status ON comp_reviews (listing_id, status)")
+
     # 6. Official Metrics (ERI/Registry/INE unified)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS official_metrics (

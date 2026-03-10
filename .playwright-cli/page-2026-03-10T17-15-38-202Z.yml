@@ -1,0 +1,328 @@
+- generic [active] [ref=e30]:
+  - generic [ref=e2]:
+    - generic [ref=e39]:
+      - heading "🔭 The Scout V2" [level=3] [ref=e44]
+      - radiogroup "Mode" [ref=e47] [cursor=pointer]:
+        - generic [ref=e48]:
+          - radio "Assisted" [checked]
+          - paragraph [ref=e53]: Assisted
+        - generic [ref=e54]:
+          - radio "Autonomous"
+          - paragraph [ref=e59]: Autonomous
+      - separator [ref=e64]
+      - generic [ref=e66]:
+        - paragraph [ref=e70]: Country
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - generic [ref=e74]: All
+            - combobox "Selected All. Country" [ref=e76]
+          - img "open" [ref=e78]
+      - generic [ref=e81]:
+        - paragraph [ref=e85]: City
+        - generic [ref=e87]:
+          - generic [ref=e88]:
+            - generic [ref=e89]: All
+            - combobox "Selected All. City" [ref=e91]
+          - img "open" [ref=e93]
+      - generic [ref=e96]:
+        - paragraph [ref=e100]: Property Type
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - button "PropertyType.APARTMENT, close by backspace" [ref=e105]:
+              - generic "PropertyType.APARTMENT" [ref=e106]
+              - img [ref=e108] [cursor=pointer]
+            - button "apartment, close by backspace" [ref=e110]:
+              - generic "apartment" [ref=e111]
+              - img [ref=e113] [cursor=pointer]
+            - combobox "Selected PropertyType.APARTMENT, apartment. Property Type" [ref=e116]
+          - generic [ref=e117]:
+            - button "Clear all" [ref=e118] [cursor=pointer]
+            - img "open" [ref=e120] [cursor=pointer]
+      - generic [ref=e124]:
+        - paragraph [ref=e128]: Budget
+        - generic [ref=e129]:
+          - generic [ref=e132]:
+            - slider "Budget" [ref=e133]:
+              - generic:
+                - generic:
+                  - paragraph: €120000
+            - slider "Budget" [ref=e134]:
+              - generic:
+                - generic:
+                  - paragraph: €1200000
+          - generic:
+            - generic:
+              - paragraph: €50000
+            - generic:
+              - paragraph: €2000000
+      - separator [ref=e140]
+    - generic [ref=e3]:
+      - banner [ref=e6]
+      - generic [ref=e143]:
+        - generic [ref=e147]:
+          - generic [ref=e154]:
+            - generic [ref=e155]: Lens
+            - generic [ref=e157]: All markets
+          - button "Tune" [ref=e162] [cursor=pointer]:
+            - paragraph [ref=e166]: Tune
+        - generic [ref=e168]:
+          - generic [ref=e169]:
+            - paragraph
+          - generic [ref=e171]:
+            - textbox "Scout Command" [ref=e178]:
+              - /placeholder: Ask the Scout... (⌘K)
+            - button "Scout it" [ref=e184] [cursor=pointer]:
+              - paragraph [ref=e188]: Scout it
+          - paragraph [ref=e193]: "Try an example:"
+          - generic [ref=e195]:
+            - generic [ref=e197]:
+              - button "💰 High Yield deals" [ref=e201] [cursor=pointer]:
+                - paragraph [ref=e205]: 💰 High Yield deals
+              - button "🚀 High Momentum" [ref=e209] [cursor=pointer]:
+                - paragraph [ref=e213]: 🚀 High Momentum
+            - generic [ref=e215]:
+              - button "📉 Undervalued gems" [ref=e219] [cursor=pointer]:
+                - paragraph [ref=e223]: 📉 Undervalued gems
+              - button "📍 Only Barcelona" [ref=e227] [cursor=pointer]:
+                - paragraph [ref=e231]: 📍 Only Barcelona
+        - group [ref=e234]:
+          - generic "keyboard_arrow_right Agent Memory" [ref=e235] [cursor=pointer]:
+            - generic [ref=e236]:
+              - generic [ref=e238]: keyboard_arrow_right
+              - paragraph [ref=e241]: Agent Memory
+        - generic [ref=e243]:
+          - generic [ref=e245]:
+            - radiogroup "Panel" [ref=e248] [cursor=pointer]:
+              - generic [ref=e249]:
+                - radio "📋 Deal Flow" [checked]
+                - paragraph [ref=e254]: 📋 Deal Flow
+              - generic [ref=e255]:
+                - radio "📑 Memo"
+                - paragraph [ref=e260]: 📑 Memo
+            - heading "📋 Deal Flow" [level=3] [ref=e266]:
+              - text: 📋 Deal Flow
+              - generic [ref=e267]:
+                - link "Link to heading":
+                  - /url: "#deal-flow"
+                  - img
+            - generic [ref=e269]:
+              - radiogroup "View" [ref=e274] [cursor=pointer]:
+                - generic [ref=e275]:
+                  - radio "Grid" [checked]
+                  - paragraph [ref=e280]: Grid
+                - generic [ref=e281]:
+                  - radio "List"
+                  - paragraph [ref=e286]: List
+              - generic [ref=e292]:
+                - generic [ref=e293]:
+                  - generic: "8"
+                  - generic:
+                    - combobox "Selected 8. Size"
+                - img "open" [ref=e295]
+              - button "◀" [disabled] [ref=e301]:
+                - generic:
+                  - generic:
+                    - generic:
+                      - paragraph: ◀
+              - generic [ref=e307]:
+                - generic [ref=e308]:
+                  - generic: "1"
+                  - generic:
+                    - combobox "Selected 1. Page"
+                - img "open" [ref=e310]
+              - button "▶" [ref=e316] [cursor=pointer]:
+                - generic:
+                  - generic:
+                    - generic:
+                      - paragraph: ▶
+              - paragraph [ref=e323]: 1-8 of 43 • Total Return 12m %
+            - generic [ref=e325]:
+              - generic [ref=e327]:
+                - generic [ref=e330]:
+                  - button "Fullscreen" [ref=e335] [cursor=pointer]:
+                    - img [ref=e336]
+                  - img "0" [ref=e341]
+                - paragraph [ref=e346]:
+                  - strong [ref=e347]: Piso en venta en Calle de la Maratón
+                - paragraph [ref=e352]: Albacete, ES • 173,000 €
+                - paragraph [ref=e357]: Expected return +1052.2% (12m) • Priced +50.7% vs fair value • Yield 1001.55% (+193.80 vs market)
+                - button "Memo" [ref=e360] [cursor=pointer]:
+                  - paragraph [ref=e364]: Memo
+                - separator [ref=e369]
+                - generic [ref=e372]:
+                  - button "Fullscreen" [ref=e377] [cursor=pointer]:
+                    - img [ref=e378]
+                  - img "0" [ref=e383]
+                - paragraph [ref=e388]:
+                  - strong [ref=e389]: Piso en venta en Calle de Octavio Cuartero, cerca de Calle de Pedro Coca
+                - paragraph [ref=e394]: Albacete, ES • 124,000 €
+                - paragraph [ref=e399]: Expected return +926.4% (12m) • Priced +149.9% vs fair value • Yield 776.46%
+                - button "Memo" [ref=e402] [cursor=pointer]:
+                  - paragraph [ref=e406]: Memo
+                - separator [ref=e411]
+                - generic [ref=e414]:
+                  - button "Fullscreen" [ref=e419] [cursor=pointer]:
+                    - img [ref=e420]
+                  - img "0" [ref=e425]
+                - paragraph [ref=e430]:
+                  - strong [ref=e431]: Casa adosada en venta en Feria
+                - paragraph [ref=e436]: Albacete, ES • 378,000 €
+                - paragraph [ref=e441]: Expected return +505.8% (12m) • Priced +5.0% vs fair value • Yield 500.83% (-306.92 vs market)
+                - button "Memo" [ref=e444] [cursor=pointer]:
+                  - paragraph [ref=e448]: Memo
+                - separator [ref=e453]
+                - generic [ref=e456]:
+                  - button "Fullscreen" [ref=e461] [cursor=pointer]:
+                    - img [ref=e462]
+                  - img "0" [ref=e467]
+                - paragraph [ref=e472]:
+                  - strong [ref=e473]: Piso en venta en Centro-Rosario
+                - paragraph [ref=e478]: Albacete, ES • 370,000 €
+                - paragraph [ref=e483]: Expected return +438.3% (12m) • Priced -12.4% vs fair value • Yield 450.75% (-357.00 vs market)
+                - button "Memo" [ref=e486] [cursor=pointer]:
+                  - paragraph [ref=e490]: Memo
+                - separator [ref=e495]
+              - generic [ref=e497]:
+                - generic [ref=e500]:
+                  - button "Fullscreen" [ref=e505] [cursor=pointer]:
+                    - img [ref=e506]
+                  - img "0" [ref=e511]
+                - paragraph [ref=e516]:
+                  - strong [ref=e517]: Piso en venta en Calle de Torres Quevedo, cerca de Calle de Las Palmas de Gran Canaria
+                - paragraph [ref=e522]: Albacete, ES • 125,000 €
+                - paragraph [ref=e527]: Expected return +1047.2% (12m) • Priced +108.2% vs fair value • Yield 939.00% (+131.25 vs market)
+                - button "Memo" [ref=e530] [cursor=pointer]:
+                  - paragraph [ref=e534]: Memo
+                - separator [ref=e539]
+                - generic [ref=e542]:
+                  - button "Fullscreen" [ref=e547] [cursor=pointer]:
+                    - img [ref=e548]
+                  - img "0" [ref=e553]
+                - paragraph [ref=e558]:
+                  - strong [ref=e559]: Piso en venta en Calle Baños
+                - paragraph [ref=e564]: Albacete, ES • 206,500 €
+                - paragraph [ref=e569]: Expected return +600.2% (12m) • Priced +26.1% vs fair value • Yield 574.08% (-233.67 vs market)
+                - button "Memo" [ref=e572] [cursor=pointer]:
+                  - paragraph [ref=e576]: Memo
+                - separator [ref=e581]
+                - generic [ref=e584]:
+                  - button "Fullscreen" [ref=e589] [cursor=pointer]:
+                    - img [ref=e590]
+                  - img "0" [ref=e595]
+                - paragraph [ref=e600]:
+                  - strong [ref=e601]: Chalet en venta en Urbanización Riachuelos I
+                - paragraph [ref=e606]: Albacete, ES • 295,000 €
+                - paragraph [ref=e611]: Expected return +445.8% (12m) • Priced -5.0% vs fair value • Yield 450.75%
+                - button "Memo" [ref=e614] [cursor=pointer]:
+                  - paragraph [ref=e618]: Memo
+                - separator [ref=e623]
+                - generic [ref=e626]:
+                  - button "Fullscreen" [ref=e631] [cursor=pointer]:
+                    - img [ref=e632]
+                  - img "0" [ref=e637]
+                - paragraph [ref=e642]:
+                  - strong [ref=e643]: Chalet en venta en Albacete
+                - paragraph [ref=e648]: Albacete, ES • 250,000 €
+                - paragraph [ref=e653]: Expected return +414.6% (12m) • Priced +92.9% vs fair value • Yield 321.66% (-486.09 vs market)
+                - button "Memo" [ref=e656] [cursor=pointer]:
+                  - paragraph [ref=e660]: Memo
+                - separator [ref=e665]
+            - heading "🔎 Insights" [level=3] [ref=e671]:
+              - text: 🔎 Insights
+              - generic [ref=e672]:
+                - link "Link to heading":
+                  - /url: "#insights"
+                  - img
+            - generic [ref=e676]:
+              - generic [ref=e677]:
+                - generic [ref=e678]: 🧪 Signal Lab
+                - combobox "Selected 🧪 Signal Lab. Insights" [ref=e680]
+              - img "open" [ref=e682]
+            - generic [ref=e689]:
+              - img:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic: "0"
+                      - generic:
+                        - generic: "500"
+                      - generic:
+                        - generic: "1000"
+                    - generic:
+                      - generic:
+                        - generic: −1
+                      - generic:
+                        - generic: −0.5
+                      - generic:
+                        - generic: "0"
+                      - generic:
+                        - generic: "0.5"
+                      - generic:
+                        - generic: "1"
+                      - generic:
+                        - generic: "1.5"
+              - img:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic: "0.4"
+                      - generic:
+                        - generic: "0.5"
+                      - generic:
+                        - generic: "0.6"
+                      - generic:
+                        - generic: "0.7"
+                      - generic:
+                        - generic: "0.8"
+                    - generic:
+                      - generic:
+                        - generic: Deal Score
+                  - generic:
+                    - generic: Yield %
+                  - generic:
+                    - generic: Value Delta %
+              - toolbar [ref=e703]:
+                - button "Download plot as a PNG" [ref=e705] [cursor=pointer]:
+                  - img [ref=e706]
+                - generic [ref=e708]:
+                  - button "Zoom" [ref=e709] [cursor=pointer]:
+                    - img [ref=e710]
+                  - button "Pan" [ref=e712] [cursor=pointer]:
+                    - img [ref=e713]
+                  - button "Lasso Select" [ref=e715] [cursor=pointer]:
+                    - img [ref=e716]
+                - generic [ref=e718]:
+                  - button "Zoom in" [ref=e719] [cursor=pointer]:
+                    - img [ref=e720]
+                  - button "Zoom out" [ref=e722] [cursor=pointer]:
+                    - img [ref=e723]
+                  - button "Autoscale" [ref=e725] [cursor=pointer]:
+                    - img [ref=e726]
+                  - button "Reset axes" [ref=e728] [cursor=pointer]:
+                    - img [ref=e729]
+                - button "Fullscreen" [ref=e732] [cursor=pointer]:
+                  - img [ref=e733]
+              - img
+            - alert [ref=e737]:
+              - paragraph [ref=e742]: Select points to drill down.
+          - generic [ref=e744]:
+            - heading "🗺 Atlas" [level=3] [ref=e750]:
+              - text: 🗺 Atlas
+              - generic [ref=e751]:
+                - link "Link to heading":
+                  - /url: "#atlas"
+                  - img
+            - paragraph [ref=e756]: 32 listings on map
+            - generic [ref=e759]:
+              - button "Fullscreen" [ref=e764] [cursor=pointer]:
+                - img [ref=e765]
+              - generic [ref=e770]:
+                - generic [ref=e772]:
+                  - region "Map" [ref=e773]
+                  - button "Toggle attribution" [ref=e775] [cursor=pointer]
+                - generic [ref=e778]:
+                  - button "Zoom In" [ref=e779] [cursor=pointer]
+                  - button "Zoom Out" [ref=e781] [cursor=pointer]
+  - img [ref=e783]

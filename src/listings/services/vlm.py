@@ -1,24 +1,31 @@
 """
 VLM Service for image description.
 """
+import base64
 import io
 import os
 import re
+import time
 from typing import Dict, List, Optional
 
 import structlog
-
 from PIL import Image
+from litellm import completion
 
 from src.platform.settings import ImageSelectorConfig, VLMConfig
 from src.listings.services.image_selection import ImageSelector
+from src.platform.utils.llm import build_completion_kwargs
 
 logger = structlog.get_logger()
 
+
+class VisionBackendUnsupportedError(RuntimeError):
+    pass
+
+
 class VLMImageDescriber:
     """
-    Uses Ollama's vision model to extract structured descriptions from property images.
-    Descriptions are cached in the database to avoid re-processing.
+    Uses a configurable vision backend to extract structured descriptions from property images.
     """
     def __init__(
         self,
@@ -31,7 +38,11 @@ class VLMImageDescriber:
             config = VLMConfig()
 
         self.config = config
+        self.provider = config.provider
         self.model = model or config.model
+        self.api_base = config.api_base
+        self.api_key_env = config.api_key_env
+        self.supports_vision = config.supports_vision
         self._available = None
         if image_selector is None:
             image_selector = ImageSelector(config=image_selector_config)
@@ -41,8 +52,20 @@ class VLMImageDescriber:
         self.timeout_seconds = config.timeout_seconds
 
     def _check_availability(self) -> bool:
-        """Check if Ollama and a vision model are available."""
+        """Check if the configured vision backend is available."""
         if self._available is not None:
+            return self._available
+
+        if self.provider != "ollama":
+            self._available = bool(self.supports_vision and self.model and self.api_base)
+            if not self._available:
+                logger.info(
+                    "vlm_backend_unavailable",
+                    provider=self.provider,
+                    model=self.model,
+                    api_base=self.api_base,
+                    supports_vision=self.supports_vision,
+                )
             return self._available
 
         try:
@@ -100,6 +123,8 @@ class VLMImageDescriber:
             stitched_img = self._stitch_images([c.image for c in selection.selected])
             return self._run_vlm_on_tile(stitched_img)
 
+        except VisionBackendUnsupportedError:
+            raise
         except Exception as e:
             logger.error("vlm_describe_failed", error=str(e))
             return ""
@@ -198,10 +223,6 @@ class VLMImageDescriber:
         return stitched_img
 
     def _run_vlm_on_tile(self, stitched_img: Image.Image) -> str:
-        import base64
-        import ollama
-        import time
-
         byte_arr = io.BytesIO()
         stitched_img.save(byte_arr, format="JPEG", quality=85)
         standardized_b64 = base64.b64encode(byte_arr.getvalue()).decode()
@@ -240,6 +261,14 @@ visual_sentiment must be a float in [-1.0, 1.0]:
 +1.0 = exceptional quality/renovation
 """
 
+        if self.provider == "ollama":
+            return self._run_ollama_vlm_on_tile(standardized_b64, prompt)
+
+        return self._run_openai_compatible_vlm_on_tile(standardized_b64, prompt)
+
+    def _run_ollama_vlm_on_tile(self, standardized_b64: str, prompt: str) -> str:
+        import ollama
+
         retries = 3
         for attempt in range(retries):
             try:
@@ -260,6 +289,63 @@ visual_sentiment must be a float in [-1.0, 1.0]:
                     raise
 
         return ""
+
+    def _run_openai_compatible_vlm_on_tile(self, standardized_b64: str, prompt: str) -> str:
+        data_url = f"data:image/jpeg;base64,{standardized_b64}"
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }
+        ]
+
+        try:
+            response = completion(
+                **build_completion_kwargs(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=900,
+                    timeout_seconds=self.timeout_seconds,
+                    api_base=self.api_base,
+                    api_key_env=self.api_key_env,
+                    response_format={"type": "json_object"},
+                )
+            )
+        except Exception as exc:
+            message = str(exc)
+            logger.error(
+                "vlm_backend_request_failed",
+                provider=self.provider,
+                model=self.model,
+                api_base=self.api_base,
+                error=message,
+            )
+            lowered = message.lower()
+            if "vision" in lowered or "image" in lowered or "multimodal" in lowered:
+                raise VisionBackendUnsupportedError(message) from exc
+            raise
+
+        response_data = response if isinstance(response, dict) else getattr(response, "model_dump", lambda: {})()
+        choices = response_data.get("choices", []) if isinstance(response_data, dict) else []
+        if not choices and hasattr(response, "choices"):
+            choices = response.choices
+        if not choices:
+            raise VisionBackendUnsupportedError("vlm_missing_choices")
+
+        choice = choices[0]
+        message = choice.get("message", {}) if isinstance(choice, dict) else getattr(choice, "message", {}) or {}
+        content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "") or ""
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") in {"text", "output_text"}:
+                    text_parts.append(str(item.get("text", "")))
+            content = "\n".join(part for part in text_parts if part)
+        return str(content or "")
 
     def _safe_id(self, value: str) -> str:
         cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", value)

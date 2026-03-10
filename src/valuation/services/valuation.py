@@ -214,6 +214,43 @@ class ValuationService:
         except (TypeError, ValueError):
             return None
 
+    def _apply_interval_policy(
+        self,
+        *,
+        bucket_key: str,
+        pred_q10: float,
+        pred_q50: float,
+        pred_q90: float,
+        horizon_months: int,
+    ) -> Tuple[float, float, float, Dict[str, Any], Dict[str, float]]:
+        decision = self.calibrators.interval_policy(bucket_key, horizon_months=horizon_months)
+        if decision["mode"] == "calibrated":
+            cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
+                bucket_key,
+                pred_q10,
+                pred_q50,
+                pred_q90,
+                horizon_months=horizon_months,
+            )
+        else:
+            cal_q10, cal_q50, cal_q90 = self.calibrators.bootstrap_interval(
+                bucket_key,
+                pred_q10,
+                pred_q50,
+                pred_q90,
+                horizon_months=horizon_months,
+                min_uncertainty_pct=self.config.bootstrap_min_uncertainty_pct,
+            )
+
+        diagnostics = {
+            "coverage_rate": float(decision["coverage_rate"]),
+            "coverage_floor": float(decision["coverage_floor"]),
+            "n_samples": float(decision["n_samples"]),
+            "min_samples": float(decision["min_samples"]),
+            "horizon_months": float(decision["horizon_months"]),
+        }
+        return cal_q10, cal_q50, cal_q90, decision, diagnostics
+
     def _db_to_canonical(self, db_item: DBListing) -> CanonicalListing:
         loc = None
         if db_item.city or db_item.lat or db_item.lon:
@@ -530,45 +567,41 @@ class ValuationService:
             if evidence.model_used == "fusion":
                 base_q10 = fair_value * (1 - uncertainty)
                 base_q90 = fair_value * (1 + uncertainty)
-                if self.calibrators.is_calibrated(bucket_key, 0):
-                    if tracer:
-                        tracer.log("calibration_spot_before", {
-                            "q10": base_q10,
-                            "q50": fair_value,
-                            "q90": base_q90
-                        })
+                if tracer:
+                    tracer.log("calibration_spot_before", {
+                        "q10": base_q10,
+                        "q50": fair_value,
+                        "q90": base_q90
+                    })
 
-                    cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
-                        bucket_key,
-                        base_q10,
-                        fair_value,
-                        base_q90,
-                        horizon_months=0
-                    )
-
-                    if tracer:
-                        tracer.log("calibration_spot_after", {
-                            "q10": cal_q10,
-                            "q50": cal_q50,
-                            "q90": cal_q90
-                        })
-
-                    # Recalculate uncertainty from calibrated interval
-                    if cal_q50 > 0:
-                        uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
-                    evidence.calibration_status = "calibrated"
-                else:
-                    cal_q10, cal_q50, cal_q90 = self.calibrators.bootstrap_interval(
-                        bucket_key,
-                        base_q10,
-                        fair_value,
-                        base_q90,
+                cal_q10, cal_q50, cal_q90, calibration_decision, calibration_diagnostics = (
+                    self._apply_interval_policy(
+                        bucket_key=bucket_key,
+                        pred_q10=base_q10,
+                        pred_q50=fair_value,
+                        pred_q90=base_q90,
                         horizon_months=0,
-                        min_uncertainty_pct=self.config.bootstrap_min_uncertainty_pct,
                     )
-                    if cal_q50 > 0:
-                        uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
-                    evidence.calibration_status = "bootstrap"
+                )
+
+                if tracer:
+                    tracer.log("calibration_spot_after", {
+                        "q10": cal_q10,
+                        "q50": cal_q50,
+                        "q90": cal_q90,
+                        "mode": calibration_decision["mode"],
+                        "reason": calibration_decision["reason"],
+                    })
+
+                if cal_q50 > 0:
+                    uncertainty = (cal_q90 - cal_q10) / (2 * cal_q50)
+                evidence.calibration_status = str(calibration_decision["mode"])
+                evidence.calibration_fallback_reason = (
+                    None
+                    if calibration_decision["mode"] == "calibrated"
+                    else str(calibration_decision["reason"])
+                )
+                evidence.calibration_diagnostics = calibration_diagnostics
 
             if eri_disagree:
                 uncertainty *= self.config.eri_uncertainty_multiplier
@@ -1169,43 +1202,21 @@ class ValuationService:
         for proj in raw_projections:
             horizon = proj.months_future
 
-            # Calibrate if we have enough data
-            if self.calibrators.is_calibrated(bucket_key, horizon):
-                cal_q10, cal_q50, cal_q90 = self.calibrators.calibrate_interval(
-                    bucket_key,
-                    proj.confidence_interval_low,
-                    proj.predicted_value,
-                    proj.confidence_interval_high,
-                    horizon_months=horizon
-                )
+            cal_q10, cal_q50, cal_q90, calibration_decision, _ = self._apply_interval_policy(
+                bucket_key=bucket_key,
+                pred_q10=proj.confidence_interval_low,
+                pred_q50=proj.predicted_value,
+                pred_q90=proj.confidence_interval_high,
+                horizon_months=horizon,
+            )
 
-                # Update with calibrated values
-                proj.confidence_interval_low = cal_q10
-                proj.predicted_value = cal_q50
-                proj.confidence_interval_high = cal_q90
-
-                # Recalculate confidence
-                if cal_q50 > 0:
-                    spread = (cal_q90 - cal_q10) / cal_q50
-                    proj.confidence_score = max(0.1, 1.0 - spread)
-
-                proj.scenario_name = f"{proj.scenario_name}_calibrated"
-            else:
-                cal_q10, cal_q50, cal_q90 = self.calibrators.bootstrap_interval(
-                    bucket_key,
-                    proj.confidence_interval_low,
-                    proj.predicted_value,
-                    proj.confidence_interval_high,
-                    horizon_months=horizon,
-                    min_uncertainty_pct=self.config.bootstrap_min_uncertainty_pct,
-                )
-                proj.confidence_interval_low = cal_q10
-                proj.predicted_value = cal_q50
-                proj.confidence_interval_high = cal_q90
-                if cal_q50 > 0:
-                    spread = (cal_q90 - cal_q10) / cal_q50
-                    proj.confidence_score = max(0.1, 1.0 - spread)
-                proj.scenario_name = f"{proj.scenario_name}_bootstrap"
+            proj.confidence_interval_low = cal_q10
+            proj.predicted_value = cal_q50
+            proj.confidence_interval_high = cal_q90
+            if cal_q50 > 0:
+                spread = (cal_q90 - cal_q10) / cal_q50
+                proj.confidence_score = max(0.1, 1.0 - spread)
+            proj.scenario_name = f"{proj.scenario_name}_{calibration_decision['mode']}"
 
             projections.append(proj)
 

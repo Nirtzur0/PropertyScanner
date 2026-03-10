@@ -1,0 +1,98 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - paragraph [ref=e8]: Local-first analyst platform
+      - heading "Property Scanner" [level=1] [ref=e9]
+    - navigation "Primary" [ref=e10]:
+      - link "Workbench" [ref=e11] [cursor=pointer]:
+        - /url: /workbench
+      - link "Watchlists" [ref=e12] [cursor=pointer]:
+        - /url: /watchlists
+      - link "Pipeline" [ref=e13] [cursor=pointer]:
+        - /url: /pipeline
+      - link "Command Center" [ref=e14] [cursor=pointer]:
+        - /url: /command-center
+      - link "Memos" [ref=e15] [cursor=pointer]:
+        - /url: /memos
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: API
+        - strong [ref=e19]: ok
+      - generic [ref=e20]:
+        - generic [ref=e21]: Jobs
+        - strong [ref=e22]: "0"
+        - paragraph [ref=e23]: 0 failed
+      - generic [ref=e24]:
+        - generic [ref=e25]: Pipeline
+        - strong [ref=e26]: Refresh
+  - generic [ref=e27]:
+    - generic [ref=e28]:
+      - generic [ref=e29]: Command Center
+      - heading "Advisory run history" [level=2] [ref=e30]
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - strong [ref=e33]: Find me deals in Madrid
+          - paragraph [ref=e34]: success
+        - generic [ref=e35]:
+          - strong [ref=e36]: Find me deals in Madrid
+          - paragraph [ref=e37]: success
+        - generic [ref=e38]:
+          - strong [ref=e39]: Find me deals in Madrid
+          - paragraph [ref=e40]: success
+        - generic [ref=e41]:
+          - strong [ref=e42]: Find me deals in Madrid
+          - paragraph [ref=e43]: success
+        - generic [ref=e44]:
+          - strong [ref=e45]: Find me deals in Madrid
+          - paragraph [ref=e46]: success
+        - generic [ref=e47]:
+          - strong [ref=e48]: Find me deals in Madrid
+          - paragraph [ref=e49]: success
+        - generic [ref=e50]:
+          - strong [ref=e51]: Find me deals in Madrid
+          - paragraph [ref=e52]: success
+        - generic [ref=e53]:
+          - strong [ref=e54]: Find me deals in Madrid
+          - paragraph [ref=e55]: success
+        - generic [ref=e56]:
+          - strong [ref=e57]: Find me deals in Madrid
+          - paragraph [ref=e58]: success
+        - generic [ref=e59]:
+          - strong [ref=e60]: Find me deals in Madrid
+          - paragraph [ref=e61]: success
+        - generic [ref=e62]:
+          - strong [ref=e63]: Find me deals in Madrid
+          - paragraph [ref=e64]: success
+        - generic [ref=e65]:
+          - strong [ref=e66]: Find me deals in Madrid
+          - paragraph [ref=e67]: success
+        - generic [ref=e68]:
+          - strong [ref=e69]: Find me deals in Madrid
+          - paragraph [ref=e70]: success
+        - generic [ref=e71]:
+          - strong [ref=e72]: Find me deals in Madrid
+          - paragraph [ref=e73]: success
+        - generic [ref=e74]:
+          - strong [ref=e75]: Find me deals in Madrid
+          - paragraph [ref=e76]: success
+        - generic [ref=e77]:
+          - strong [ref=e78]: Find me deals in Madrid
+          - paragraph [ref=e79]: success
+        - generic [ref=e80]:
+          - strong [ref=e81]: Find me deals in Madrid
+          - paragraph [ref=e82]: success
+        - generic [ref=e83]:
+          - strong [ref=e84]: Find me deals in Madrid
+          - paragraph [ref=e85]: success
+        - generic [ref=e86]:
+          - strong [ref=e87]: Find me deals in Madrid
+          - paragraph [ref=e88]: success
+        - generic [ref=e89]:
+          - strong [ref=e90]: Find me deals in Madrid
+          - paragraph [ref=e91]: success
+    - generic [ref=e92]:
+      - generic [ref=e93]: Job handoff
+      - heading "Recent execution" [level=2] [ref=e94]
+      - generic [ref=e96]:
+        - strong [ref=e97]: preflight
+        - paragraph [ref=e98]: succeeded

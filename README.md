@@ -1,54 +1,64 @@
 # Property Scanner (The Scout V2)
 
-Local-first, agentic property intelligence: crawl listings, enrich them with market + multimodal signals, and produce valuations you can explore in a Streamlit dashboard.
+<p align="left">
+  <img src="docs/assets/property-scanner-icon-256.png" alt="Property Scanner icon" width="96" />
+</p>
+
+Local-first property intelligence: crawl listings, enrich them with market + multimodal signals, and produce valuations you can explore in the React workbench served by the local FastAPI app.
 
 For: building a repeatable pipeline for deal discovery, comp retrieval/indexing, training, and valuation workflows on your own machine (SQLite by default).
 
-Quick Links: [Docs](./docs/00_docs_index.md) | [Dashboard](./src/interfaces/dashboard/app.py) | [CLI](./src/interfaces/cli.py) | [Config](./config/app.yaml) | [Crawler status](./docs/crawler_status.md)
+Quick Links: [Docs](./docs/INDEX.md) | [CLI](./src/interfaces/cli.py) | [Config](./config/app.yaml) | [Crawler status](./docs/crawler_status.md)
 
 ---
 
 ## What It Does
 
 - Crawls listings (multi-source) and normalizes them into a canonical schema.
-- Runs enrichment and optional LLM/VLM feature fusion (via Ollama + LiteLLM fallbacks).
-- Builds market data artifacts and a comp retriever index (LanceDB).
-- Trains a fusion model and backfills valuations.
-- Exposes everything via the Streamlit dashboard (`./src/interfaces/dashboard/app.py`), CLI (`./src/interfaces/cli.py`), and Python API (`./src/interfaces/api/pipeline.py`).
+- Runs enrichment and optional LLM/VLM feature fusion (ChatMock/OpenAI-compatible by default; Ollama remains opt-in compatibility mode).
+- Builds market data artifacts and a comp retriever index (LanceDB remains available, but is no longer the canonical production retrieval default).
+- Writes analytical artifacts under `data/analytics/` as Parquet + JSON metadata for benchmark and quality snapshots.
+- Keeps comparable-baseline valuations as the shipped prediction path today, while fusion training and benchmarking are explicit readiness-gated workflows that fail fast when sold-label data is insufficient.
+- Exposes the product through the React workbench served by FastAPI, the CLI (`./src/interfaces/cli.py`), and the Python pipeline API (`./src/interfaces/api/pipeline.py`).
 
 ---
 
 ## Quickstart
 
-### 1) Run the dashboard (local)
+### 1) Run the app (local)
 
 Prereqs:
 - Python 3.10+
 - Playwright browsers (needed for `html_browser` sources)
+- Node 22+ if you want to build or run the new `scraper/` Crawlee + Playwright sidecar
+- ChatMock or another OpenAI-compatible endpoint running at `http://127.0.0.1:8000/v1` if you want default LLM/VLM enrichment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 
-pip install -r requirements.txt
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.lock
 python3 -m playwright install
 
-python3 -m src.interfaces.cli dashboard
+python3 -m src.interfaces.cli api --host 127.0.0.1 --port 8001
 ```
 
-Open Streamlit at: `http://localhost:8501`
+Open the React workbench at: `http://127.0.0.1:8001/workbench`
 
 Notes:
-- `dashboard` runs a `preflight` refresh first. To skip: `python3 -m src.interfaces.cli dashboard --skip-preflight`
-- Convenience script: `./run_dashboard.sh` (kills port `8501` then launches the dashboard)
+- Legacy Streamlit UI remains available only as a deprecated operator surface: `python3 -m src.interfaces.cli legacy-dashboard --skip-preflight`
+- The JSON API now lives under `/api/v1/...`; browser routes remain clean SPA paths such as `/workbench`, `/watchlists`, and `/listings/<id>`.
+- `python3 -m src.interfaces.cli audit-serving-data` now exports a source-quality snapshot to `data/analytics/quality/`.
+- `python3 -m src.ml.training.train` and `python3 -m src.ml.training.benchmark` now fail fast with explicit readiness diagnostics; sale runs remain blocked until closed-sale label readiness is met.
+- Set `CHATMOCK_API_KEY` only if your endpoint requires authentication; local ChatMock setups often do not.
 
 <details>
-<summary>Install with Poetry (optional)</summary>
+<summary>Dependency lock policy (maintainers)</summary>
 
 ```bash
-poetry install --no-root
-poetry run python -m playwright install
-poetry run python -m src.interfaces.cli dashboard
+python3 -m pip install pip-tools
+python3 -m piptools compile --resolver=backtracking --output-file requirements.lock requirements.txt
 ```
 
 </details>
@@ -76,6 +86,7 @@ python3 -m src.interfaces.cli -h
 Common commands:
 
 ```bash
+python3 -m src.interfaces.cli preflight --help
 python3 -m src.interfaces.cli preflight
 python3 -m src.interfaces.cli unified-crawl --source rightmove_uk --search-url "<SEARCH_URL>" --max-pages 1
 python3 -m src.interfaces.cli market-data
@@ -84,6 +95,12 @@ python3 -m src.interfaces.cli train --epochs 50
 python3 -m src.interfaces.cli backfill --listing-type sale --max-age-days 7
 python3 -m src.interfaces.cli calibrators --input "<samples.jsonl>"
 python3 -m src.interfaces.cli migrate
+```
+
+For full Prefect flow-level flags, use:
+
+```bash
+python3 -m src.interfaces.cli prefect preflight --help
 ```
 
 Run the cognitive agent:
@@ -97,11 +114,11 @@ python3 -m src.interfaces.cli agent "Find investment opportunities in Barcelona"
 
 ## Configuration
 
-Config is Hydra-composed from `./config/app.yaml` and the files it includes. Most edits happen in:
+Config is still Hydra-composed from `./config/app.yaml` for legacy modules, while the FastAPI/application runtime is driven by typed runtime settings in `config/runtime.yaml`. Most edits happen in:
 
 - `./config/sources.yaml` (enabled sources + templates + rate limits)
 - `./config/valuation.yaml` (retriever + valuation policy)
-- `./config/llm.yaml` and `./config/vlm.yaml` (LLM/VLM defaults)
+- `./config/llm.yaml`, `./config/description_analyst.yaml`, and `./config/vlm.yaml` (ChatMock/OpenAI-compatible defaults)
 - `./config/paths.yaml` (where DB/models/index live)
 
 Environment variable overrides (from `./config/paths.yaml`):
@@ -118,6 +135,7 @@ Environment variable overrides (from `./config/paths.yaml`):
 
 Other runtime knobs:
 - `PROPERTY_SCANNER_TEXT_DEVICE` (used by embedding/encoder code paths)
+- `CHATMOCK_API_KEY` (optional auth for the default OpenAI-compatible backend)
 
 ---
 
@@ -129,8 +147,10 @@ By default the system of record is SQLite plus a few on-disk artifacts:
 - `./data/unified_seen_urls.sqlite3` (URL de-dupe for unified crawl)
 - `./data/vector_index.lancedb` and `./data/vector_metadata.json` (comp retriever index + metadata)
 - `./models/` (model artifacts, e.g. `fusion_model.pt`, `calibration_registry.json`)
+- `./data/analytics/` (Parquet + JSON metadata exports for benchmark datasets and source-quality audits)
+- `./data/crawl_plans/`, `./data/crawl_results/`, `./data/crawl_snapshots/` (Python-to-sidecar scrape contract artifacts)
 
-Deep dive: `./docs/02_data_pipeline.md`
+Deep dive: `./docs/explanation/data_pipeline.md`
 
 ---
 
@@ -192,6 +212,23 @@ python3 -m src.interfaces.cli prefect deploy
 prefect agent start -q default
 ```
 
+### Scraper sidecar (optional, new canonical browser-crawl direction)
+
+The browser-heavy crawl path is moving toward the Node/TypeScript sidecar in `./scraper/`:
+
+```bash
+cd scraper
+npm install
+npm run build
+
+python3 -m src.listings.scraping.sidecar \
+  --source-id pisos \
+  --start-url "https://example.com/search" \
+  --write-only
+```
+
+That command writes a typed crawl plan into `data/crawl_plans/`; when run without `--write-only`, it invokes the sidecar and writes NDJSON fetch results plus raw HTML snapshots.
+
 ---
 
 ## Project Layout
@@ -209,7 +246,7 @@ prefect agent start -q default
 
 ## Architecture (deep dive)
 
-See `./docs/01_system_overview.md` for the full system map and data domains.
+See `./docs/explanation/system_overview.md` for the full system map and data domains.
 
 <details>
 <summary>Mermaid system map</summary>

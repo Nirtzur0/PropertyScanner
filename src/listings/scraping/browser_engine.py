@@ -149,6 +149,7 @@ class BrowserEngineConfig:
 class BrowserFetchResult:
     url: str
     html: Optional[str]
+    error: Optional[str] = None
     network_log: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -282,15 +283,33 @@ class BrowserEngine:
                 if preflight:
                     allowed = await preflight(url)
                     if not allowed:
-                        return BrowserFetchResult(url=url, html=None)
-                html = await self._navigate_and_extract(tab, url, timeout_s=timeout_s)
+                        return BrowserFetchResult(url=url, html=None, error="blocked:preflight")
+                try:
+                    html = await self._navigate_and_extract(tab, url, timeout_s=timeout_s)
+                except Exception as exc:
+                    error_code = f"browser_task_failed:{type(exc).__name__}:{exc}"
+                    logger.warning("browser_task_failed", url=url, error=error_code)
+                    return BrowserFetchResult(url=url, html=None, error=error_code)
                 return BrowserFetchResult(url=url, html=html)
 
+            setattr(task, "_task_url", url)
             return task
 
         tasks = [build_task(url) for url in urls]
         results = await self._run_concurrent(tasks, max_concurrency=max_concurrency)
-        return [result for result in results if isinstance(result, BrowserFetchResult)]
+        normalized: list[BrowserFetchResult] = []
+        for url, result in zip(urls, results):
+            if isinstance(result, BrowserFetchResult):
+                normalized.append(result)
+            else:
+                normalized.append(
+                    BrowserFetchResult(
+                        url=url,
+                        html=None,
+                        error="browser_task_failed:missing_result",
+                    )
+                )
+        return normalized
 
     async def _fetch_once(
         self, url: str, *, timeout_s: float, state: dict[str, Any]
@@ -378,8 +397,10 @@ class BrowserEngine:
                 try:
                     results[idx] = await task(tab)
                 except Exception as exc:
-                    results[idx] = None
-                    logger.warning("browser_task_failed", error=str(exc))
+                    task_url = getattr(task, "_task_url", "unknown")
+                    error_code = f"browser_task_failed:{type(exc).__name__}:{exc}"
+                    results[idx] = BrowserFetchResult(url=task_url, html=None, error=error_code)
+                    logger.warning("browser_task_failed", url=task_url, error=error_code)
             finally:
                 if tab and tab_state:
                     await self._cleanup_tab(tab, tab_state)

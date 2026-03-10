@@ -159,7 +159,8 @@ class EvidencePack(BaseModel):
     hedonic_fallback_reason: Optional[str] = None
     
     # Calibration status
-    calibration_status: str = "uncalibrated"  # "calibrated", "uncalibrated", "partial"
+    calibration_status: str = "uncalibrated"  # "calibrated", "bootstrap", "uncalibrated", "partial"
+    calibration_fallback_reason: Optional[str] = None
     calibration_diagnostics: Optional[Dict[str, float]] = None
 
     # External sanity checks (ERI, etc.)

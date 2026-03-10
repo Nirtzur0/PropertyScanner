@@ -3,10 +3,11 @@ import random
 import pandas as pd
 from typing import List, Tuple, Dict, Set, Any, Optional
 
+from src.application.container import get_container
+from src.application.serving import evaluate_serving_eligibility
 from src.interfaces.api.pipeline import PipelineAPI
 from src.listings.services.image_selection import ImageSelector
 from src.platform.utils.config import load_app_config_safe
-from src.platform.pipeline.state import PipelineStateService
 from src.platform.domain.models import DBListing
 from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.platform.domain.schema import DealAnalysis, ValuationProjection
@@ -16,10 +17,10 @@ from src.platform.utils.serialize import model_to_dict
 @st.cache_resource
 def get_services():
     """Initializes and caches core services."""
-    api = PipelineAPI()
+    container = get_container()
     app_config = load_app_config_safe()
     selector = ImageSelector(config=app_config.image_selector)
-    return api.storage, api.valuation, api.retriever, selector
+    return container.storage, container.valuation, None, selector
 
 @st.cache_data(ttl=600)
 def load_filter_options(_storage) -> Tuple[List[str], List[str], List[str], Dict[str, List[str]]]:
@@ -45,9 +46,19 @@ def load_filter_options(_storage) -> Tuple[List[str], List[str], List[str], Dict
 def load_pipeline_status():
     """Loads the current status of the data pipeline."""
     try:
-        return PipelineStateService().snapshot().to_dict()
+        return PipelineAPI().pipeline_status()
     except Exception as e:
-        return {"error": str(e), "needs_refresh": False, "reasons": ["status_unavailable"]}
+        return {
+            "error": str(e),
+            "needs_refresh": False,
+            "reasons": ["status_unavailable"],
+            "source_support": {
+                "doc_path": "docs/crawler_status.md",
+                "summary": {"supported": 0, "blocked": 0, "fallback": 0},
+                "sources": [],
+            },
+            "assumption_badges": [],
+        }
 
 @st.cache_data(ttl=900)
 def rank_images(image_urls: List[str], max_images: int = 6, _image_selector: ImageSelector = None) -> List[str]:
@@ -101,6 +112,12 @@ def fetch_listings_dataframe(
             query = query.filter(DBListing.property_type.in_(selected_types))
         
         listings_db = query.limit(max_listings).all()
+        source_summary = get_container().sources.audit_sources(persist=False).model_dump(mode="json")
+        source_status_map = {
+            str(item.get("source_id")): str(item.get("status") or "experimental")
+            for item in source_summary.get("sources", [])
+            if item.get("source_id")
+        }
 
         if not listings_db:
              return pd.DataFrame()
@@ -118,8 +135,14 @@ def fetch_listings_dataframe(
         # For now, we will just process. Use st.spinner in app calls.
         
         for db_item in listings_db:
+            source_status = source_status_map.get(str(db_item.source_id), "experimental")
+            serving = evaluate_serving_eligibility(db_item, source_status=source_status)
+            if not serving.eligible:
+                continue
             listing = db_listing_to_canonical(db_item)
-            cached_val = persister.get_latest_valuation(db_item.id) if persister else None
+            # The dashboard should remain usable with the latest persisted valuation even when
+            # preflight is overdue; freshness is surfaced separately in pipeline status.
+            cached_val = persister.get_latest_valuation(db_item.id, max_age_days=None) if persister else None
             comps = []
             ext_signals = {}
             analysis = None
@@ -157,17 +180,20 @@ def fetch_listings_dataframe(
             else:
                 # Live valuation fallback
                 try:
-                    comps = retriever_service.retrieve_comps(listing, k=3)
-                    analysis = valuation_service.evaluate_deal(listing, comps=comps)
+                    if hasattr(valuation_service, "evaluate_listing"):
+                        analysis = valuation_service.evaluate_listing(listing, persist=False)
+                    else:
+                        comps = retriever_service.retrieve_comps(listing, k=3) if retriever_service is not None else []
+                        analysis = valuation_service.evaluate_deal(listing, comps=comps)
                     if persister:
-                         try:
-                             persister.save_valuation(db_item.id, analysis)
-                         except Exception:
-                             pass
+                        try:
+                            persister.save_valuation(db_item.id, analysis)
+                        except Exception:
+                            pass
                     if analysis.evidence and analysis.evidence.external_signals:
                         ext_signals = analysis.evidence.external_signals
                 except Exception:
-                    continue # Skip failed valuations
+                    continue  # Skip failed valuations
 
             if not analysis:
                 continue

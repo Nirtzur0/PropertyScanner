@@ -36,6 +36,32 @@ class CalibrationDiagnostics:
     upper_avg_error: float
 
 
+@dataclass
+class IntervalPolicyDecision:
+    """Deterministic interval-selection policy for one segment and horizon."""
+
+    mode: str
+    reason: str
+    n_samples: int
+    min_samples: int
+    coverage_rate: float
+    coverage_floor: float
+    bucket_key: str
+    horizon_months: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "reason": self.reason,
+            "n_samples": int(self.n_samples),
+            "min_samples": int(self.min_samples),
+            "coverage_rate": round(float(self.coverage_rate), 4),
+            "coverage_floor": round(float(self.coverage_floor), 4),
+            "bucket_key": self.bucket_key,
+            "horizon_months": int(self.horizon_months),
+        }
+
+
 class ConformalCalibrator:
     """
     Adaptive conformal prediction for a single horizon.
@@ -385,6 +411,17 @@ class StratifiedCalibratorRegistry:
         tier = self._price_tier(price)
         return f"{region}|{ptype}|{tier}"
 
+    @staticmethod
+    def _parse_bucket_key(key: str) -> Tuple[str, str, str]:
+        parts = key.split("|", 2)
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+        if len(parts) == 2:
+            return parts[0], parts[1], "unknown"
+        if len(parts) == 1 and parts[0]:
+            return parts[0], "unknown", "unknown"
+        return "unknown", "unknown", "unknown"
+
     def _get_registry(self, key: str) -> HorizonCalibratorRegistry:
         if key not in self._registries:
             self._registries[key] = HorizonCalibratorRegistry(
@@ -420,6 +457,58 @@ class StratifiedCalibratorRegistry:
     def is_calibrated(self, key: str, horizon_months: int = 0, min_samples: int = 20) -> bool:
         registry = self._get_registry(key)
         return registry.is_calibrated(horizon_months=horizon_months, min_samples=min_samples)
+
+    def interval_policy(
+        self,
+        key: str,
+        horizon_months: int,
+        *,
+        min_samples: int = 20,
+        coverage_floor: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        target_coverage = float(1 - self.alpha)
+        if coverage_floor is None:
+            coverage_floor = max(0.0, target_coverage - 0.05)
+        coverage_floor = float(max(0.0, min(1.0, coverage_floor)))
+
+        if key not in self._registries:
+            return IntervalPolicyDecision(
+                mode="bootstrap",
+                reason="unseen_segment",
+                n_samples=0,
+                min_samples=int(min_samples),
+                coverage_rate=0.0,
+                coverage_floor=coverage_floor,
+                bucket_key=key,
+                horizon_months=horizon_months,
+            ).to_dict()
+
+        registry = self._registries[key]
+        calibrator = registry.get_calibrator(horizon_months)
+        diagnostics = calibrator.get_diagnostics()
+        n_samples = int(diagnostics.n_samples)
+        coverage_rate = float(diagnostics.coverage_rate)
+
+        if n_samples < int(min_samples):
+            mode = "bootstrap"
+            reason = "insufficient_samples"
+        elif coverage_rate < coverage_floor:
+            mode = "bootstrap"
+            reason = "coverage_below_floor"
+        else:
+            mode = "calibrated"
+            reason = "coverage_ok"
+
+        return IntervalPolicyDecision(
+            mode=mode,
+            reason=reason,
+            n_samples=n_samples,
+            min_samples=int(min_samples),
+            coverage_rate=coverage_rate,
+            coverage_floor=coverage_floor,
+            bucket_key=key,
+            horizon_months=horizon_months,
+        ).to_dict()
 
     def bootstrap_interval(
         self,
@@ -487,6 +576,74 @@ class StratifiedCalibratorRegistry:
         with open(path, "r") as f:
             payload = json.load(f)
         return cls.from_dict(payload)
+
+    def segmented_coverage_report(
+        self,
+        *,
+        min_samples: int = 20,
+        coverage_floor: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        target_coverage = float(1 - self.alpha)
+        if coverage_floor is None:
+            coverage_floor = max(0.0, target_coverage - 0.05)
+        coverage_floor = float(max(0.0, min(1.0, coverage_floor)))
+
+        segments: List[Dict[str, Any]] = []
+
+        for key in sorted(self._registries.keys()):
+            registry = self._registries[key]
+            region_id, listing_type, price_band = self._parse_bucket_key(key)
+            for horizon in sorted(registry._calibrators.keys()):
+                calibrator = registry._calibrators[horizon]
+                diagnostics = calibrator.get_diagnostics()
+                meets_samples = int(diagnostics.n_samples) >= int(min_samples)
+                meets_coverage = bool(
+                    meets_samples and float(diagnostics.coverage_rate) >= coverage_floor
+                )
+                status = (
+                    "pass"
+                    if meets_coverage
+                    else ("insufficient_samples" if not meets_samples else "fail")
+                )
+
+                segments.append(
+                    {
+                        "bucket_key": key,
+                        "region_id": region_id,
+                        "listing_type": listing_type,
+                        "price_band": price_band,
+                        "horizon_months": int(horizon),
+                        "horizon_label": "spot" if int(horizon) == 0 else f"{int(horizon)}m",
+                        "n_samples": int(diagnostics.n_samples),
+                        "coverage_rate": round(float(diagnostics.coverage_rate), 4),
+                        "target_coverage": round(float(diagnostics.target_coverage), 4),
+                        "coverage_floor": round(coverage_floor, 4),
+                        "avg_interval_width": round(float(diagnostics.avg_interval_width), 4),
+                        "meets_sample_threshold": meets_samples,
+                        "meets_coverage_threshold": meets_coverage,
+                        "status": status,
+                    }
+                )
+
+        evaluated_segments = [s for s in segments if s["meets_sample_threshold"]]
+        passing_segments = [s for s in evaluated_segments if s["status"] == "pass"]
+        failing_segments = [s for s in evaluated_segments if s["status"] == "fail"]
+        insufficient_segments = [s for s in segments if s["status"] == "insufficient_samples"]
+
+        return {
+            "alpha": round(float(self.alpha), 4),
+            "target_coverage": round(target_coverage, 4),
+            "coverage_floor": round(coverage_floor, 4),
+            "min_samples": int(min_samples),
+            "segment_count": len(segments),
+            "summary": {
+                "evaluated_segments": len(evaluated_segments),
+                "passing_segments": len(passing_segments),
+                "failing_segments": len(failing_segments),
+                "insufficient_segments": len(insufficient_segments),
+            },
+            "segments": segments,
+        }
 
 
 class HierarchicalReconciler:

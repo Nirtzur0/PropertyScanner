@@ -1,0 +1,7 @@
+docs_root: docs
+manifest_dir: docs/manifest
+implementation_dir: docs/implementation
+index_file: docs/INDEX.md
+status_file: docs/implementation/00_status.md
+worklog_file: docs/implementation/03_worklog.md
+command_map_file: docs/manifest/09_runbook.md

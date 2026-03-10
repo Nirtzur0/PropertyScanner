@@ -2,6 +2,7 @@
 
 **Date:** 2026-01-19
 **Subject:** Final Global Migration Status & Blocking Analysis
+**Runtime Label Sync:** 2026-02-09 (`M6 / C-02`)
 
 ## Overview
 
@@ -40,6 +41,22 @@ Tests were conducted using:
 | **Daft.ie** | Ireland | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA/DataDome. |
 | **Pararius** | Netherlands | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA. |
 | **Otodom** | Poland | ❌ **Blocked** | Failing | - **FATAL**: Blocked by CAPTCHA/Cloudflare. |
+
+## Runtime Source-Support Labels
+
+`src/interfaces/api/pipeline.py` and `src/interfaces/dashboard/app.py` now expose runtime source labels based on `config/sources.yaml` plus this status matrix:
+
+- `supported`: source is enabled and mapped to `Operational` in this report.
+- `blocked`: source is mapped to `Blocked` in this report.
+- `fallback`: source is disabled, unverified, or missing explicit operational evidence.
+
+Runtime payload shape:
+- `source_support.summary`: counts for `supported`, `blocked`, `fallback`.
+- `source_support.sources[*].runtime_label`: per-source label surfaced in dashboard status panels.
+- `assumption_badges[*]`: artifact-backed runtime caveat badges (`status`, `artifact_ids`, `summary`, `guide_path`) consumed by API/dashboard trust views.
+
+Operator note:
+- the labels are trust guidance, not an execution guarantee; always review per-source caveats in this document before enabling new crawl runs.
 
 ## Detailed Blocking Analysis
 
