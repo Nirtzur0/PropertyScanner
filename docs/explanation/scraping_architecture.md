@@ -1,10 +1,10 @@
 # Scraping Architecture
 
-The canonical crawl direction is now a split system:
+The repo is currently in a transitional split state:
 
-- Python owns crawl planning, compliance policy, normalization, validation, persistence, and job tracking.
-- The Node/TypeScript sidecar in `scraper/` owns browser-heavy fetch execution with Crawlee + Playwright.
-- The older pydoll path remains in the repo only as a transitional implementation and is no longer the strategic browser stack.
+- Python owns the live crawler path today: crawl planning, compliance policy, browser fetches via `ScrapeClient`/PyDoll, normalization, validation, persistence, and job tracking.
+- The Node/TypeScript sidecar in `scraper/` exists as a secondary fetch harness for typed crawl plans, snapshots, and future source-aware migration work.
+- Runtime source support should be derived from recent crawl evidence and persisted audits, not from whether a sidecar contract exists.
 
 For current source availability and caveats, see `docs/crawler_status.md`.
 
@@ -20,7 +20,7 @@ For current source availability and caveats, see `docs/crawler_status.md`.
 ```mermaid
 graph TD
     A["Python pipeline / job service"] -->|"write crawl-plan.json"| B["data/crawl_plans"]
-    A -->|"invoke"| C["scraper/ sidecar (Crawlee + Playwright)"]
+    A -->|"optional sidecar invoke"| C["scraper/ sidecar (Crawlee + Playwright)"]
     C -->|"fetch + snapshot"| D["data/crawl_snapshots/<job_id>"]
     C -->|"NDJSON fetch records"| E["data/crawl_results/<job_id>.ndjson"]
     A -->|"load raw fetch artifacts"| F["Python normalizers + quality gate"]
@@ -75,12 +75,13 @@ Each fetched page produces one NDJSON row with:
 
 What is live now:
 
-- unified crawl still runs through Python crawler modules;
-- raw and normalized observations now persist into `listing_observations`;
-- browser-heavy crawling now has a real Node sidecar contract and buildable implementation.
+- unified crawl runs through Python crawler modules;
+- raw and normalized observations persist into `listing_observations`;
+- source-contract runs can persist crawl health/completeness evidence;
+- the Node sidecar has a buildable typed contract for future source-aware migration work.
 
 What is not yet complete:
 
-- migrated source-by-source cutover from pydoll to the sidecar for `pisos`, `rightmove`, `zoopla`, and `imovirtual`;
+- source-by-source sidecar cutover for `pisos`, `rightmove`, `zoopla`, and `imovirtual`;
 - persistent queue management and source-specific extraction on top of sidecar fetch outputs;
-- proxy/session policy tuning beyond the typed plan contract.
+- anti-bot infrastructure beyond conservative compliance + explicit blocked semantics.

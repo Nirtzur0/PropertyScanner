@@ -5,9 +5,16 @@ import ssl
 from urllib.parse import urlparse
 from threading import Lock
 from typing import Dict, Optional, Callable
+from dataclasses import dataclass
 import structlog
 
 logger = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class ComplianceDecision:
+    allowed: bool
+    reason: Optional[str] = None
 
 class RateLimiter:
     """
@@ -76,25 +83,38 @@ class RobotsTxtValidator:
                     rp.parse(data.splitlines())
             except Exception as e:
                 logger.warning("robots_txt_fetch_failed", url=robots_url, error=str(e))
+                error_text = str(e).lower()
+                if "403" in error_text or "forbidden" in error_text:
+                    setattr(rp, "_property_scanner_error_reason", "robots_fetch_denied")
+                else:
+                    setattr(rp, "_property_scanner_error_reason", "robots_fetch_failed")
                 rp.disallow_all = True
 
             self._parsers[domain] = rp
             return rp
 
-    def can_fetch(self, url: str) -> bool:
+    def assess_fetch(self, url: str) -> ComplianceDecision:
         parsed = urlparse(url)
         domain = parsed.netloc
         scheme = parsed.scheme
         
         if not domain or not scheme:
-            return False
+            return ComplianceDecision(allowed=False, reason="invalid_url")
 
         if domain in self._whitelist:
             logger.info("compliance_whitelist_allowed", domain=domain)
-            return True
+            return ComplianceDecision(allowed=True, reason="whitelist")
             
         rp = self._get_parser(domain, scheme)
-        return rp.can_fetch(self.user_agent, url)
+        error_reason = getattr(rp, "_property_scanner_error_reason", None)
+        if error_reason:
+            return ComplianceDecision(allowed=False, reason=str(error_reason))
+        if not rp.can_fetch(self.user_agent, url):
+            return ComplianceDecision(allowed=False, reason="robots_disallowed")
+        return ComplianceDecision(allowed=True)
+
+    def can_fetch(self, url: str) -> bool:
+        return self.assess_fetch(url).allowed
 
 class ComplianceManager:
     """
@@ -117,13 +137,21 @@ class ComplianceManager:
         Checks robots.txt and waits for rate limit.
         Returns True if safe to proceed, False if blocked by robots.txt.
         """
+        return self.assess_url(url, rate_limit_seconds=rate_limit_seconds).allowed
+
+    def assess_url(self, url: str, rate_limit_seconds: float = 1.0) -> ComplianceDecision:
+        """
+        Returns an explicit compliance decision and enforces rate limiting only when allowed.
+        """
         if self.seen_check and self.seen_check(url):
             logger.info("skipped_seen_url", url=url)
-            return False
+            return ComplianceDecision(allowed=False, reason="seen_url")
 
-        if self.enforce_robots and not self.robots_validator.can_fetch(url):
-            logger.warning("blocked_by_robots_txt", url=url)
-            return False
+        if self.enforce_robots:
+            decision = self.robots_validator.assess_fetch(url)
+            if not decision.allowed:
+                logger.warning("blocked_by_robots_txt", url=url, reason=decision.reason)
+                return decision
         
         self.rate_limiter.wait_for_slot(url, period_seconds=rate_limit_seconds)
-        return True
+        return ComplianceDecision(allowed=True)

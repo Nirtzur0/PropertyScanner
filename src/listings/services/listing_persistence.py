@@ -9,6 +9,7 @@ import geolib.geohash
 from src.platform.domain.listing_updates import ListingUpsertPayload
 from src.platform.domain.schema import CanonicalListing
 from src.listings.repositories.listings import ListingsRepository
+from src.listings.source_ids import canonicalize_source_id
 from src.listings.services.feature_sanitizer import sanitize_listing_features
 from src.platform.utils.time import utcnow
 
@@ -88,7 +89,7 @@ class ListingPersistenceService:
         now: datetime,
     ) -> Dict[str, object]:
         fields: Dict[str, object] = {
-            "source_id": item.source_id,
+            "source_id": canonicalize_source_id(item.source_id),
             "external_id": item.external_id,
             "url": str(item.url),
             "title": item.title,

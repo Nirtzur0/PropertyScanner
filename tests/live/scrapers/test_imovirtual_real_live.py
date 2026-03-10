@@ -49,7 +49,7 @@ def test_live_crawl__imovirtual__returns_listings_or_skips_when_blocked():
     first = norm_response.data[0]
     logging.info(f"Normalized listing: {first}")
     
-    assert first.source_id == "imovirtual"
+    assert first.source_id == "imovirtual_pt"
     assert first.price > 0, f"Price should be extracted, got {first.price}"
     assert first.title, "Title should be extracted"
     assert str(first.url) == response.data[0].url

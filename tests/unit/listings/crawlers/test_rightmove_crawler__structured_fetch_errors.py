@@ -34,6 +34,8 @@ def test_rightmove_crawler__detail_fetch_failures_surface_structured_errors() ->
 
     result = crawler.run({"start_url": "https://www.rightmove.co.uk/property-for-sale/find.html?index=0"})
 
-    assert result.status == "failure"
+    assert result.status == "fetch_failed"
     assert result.data == []
     assert result.errors == ["browser_task_failed:TimeoutError:detail-timeout"]
+    assert result.metadata["listing_urls_discovered"] == 1
+    assert result.metadata["listing_urls_fetched"] == 0

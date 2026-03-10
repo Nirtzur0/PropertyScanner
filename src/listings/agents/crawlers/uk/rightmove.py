@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import structlog
+from src.listings.crawl_contract import classify_crawl_status, primary_block_reason
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
+from src.listings.source_ids import canonicalize_source_id
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
@@ -23,6 +25,7 @@ class RightmoveCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="RightmoveCrawler", config=config)
         self.compliance_manager = compliance_manager
+        self.source_id = canonicalize_source_id(config.get("id", "rightmove_uk"))
         self.base_url = config.get("base_url", "https://www.rightmove.co.uk")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
@@ -31,7 +34,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             config.get("browser_max_concurrency", 1)
         )
         self.scrape_client = ScrapeClient(
-            source_id=config.get("id", "rightmove_uk"),
+            source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance_manager,
             user_agent=user_agent,
@@ -91,8 +94,6 @@ class RightmoveCrawlerAgent(BaseAgent):
         return hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
-        source_id = self.config.get("id", "rightmove_uk")
-
         target_urls = list(input_payload.get("target_urls") or [])
         listing_url = input_payload.get("listing_url")
         if listing_url:
@@ -133,6 +134,8 @@ class RightmoveCrawlerAgent(BaseAgent):
 
         listings: List[RawListing] = []
         errors: List[str] = []
+        search_pages_attempted = 0
+        search_pages_succeeded = 0
 
         listing_urls: List[str] = []
         if target_urls:
@@ -144,9 +147,12 @@ class RightmoveCrawlerAgent(BaseAgent):
 
             for search_url in start_urls:
                 for page_url in self._expand_search_urls(search_url, max_pages, page_size):
+                    search_pages_attempted += 1
                     html = self._fetch_url(page_url)
                     if not html:
+                        errors.append(f"fetch_failed:{page_url}")
                         continue
+                    search_pages_succeeded += 1
                     listing_urls.extend(self._extract_listing_urls(html))
 
             listing_urls = list(dict.fromkeys(listing_urls))
@@ -156,7 +162,22 @@ class RightmoveCrawlerAgent(BaseAgent):
             listing_urls = listing_urls[:max_listings]
 
         if not listing_urls:
-            return AgentResponse(status="failure", data=[], errors=["no_listings_found"])
+            if not errors:
+                errors.append("no_listings_found")
+            return AgentResponse(
+                status=classify_crawl_status(listing_count=0, errors=errors),
+                data=[],
+                errors=errors,
+                metadata={
+                    "search_fetch_ok": search_pages_succeeded > 0,
+                    "search_block_reason": primary_block_reason(errors),
+                    "search_pages_attempted": search_pages_attempted,
+                    "search_pages_succeeded": search_pages_succeeded,
+                    "listing_urls_discovered": 0,
+                    "listing_urls_fetched": 0,
+                    "detail_fetch_success_ratio": 0.0,
+                },
+            )
 
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=2):
             if not result.html:
@@ -173,7 +194,7 @@ class RightmoveCrawlerAgent(BaseAgent):
             )
 
             raw_listing = RawListing(
-                source_id=source_id,
+                source_id=self.source_id,
                 external_id=external_id,
                 url=url,
                 raw_data={
@@ -185,5 +206,18 @@ class RightmoveCrawlerAgent(BaseAgent):
             )
             listings.append(raw_listing)
 
-        status = "success" if listings else "failure"
-        return AgentResponse(status=status, data=listings, errors=errors)
+        status = classify_crawl_status(listing_count=len(listings), errors=errors)
+        return AgentResponse(
+            status=status,
+            data=listings,
+            errors=errors,
+            metadata={
+                "search_fetch_ok": search_pages_succeeded > 0 or bool(target_urls),
+                "search_block_reason": primary_block_reason(errors),
+                "search_pages_attempted": search_pages_attempted,
+                "search_pages_succeeded": search_pages_succeeded,
+                "listing_urls_discovered": len(listing_urls),
+                "listing_urls_fetched": len(listings),
+                "detail_fetch_success_ratio": round(len(listings) / max(len(listing_urls), 1), 6),
+            },
+        )

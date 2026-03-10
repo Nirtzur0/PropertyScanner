@@ -1,5 +1,14 @@
 # Crawler Health & Status Report
 
+## Runtime Evidence Update (2026-03-10)
+
+- Runtime source labels now prefer recent persisted `source_contract_runs` evidence and fall back to this document only when no recent run evidence exists.
+- Current live packet evidence on the default local stack:
+  - `pisos`, `imovirtual_pt`, and `rightmove_uk` passed live smoke with canonical source IDs and persisted crawl metrics.
+  - `zoopla_uk` remains block-prone and should be treated as success-or-explicit-block.
+  - `idealista`, `immobiliare_it`, and `onthemarket_uk` currently surface explicit `policy_blocked:*` outcomes under conservative compliance semantics instead of pretending to be crawler regressions.
+- The matrix below remains useful as operator guidance, but it is no longer the primary runtime source of truth.
+
 **Date:** 2026-01-19
 **Subject:** Final Global Migration Status & Blocking Analysis
 **Runtime Label Sync:** 2026-02-09 (`M6 / C-02`)
@@ -56,7 +65,7 @@ Runtime payload shape:
 - `assumption_badges[*]`: artifact-backed runtime caveat badges (`status`, `artifact_ids`, `summary`, `guide_path`) consumed by API/dashboard trust views.
 
 Operator note:
-- the labels are trust guidance, not an execution guarantee; always review per-source caveats in this document before enabling new crawl runs.
+- runtime labels now prefer recent persisted crawl evidence; review this document when there is no recent source-contract evidence or when you need manual blocking context.
 
 ## Detailed Blocking Analysis
 

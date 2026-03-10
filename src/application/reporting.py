@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from src.application.serving import evaluate_serving_eligibility
+from src.listings.source_ids import canonicalize_source_id
 from src.platform.domain.models import BenchmarkRun, CoverageReport, DataQualityEvent, SourceContractRun
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
@@ -204,6 +205,7 @@ class ReportingService:
         code: str,
         details: Dict[str, Any],
     ) -> str:
+        source_id = canonicalize_source_id(source_id)
         session = self.storage.get_session()
         try:
             existing = (
@@ -247,14 +249,19 @@ class ReportingService:
         invalid = 0
         by_source: Dict[str, int] = {}
         for row in rows:
-            source_status = str(source_status_by_source.get(str(row.source_id)) or "experimental")
+            canonical_source_id = canonicalize_source_id(str(row.source_id))
+            source_status = str(
+                source_status_by_source.get(canonical_source_id)
+                or source_status_by_source.get(str(row.source_id))
+                or "experimental"
+            )
             eligibility = evaluate_serving_eligibility(row, source_status=source_status)
             if eligibility.eligible:
                 continue
             invalid += 1
-            by_source[str(row.source_id)] = by_source.get(str(row.source_id), 0) + 1
+            by_source[canonical_source_id] = by_source.get(canonical_source_id, 0) + 1
             self.record_data_quality_event(
-                source_id=str(row.source_id),
+                source_id=canonical_source_id,
                 listing_id=str(row.id),
                 field_name=str(eligibility.field_name or "listing"),
                 severity="error",

@@ -6,6 +6,7 @@ import hashlib
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing, CanonicalListing, PropertyType, Currency, ListingStatus, GeoLocation
 from datetime import datetime
+from src.listings.source_ids import canonicalize_source_id
 
 class ImovirtualNormalizerAgent(BaseAgent):
     """
@@ -164,7 +165,7 @@ class ImovirtualNormalizerAgent(BaseAgent):
 
         canonical = CanonicalListing(
             id=unique_hash,
-            source_id="imovirtual", # normalized source id
+            source_id=canonicalize_source_id(raw.source_id),
             external_id=raw.external_id,
             url=full_url,
             title=title,

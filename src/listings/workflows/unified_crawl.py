@@ -8,10 +8,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from uuid import uuid4
 
 import structlog
 
 from src.listings.agents.factory import AgentFactory
+from src.listings.crawl_contract import (
+    classify_crawl_status,
+    field_coverage_metrics,
+    invalid_listing_metrics,
+    primary_block_reason,
+)
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.feature_fusion import FeatureFusionService
 from src.listings.services.listing_augmenter import ListingAugmentor
@@ -19,6 +26,7 @@ from src.listings.services.observation_persistence import ObservationPersistence
 from src.listings.services.listing_persistence import ListingPersistenceService
 from src.listings.services.quality_gate import ListingQualityGate
 from src.listings.utils.seen_url_store import SeenUrlStore
+from src.platform.domain.models import SourceContractRun
 from src.platform.db.base import resolve_db_url
 from src.platform.domain.schema import RawListing, CanonicalListing
 from src.platform.settings import AppConfig
@@ -128,10 +136,11 @@ class UnifiedCrawlRunner:
             db_path=self.app_config.pipeline.db_path,
         )
         self.listings_repo = ListingsRepository(db_url=self.db_url)
+        self.storage = StorageService(db_url=self.db_url)
         self.persistence = ListingPersistenceService(self.listings_repo)
         self.augmenter = ListingAugmentor(self.db_url)
         self.quality_gate = ListingQualityGate(self.app_config.quality_gate)
-        self.observations = ObservationPersistenceService(storage=StorageService(db_url=self.db_url))
+        self.observations = ObservationPersistenceService(storage=self.storage)
         self.compliance = ComplianceManager(self.app_config.agents.defaults.uastring)
         seen_path = seen_urls_db or str(Path(self.app_config.paths.data_dir) / "unified_seen_urls.sqlite3")
         self.seen_store = SeenUrlStore(path=seen_path)
@@ -205,6 +214,63 @@ class UnifiedCrawlRunner:
             saved += self.persistence.save_listings(batch)
         return saved
 
+    def _record_source_contract_run(
+        self,
+        *,
+        source_id: str,
+        crawl_response: Dict[str, Any],
+        raw_count: int,
+        canonical_listings: List[CanonicalListing],
+        valid_count: int,
+        invalid_count: int,
+        saved: int,
+        errors: List[str],
+    ) -> None:
+        metrics = {
+            "search_fetch_ok": bool(crawl_response.get("search_fetch_ok")),
+            "search_block_reason": crawl_response.get("search_block_reason"),
+            "search_pages_attempted": int(crawl_response.get("search_pages_attempted") or 0),
+            "search_pages_succeeded": int(crawl_response.get("search_pages_succeeded") or 0),
+            "listing_urls_discovered": int(crawl_response.get("listing_urls_discovered") or raw_count),
+            "listing_urls_fetched": int(crawl_response.get("listing_urls_fetched") or raw_count),
+            "detail_fetch_success_ratio": float(crawl_response.get("detail_fetch_success_ratio") or 0.0),
+            "raw_count": int(raw_count),
+            "normalized_count": int(len(canonical_listings)),
+            "valid_count": int(valid_count),
+            "invalid_count": int(invalid_count),
+            "persisted_count": int(saved),
+            "crawl_status": str(crawl_response.get("crawl_status") or classify_crawl_status(listing_count=raw_count, errors=errors)),
+            "last_verified_at": utcnow().isoformat(),
+            "errors": list(errors[:50]),
+        }
+        metrics.update(field_coverage_metrics(canonical_listings))
+        metrics.update(invalid_listing_metrics(canonical_listings))
+
+        crawl_status = str(metrics["crawl_status"])
+        if crawl_status in {"blocked", "policy_blocked"}:
+            contract_status = "blocked"
+        elif saved > 0 and invalid_count == 0 and not errors:
+            contract_status = "supported"
+        elif saved > 0 or valid_count > 0:
+            contract_status = "degraded"
+        else:
+            contract_status = "experimental" if crawl_status == "no_listings_found" else "degraded"
+
+        session = self.storage.get_session()
+        try:
+            session.add(
+                SourceContractRun(
+                    id=uuid4().hex,
+                    source_id=str(source_id),
+                    status=contract_status,
+                    metrics=metrics,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+
     def _dedupe_raw(self, source_id: str, raw_listings: List[RawListing]) -> List[RawListing]:
         if not self.settings.dedupe or not raw_listings:
             return raw_listings
@@ -251,10 +317,14 @@ class UnifiedCrawlRunner:
         crawl_response = crawler.run(payload)
         raw_listings = self._normalize_raw(crawl_response.data or [])
         self.observations.record_raw_observations(raw_listings)
+        crawl_meta = dict(crawl_response.metadata or {})
+        crawl_status = classify_crawl_status(listing_count=len(raw_listings), errors=list(crawl_response.errors or []))
+        crawl_meta.setdefault("crawl_status", crawl_status)
+        crawl_meta.setdefault("search_block_reason", primary_block_reason(crawl_response.errors or []))
 
         raw_listings = self._dedupe_raw(plan.source_id, raw_listings)
         if not raw_listings:
-            return {
+            result = {
                 "source_id": plan.source_id,
                 "crawled": 0,
                 "normalized": 0,
@@ -262,6 +332,17 @@ class UnifiedCrawlRunner:
                 "invalid": 0,
                 "errors": crawl_response.errors or [],
             }
+            self._record_source_contract_run(
+                source_id=plan.source_id,
+                crawl_response=crawl_meta,
+                raw_count=0,
+                canonical_listings=[],
+                valid_count=0,
+                invalid_count=0,
+                saved=0,
+                errors=list(crawl_response.errors or []),
+            )
+            return result
 
         normalizer = AgentFactory.create_normalizer(plan.source_id)
         norm_response = normalizer.run({"raw_listings": raw_listings})
@@ -293,7 +374,7 @@ class UnifiedCrawlRunner:
         if norm_response.errors:
             errors.extend(norm_response.errors)
 
-        return {
+        result = {
             "source_id": plan.source_id,
             "crawled": len(raw_listings),
             "normalized": len(canonical_listings),
@@ -302,6 +383,17 @@ class UnifiedCrawlRunner:
             "invalid_details": invalid,
             "errors": errors,
         }
+        self._record_source_contract_run(
+            source_id=plan.source_id,
+            crawl_response=crawl_meta,
+            raw_count=len(raw_listings),
+            canonical_listings=canonical_listings,
+            valid_count=len(valid),
+            invalid_count=len(invalid),
+            saved=saved,
+            errors=errors,
+        )
+        return result
 
     def run(self, plans: List[UnifiedSourcePlan]) -> List[Dict[str, Any]]:
         if not plans:

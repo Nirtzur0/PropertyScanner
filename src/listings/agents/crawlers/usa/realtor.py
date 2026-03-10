@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import structlog
 
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
+from src.listings.source_ids import canonicalize_source_id
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
@@ -20,6 +21,7 @@ class RealtorCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance: ComplianceManager):
         super().__init__(name="RealtorCrawler", config=config)
         self.compliance = compliance
+        self.source_id = canonicalize_source_id(config.get("id", "realtor_us"))
         self.base_url = config.get("base_url", "https://www.realtor.com")
         self.user_agent = config.get(
             "user_agent",
@@ -30,7 +32,7 @@ class RealtorCrawlerAgent(BaseAgent):
         )
         
         self.scrape_client = ScrapeClient(
-            source_id="realtor",
+            source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
@@ -103,7 +105,7 @@ class RealtorCrawlerAgent(BaseAgent):
             )
             
             raw_listing = RawListing(
-                source_id="realtor",
+                source_id=self.source_id,
                 external_id=lid,
                 url=url,
                 html_snapshot_path=raw_path,

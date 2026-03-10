@@ -5,7 +5,9 @@ from urllib.parse import urljoin
 
 import structlog
 
+from src.listings.crawl_contract import classify_crawl_status, primary_block_reason
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
+from src.listings.source_ids import canonicalize_source_id
 
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
@@ -22,6 +24,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="ImmobiliareCrawler", config=config)
         self.compliance_manager = compliance_manager
+        self.source_id = canonicalize_source_id(config.get("id", "immobiliare_it"))
         self.base_url = config.get("base_url", "https://www.immobiliare.it")
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 3))
@@ -33,7 +36,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             config.get("browser_max_concurrency", 6)
         )
         self.scrape_client = ScrapeClient(
-            source_id=config.get("id", "immobiliare_it"),
+            source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
@@ -51,7 +54,6 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             return None
 
     def run(self, input_payload: Dict[str, Any]) -> AgentResponse:
-        source_id = self.config.get("id", "immobiliare_it")
         start_url = input_payload.get("start_url")
         if not start_url:
             search_path = input_payload.get("search_path")
@@ -85,14 +87,36 @@ class ImmobiliareCrawlerAgent(BaseAgent):
 
         listing_urls = []
         errors: List[str] = []
+        search_pages_attempted = 0
+        search_pages_succeeded = 0
         if target_urls:
             listing_urls = target_urls
         else:
             # Search Page
-            html = self._fetch_url(start_url)
+            search_pages_attempted = 1
+            if hasattr(self.compliance_manager, "assess_url"):
+                decision = self.compliance_manager.assess_url(start_url, rate_limit_seconds=self.rate_limit_seconds)
+                if not decision.allowed:
+                    errors.append(f"policy_blocked:{decision.reason}:{start_url}")
+                    return AgentResponse(
+                        status=classify_crawl_status(listing_count=0, errors=errors),
+                        data=[],
+                        errors=errors,
+                        metadata={
+                            "search_fetch_ok": False,
+                            "search_block_reason": primary_block_reason(errors),
+                            "search_pages_attempted": search_pages_attempted,
+                            "search_pages_succeeded": 0,
+                            "listing_urls_discovered": 0,
+                            "listing_urls_fetched": 0,
+                            "detail_fetch_success_ratio": 0.0,
+                        },
+                    )
+            html = self.scrape_client.fetch_html(start_url, retries=3, timeout_s=30, skip_compliance=True)
             if not html:
                 errors.append("fetch_failed:search")
             else:
+                search_pages_succeeded = 1
                 listing_urls = self.scrape_client.extract_links(
                     html,
                     LinkExtractorSpec(
@@ -128,7 +152,7 @@ class ImmobiliareCrawlerAgent(BaseAgent):
             )
             
             raw = RawListing(
-                source_id=source_id,
+                source_id=self.source_id,
                 external_id=lid,
                 url=full_url,
                 html_snapshot_path=snapshot_path,
@@ -142,5 +166,18 @@ class ImmobiliareCrawlerAgent(BaseAgent):
         if not listings and not errors:
             errors.append("no_listings_found")
              
-        status = "success" if listings else "failure"
-        return AgentResponse(status=status, data=listings, errors=errors)
+        status = classify_crawl_status(listing_count=len(listings), errors=errors)
+        return AgentResponse(
+            status=status,
+            data=listings,
+            errors=errors,
+            metadata={
+                "search_fetch_ok": search_pages_succeeded > 0 or bool(target_urls),
+                "search_block_reason": primary_block_reason(errors),
+                "search_pages_attempted": search_pages_attempted,
+                "search_pages_succeeded": search_pages_succeeded,
+                "listing_urls_discovered": len(listing_urls),
+                "listing_urls_fetched": len(listings),
+                "detail_fetch_success_ratio": round(len(listings) / max(len(listing_urls), 1), 6),
+            },
+        )

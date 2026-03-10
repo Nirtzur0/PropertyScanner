@@ -136,3 +136,81 @@ def test_source_capability_service__persists_contract_runs_and_quality_events(tm
     assert "crawler_status_blocked" in event_codes
     assert "price_corruption_high" in event_codes
     assert "area_corruption_high" in event_codes
+
+
+def test_source_capability_service__aggregates_alias_rows_under_canonical_source_id(tmp_path: Path) -> None:
+    runtime_config = _runtime_config(tmp_path)
+    sources_path = Path(runtime_config.paths.sources_config_path)
+    sources_path.write_text(
+        """
+sources:
+  sources:
+    - id: "imovirtual_pt"
+      name: "Imovirtual"
+      enabled: true
+      countries: ["PT"]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    storage = StorageService(db_url=f"sqlite:///{runtime_config.paths.db_path}")
+    session = storage.get_session()
+    try:
+        session.add(
+            DBListing(
+                id="listing-1",
+                source_id="imovirtual",
+                external_id="legacy",
+                url="https://example.com/legacy",
+                title="Legacy Row",
+                description="desc",
+                price=250000.0,
+                currency="EUR",
+                property_type="apartment",
+                bedrooms=2,
+                bathrooms=1,
+                surface_area_sqm=80.0,
+                city="Porto",
+                country="PT",
+                listing_type="sale",
+                fetched_at=utcnow(),
+                updated_at=utcnow(),
+                status="active",
+                image_urls=["https://example.com/a.jpg"],
+            )
+        )
+        session.add(
+            DBListing(
+                id="listing-2",
+                source_id="imovirtual_pt",
+                external_id="canonical",
+                url="https://example.com/canonical",
+                title="Canonical Row",
+                description="desc",
+                price=260000.0,
+                currency="EUR",
+                property_type="apartment",
+                bedrooms=3,
+                bathrooms=2,
+                surface_area_sqm=95.0,
+                city="Porto",
+                country="PT",
+                listing_type="sale",
+                fetched_at=utcnow(),
+                updated_at=utcnow(),
+                status="active",
+                image_urls=["https://example.com/b.jpg"],
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    report = SourceCapabilityService(storage=storage, runtime_config=runtime_config).audit_sources()
+    item = report.sources[0]
+
+    assert item.source_id == "imovirtual_pt"
+    assert item.metrics["canonical_source_id"] == "imovirtual_pt"
+    assert item.metrics["row_count"] == 2
+    assert set(item.metrics["source_aliases"]) >= {"imovirtual", "imovirtual_pt"}

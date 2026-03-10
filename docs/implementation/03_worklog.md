@@ -1,5 +1,108 @@
 # Worklog
 
+## 2026-03-11 (CodeWiki teaching docs + README front-door packet)
+
+- Executed the documentation/front-door packet to make the repository easier to understand as a system, not just a collection of commands.
+- Root-cause changes:
+  - added `docs/explanation/problem_landscape_and_solution.md` as a concept-first explanation page covering:
+    - the property-intelligence problem landscape,
+    - repository design beliefs and tradeoffs,
+    - pipeline and concept-to-code diagrams,
+    - valuation math and calibration logic,
+    - curated references and code-reading guidance
+  - rewrote `README.md` around the repo’s current primary surface:
+    - FastAPI + React workbench first,
+    - Streamlit explicitly framed as legacy,
+    - verified install/run commands,
+    - stronger links into the deeper docs set
+  - added a real workbench screenshot for the README from the local UI verification artifacts:
+    - `docs/images/workbench-overview.png`
+  - updated `docs/INDEX.md` so the new teaching page is visible under Explanation
+- References reviewed and used:
+  - repeat-sales / housing index foundations:
+    - Bailey, Muth, Nourse (1963)
+    - Case and Shiller (1987, 1988)
+  - hedonic and valuation framing:
+    - Rosen (1974)
+    - Deng, Gyourko, Wu (2012)
+    - Eurostat HPI handbook
+    - RICS Red Book page
+  - quantile / uncertainty / retrieval / baseline modeling:
+    - Koenker and Bassett (1978)
+    - Breiman (2001)
+    - Chen and Guestrin (2016)
+    - Reimers and Gurevych (2019)
+    - Romano, Patterson, Candès (2019)
+    - Barber et al. (2021)
+    - Angelopoulos and Bates (2021)
+- Verification evidence:
+  - `python3 -m src.interfaces.cli -h`
+  - `python3 -m src.interfaces.cli preflight --help`
+  - verified doc/runtime file existence for `requirements.lock`, `docker-compose.yml`, `config/runtime.yaml`, and `docs/INDEX.md`
+  - verified new README image path:
+    - `docs/images/workbench-overview.png`
+  - manually checked that the new README links to the new teaching doc and that the docs index exposes it
+- Notes:
+  - this packet intentionally changed docs and image assets only
+  - the teaching page is designed to sit above the existing manifest/explanation docs rather than replacing them
+
+## 2026-03-10 (scraper reliability and coverage packet)
+
+- Executed the scraper reliability/coverage packet to make live source health observable and truthful instead of doc-driven guesswork.
+- Root-cause changes:
+  - added a shared canonical source-ID map in `src/listings/source_ids.py` and used it to stop alias drift between crawlers, normalizers, persistence, and audits
+  - added shared crawl-status/completeness helpers in `src/listings/crawl_contract.py`
+  - upgraded `src/platform/utils/compliance.py` so robots failures now produce explicit reasons (`robots_fetch_denied`, `robots_fetch_failed`, `robots_disallowed`) instead of only a boolean block
+  - changed `src/listings/scraping/client.py` to preserve policy-block reasons through batch preflight and avoid pointless sequential fallback on explicit policy blocks
+  - updated the active crawler set (`pisos`, `imovirtual`, `rightmove`, `zoopla`, `onthemarket`, `idealista`, `immobiliare`) to emit measurable metadata and explicit terminal statuses such as `policy_blocked` / `fetch_failed`
+  - canonicalized hardcoded legacy source IDs in blocked/deferred crawlers (`funda_nl`, `immowelt_de`, `seloger_fr`, `realtor_us`, `redfin_us`, `homes_us`)
+  - fixed the `imovirtual` normalizer and persistence path so canonical DB rows now use `imovirtual_pt`
+  - extended unified crawl to persist crawl-health evidence into `source_contract_runs`
+  - updated `SourceCapabilityService` to:
+    - aggregate alias IDs under one canonical source
+    - include coverage ratios for title/price/area/location/bed/bath/images
+    - prefer recent `source_contract_runs` over `docs/crawler_status.md`
+  - updated `PipelineAPI.source_support_summary()` to prefer recent source-contract evidence and expose canonical IDs plus latest-run metadata
+- Updated runtime/docs surfaces:
+  - `src/listings/source_ids.py`
+  - `src/listings/crawl_contract.py`
+  - `src/platform/utils/compliance.py`
+  - `src/listings/scraping/client.py`
+  - `src/listings/agents/crawlers/uk/rightmove.py`
+  - `src/listings/agents/crawlers/uk/zoopla.py`
+  - `src/listings/agents/crawlers/spain/pisos.py`
+  - `src/listings/agents/crawlers/portugal/imovirtual.py`
+  - `src/listings/agents/crawlers/uk/onthemarket.py`
+  - `src/listings/agents/crawlers/spain/idealista.py`
+  - `src/listings/agents/crawlers/italy/immobiliare.py`
+  - `src/listings/services/listing_persistence.py`
+  - `src/listings/services/observation_persistence.py`
+  - `src/listings/workflows/unified_crawl.py`
+  - `src/application/sources.py`
+  - `src/interfaces/api/pipeline.py`
+  - `README.md`
+  - `docs/explanation/scraping_architecture.md`
+  - `docs/crawler_status.md`
+  - `docs/implementation/00_status.md`
+  - `docs/implementation/03_worklog.md`
+- Added regression coverage:
+  - `tests/unit/listings/scraping/test_scrape_client__batch_error_propagation.py`
+  - `tests/unit/listings/crawlers/test_rightmove_crawler__structured_fetch_errors.py`
+  - `tests/unit/application/test_source_capability_service.py`
+  - `tests/unit/interfaces/test_pipeline_api__source_support.py`
+  - `tests/integration/listings/unified_crawl/test_unified_crawl_runner__persists_observations_and_source_contracts.py`
+  - updated `tests/integration/listings/unified_crawl/test_crawl_normalize_persist__fixture_html__saves_rows.py`
+  - updated live tests for `idealista`, `onthemarket`, `immobiliare`, and `imovirtual`
+- Verification evidence:
+  - `venv/bin/python -m pytest tests/unit/listings/scraping/test_scrape_client__batch_error_propagation.py tests/unit/listings/crawlers/test_rightmove_crawler__structured_fetch_errors.py tests/unit/application/test_source_capability_service.py tests/unit/interfaces/test_pipeline_api__source_support.py tests/integration/listings/unified_crawl/test_unified_crawl_runner__persists_observations_and_source_contracts.py tests/integration/listings/unified_crawl/test_crawl_normalize_persist__fixture_html__saves_rows.py -q` (`9 passed, 8 skipped`)
+  - `venv/bin/python -m pytest tests/live/scrapers/test_rightmove_real_live.py tests/live/scrapers/test_imovirtual_real_live.py tests/live/scrapers/test_idealista_real_live.py tests/live/scrapers/test_onthemarket_real_live.py tests/live/scrapers/test_immobiliare_real_live.py --run-live -q` (`5 passed`)
+  - `venv/bin/python -m pytest -m "not integration and not e2e and not live" -q` (`140 passed, 1 skipped, 53 deselected`)
+  - `venv/bin/python -m pytest --run-integration -m integration -q` (`26 passed, 168 deselected`)
+- Residual limits:
+  - the Node sidecar still is not source-aware enough to replace the Python crawler path
+  - blocked portals remain blocked on current infrastructure; the improvement in this packet is truthful surfacing and evidence capture, not bypass
+  - the main live DB still needs fresh unified-crawl runs to accumulate non-test `listing_observations` and `source_contract_runs`
+
 ## 2026-03-10 (product validation and recovery packet)
 
 - Executed the product validation/recovery packet to turn one failing unit contract, one opaque live scraper failure, and one misleading train/benchmark workflow contract into explicit, test-backed product behavior.

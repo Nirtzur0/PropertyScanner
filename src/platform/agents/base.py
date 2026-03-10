@@ -6,7 +6,15 @@ import structlog
 logger = structlog.get_logger()
 
 class AgentResponse(BaseModel):
-    status: Literal["success", "failure", "partial"]
+    status: Literal[
+        "success",
+        "failure",
+        "partial",
+        "blocked",
+        "policy_blocked",
+        "fetch_failed",
+        "no_listings_found",
+    ]
     data: Any
     metadata: Dict[str, Any] = {}
     errors: List[str] = []

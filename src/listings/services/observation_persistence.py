@@ -7,6 +7,7 @@ from src.platform.domain.models import ListingEntity, ListingObservation
 from src.platform.domain.schema import CanonicalListing, RawListing
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
+from src.listings.source_ids import canonicalize_source_id
 
 
 def _stable_id(*parts: object) -> str:
@@ -54,7 +55,7 @@ class ObservationPersistenceService:
                 session.add(
                     ListingObservation(
                         id=row_id,
-                        source_id=str(item.source_id),
+                        source_id=canonicalize_source_id(str(item.source_id)),
                         external_id=str(item.external_id),
                         listing_id=None,
                         observed_at=observed_at,
@@ -96,7 +97,7 @@ class ObservationPersistenceService:
                 session.add(
                     ListingObservation(
                         id=row_id,
-                        source_id=str(item.source_id),
+                        source_id=canonicalize_source_id(str(item.source_id)),
                         external_id=str(item.external_id),
                         listing_id=str(item.id),
                         observed_at=observed_at,
@@ -123,7 +124,7 @@ class ObservationPersistenceService:
                 entity_id = _stable_id("entity", item.id)
                 entity = session.query(ListingEntity).filter(ListingEntity.id == entity_id).first()
                 source_link = {
-                    "source_id": str(item.source_id),
+                    "source_id": canonicalize_source_id(str(item.source_id)),
                     "external_id": str(item.external_id),
                     "url": str(item.url),
                 }

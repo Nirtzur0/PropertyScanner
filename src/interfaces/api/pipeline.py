@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+import pandas as pd
+from sqlalchemy import text
 
 from src.platform.domain.models import DBListing
 from src.platform.domain.schema import CanonicalListing, DealAnalysis
 import structlog
 
+from src.listings.source_ids import canonicalize_source_id, source_aliases
 from src.platform.settings import AppConfig, PipelineConfig, ValuationConfig
 from src.platform.db.base import resolve_db_url
 from src.listings.services.listing_adapter import db_listing_to_canonical
@@ -89,6 +94,17 @@ def _source_candidates(source_id: str, source_name: Optional[str]) -> List[str]:
             candidates.append(id_without_suffix)
 
     return candidates
+
+
+def _runtime_label_from_contract_status(contract_status: str) -> Tuple[str, str]:
+    value = str(contract_status or "").strip().lower()
+    if value in {"blocked", "policy_blocked"}:
+        return "blocked", f"source_contract_{value}"
+    if value == "supported":
+        return "supported", "source_contract_supported"
+    if value:
+        return "fallback", f"source_contract_{value}"
+    return "fallback", "source_contract_unknown"
 
 
 def _resolve_crawler_status(source_id: str, source_name: Optional[str], status_by_name: Dict[str, str]) -> str:
@@ -214,23 +230,66 @@ class PipelineAPI:
         """Classify source runtime labels as supported/blocked/fallback."""
         doc_path = Path(crawler_status_path) if crawler_status_path else _CRAWLER_STATUS_DOC_PATH
         status_by_name = _parse_crawler_status_doc(doc_path)
+        latest_contract_runs: Dict[str, Dict[str, Any]] = {}
+        try:
+            query = text(
+                """
+                SELECT source_id, status, metrics, created_at
+                FROM source_contract_runs
+                ORDER BY created_at DESC
+                """
+            )
+            with self.storage.engine.connect() as conn:
+                rows = conn.execute(query).mappings().all()
+            for row in rows:
+                canonical = canonicalize_source_id(str(row["source_id"] or ""))
+                if not canonical or canonical in latest_contract_runs:
+                    continue
+                metrics = row["metrics"] or {}
+                if isinstance(metrics, str):
+                    try:
+                        metrics = json.loads(metrics)
+                    except json.JSONDecodeError:
+                        metrics = {"raw_metrics": metrics}
+                created_at = row.get("created_at")
+                if created_at is not None and not hasattr(created_at, "isoformat"):
+                    try:
+                        created_at = pd.to_datetime(created_at, format="mixed", errors="coerce")
+                    except Exception:
+                        created_at = None
+                latest_contract_runs[canonical] = {
+                    "status": str(row["status"] or ""),
+                    "metrics": dict(metrics or {}),
+                    "created_at": created_at.isoformat() if created_at is not None else None,
+                }
+        except Exception:
+            latest_contract_runs = {}
 
         summary = {"supported": 0, "blocked": 0, "fallback": 0}
         sources: List[Dict[str, Any]] = []
 
         for source in self.app_config.sources.sources:
-            crawler_status = _resolve_crawler_status(source.id, source.name, status_by_name)
-            runtime_label, reason = _classify_runtime_label(bool(source.enabled), crawler_status)
+            canonical_source_id = canonicalize_source_id(source.id)
+            latest_contract = latest_contract_runs.get(canonical_source_id)
+            if latest_contract is not None:
+                crawler_status = str(latest_contract.get("status") or "unknown")
+                runtime_label, reason = _runtime_label_from_contract_status(crawler_status)
+            else:
+                crawler_status = _resolve_crawler_status(source.id, source.name, status_by_name)
+                runtime_label, reason = _classify_runtime_label(bool(source.enabled), crawler_status)
             summary[runtime_label] += 1
             sources.append(
                 {
                     "id": source.id,
+                    "canonical_id": canonical_source_id,
                     "name": source.name or source.id,
                     "countries": list(source.countries),
                     "enabled": bool(source.enabled),
                     "crawler_status": crawler_status,
                     "runtime_label": runtime_label,
                     "reason": reason,
+                    "source_aliases": sorted(source_aliases(source.id)),
+                    "latest_contract_run": latest_contract,
                 }
             )
 

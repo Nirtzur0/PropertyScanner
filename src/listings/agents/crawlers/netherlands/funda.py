@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import structlog
 
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
+from src.listings.source_ids import canonicalize_source_id
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
@@ -24,6 +25,7 @@ class FundaCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance: ComplianceManager):
         super().__init__(name="FundaCrawler", config=config)
         self.compliance = compliance
+        self.source_id = canonicalize_source_id(config.get("id", "funda_nl"))
         self.base_url = config.get("base_url", "https://www.funda.nl")
         self.user_agent = config.get(
             "user_agent",
@@ -34,7 +36,7 @@ class FundaCrawlerAgent(BaseAgent):
         )
         
         self.scrape_client = ScrapeClient(
-            source_id="funda",
+            source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
@@ -147,7 +149,7 @@ class FundaCrawlerAgent(BaseAgent):
             )
             
             raw_listing = RawListing(
-                source_id="funda",
+                source_id=self.source_id,
                 external_id=lid,
                 url=url,
                 html_snapshot_path=raw_path,

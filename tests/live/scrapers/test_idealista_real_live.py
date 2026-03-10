@@ -33,7 +33,15 @@ def test_live_crawl__idealista__returns_listings_or_skips_when_blocked():
     }
     
     response = crawler.run(payload)
-    
+
+    if response.status in {"blocked", "policy_blocked", "fetch_failed", "no_listings_found"}:
+        assert response.errors
+        assert any(
+            error.startswith("policy_blocked:") or error.startswith("blocked:") or error.startswith("fetch_failed:")
+            for error in response.errors
+        )
+        return
+
     assert response.status == "success"
     assert len(response.data) > 0, "Should find at least one listing on Idealista real search"
     assert response.data[0].url.startswith("https://www.idealista.com")

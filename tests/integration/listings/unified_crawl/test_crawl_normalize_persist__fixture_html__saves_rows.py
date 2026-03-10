@@ -477,6 +477,6 @@ def test_crawl_normalize_persist__imovirtual_fixture_html__saves_listing_row(tmp
     db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None
     assert db_item.price == canonical.price
-    assert db_item.source_id == "imovirtual"
+    assert db_item.source_id == "imovirtual_pt"
     assert db_item.country == "PT"
     assert db_item.surface_area_sqm is not None and db_item.surface_area_sqm > 0

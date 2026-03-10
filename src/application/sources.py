@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
 from typing import Any, Dict, List
 from uuid import uuid4
 
@@ -12,13 +13,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from src.core.runtime import RuntimeConfig
+from src.listings.source_ids import canonicalize_source_id, source_aliases
 from src.platform.domain.models import DataQualityEvent, SourceContractRun
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
 
 
 def _norm_source_base(source_id: str) -> str:
-    source_id = str(source_id).strip().lower()
+    source_id = canonicalize_source_id(str(source_id).strip().lower())
     if "_" in source_id:
         return source_id.split("_", 1)[0]
     return source_id
@@ -115,6 +117,34 @@ class SourceCapabilityService:
                 status_by_source[base] = "operational"
         return status_by_source
 
+    def _load_latest_contract_runs(self) -> Dict[str, Dict[str, Any]]:
+        query = text(
+            """
+            SELECT source_id, status, metrics, created_at
+            FROM source_contract_runs
+            ORDER BY created_at DESC
+            """
+        )
+        with self.storage.engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            canonical = canonicalize_source_id(str(row["source_id"] or ""))
+            if not canonical or canonical in latest:
+                continue
+            metrics = row["metrics"] or {}
+            if isinstance(metrics, str):
+                try:
+                    metrics = json.loads(metrics)
+                except json.JSONDecodeError:
+                    metrics = {"raw_metrics": metrics}
+            latest[canonical] = {
+                "status": str(row["status"] or ""),
+                "metrics": dict(metrics or {}),
+                "created_at": pd.to_datetime(row["created_at"], format="mixed", errors="coerce"),
+            }
+        return latest
+
     @staticmethod
     def _severity_for_reason(reason: str) -> str:
         if reason in {
@@ -174,11 +204,19 @@ class SourceCapabilityService:
         thresholds = self.runtime_config.quality
         now = utcnow()
         doc_status = self._load_doc_status()
+        latest_runs = self._load_latest_contract_runs()
         query = text(
             """
             SELECT
                 source_id,
                 COUNT(*) AS row_count,
+                SUM(CASE WHEN title IS NOT NULL AND title != '' THEN 1 ELSE 0 END) AS title_count,
+                SUM(CASE WHEN price IS NOT NULL AND price > 0 THEN 1 ELSE 0 END) AS price_count,
+                SUM(CASE WHEN surface_area_sqm IS NOT NULL THEN 1 ELSE 0 END) AS surface_area_count,
+                SUM(CASE WHEN city IS NOT NULL AND city != '' AND country IS NOT NULL AND country != '' THEN 1 ELSE 0 END) AS location_count,
+                SUM(CASE WHEN bedrooms IS NOT NULL THEN 1 ELSE 0 END) AS bedrooms_count,
+                SUM(CASE WHEN bathrooms IS NOT NULL THEN 1 ELSE 0 END) AS bathrooms_count,
+                SUM(CASE WHEN image_urls IS NOT NULL AND image_urls != '[]' THEN 1 ELSE 0 END) AS image_urls_count,
                 SUM(CASE WHEN price IS NULL OR price < 10000 OR price > 15000000 THEN 1 ELSE 0 END) AS invalid_price_count,
                 SUM(CASE WHEN surface_area_sqm IS NULL OR surface_area_sqm < 5 OR surface_area_sqm > 5000 THEN 1 ELSE 0 END) AS invalid_surface_area_count,
                 MAX(COALESCE(fetched_at, updated_at, listed_at)) AS last_seen
@@ -188,26 +226,87 @@ class SourceCapabilityService:
         )
         with self.storage.engine.connect() as conn:
             rows = conn.execute(query).mappings().all()
-        db_metrics = {str(row["source_id"]): row for row in rows}
+        db_metrics: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            canonical = canonicalize_source_id(str(row["source_id"] or ""))
+            if not canonical:
+                continue
+            target = db_metrics.setdefault(
+                canonical,
+                {
+                    "row_count": 0,
+                    "title_count": 0,
+                    "price_count": 0,
+                    "surface_area_count": 0,
+                    "location_count": 0,
+                    "bedrooms_count": 0,
+                    "bathrooms_count": 0,
+                    "image_urls_count": 0,
+                    "invalid_price_count": 0,
+                    "invalid_surface_area_count": 0,
+                    "last_seen": None,
+                    "aliases": set(),
+                },
+            )
+            target["row_count"] += int(row.get("row_count") or 0)
+            target["title_count"] += int(row.get("title_count") or 0)
+            target["price_count"] += int(row.get("price_count") or 0)
+            target["surface_area_count"] += int(row.get("surface_area_count") or 0)
+            target["location_count"] += int(row.get("location_count") or 0)
+            target["bedrooms_count"] += int(row.get("bedrooms_count") or 0)
+            target["bathrooms_count"] += int(row.get("bathrooms_count") or 0)
+            target["image_urls_count"] += int(row.get("image_urls_count") or 0)
+            target["invalid_price_count"] += int(row.get("invalid_price_count") or 0)
+            target["invalid_surface_area_count"] += int(row.get("invalid_surface_area_count") or 0)
+            target["aliases"].add(str(row.get("source_id") or canonical))
+            last_seen_raw = row.get("last_seen")
+            last_seen = pd.to_datetime(last_seen_raw, format="mixed", errors="coerce") if last_seen_raw else None
+            if last_seen is not None and not pd.isna(last_seen):
+                current_last_seen = target.get("last_seen")
+                if current_last_seen is None or pd.isna(current_last_seen) or last_seen > current_last_seen:
+                    target["last_seen"] = last_seen
 
         reports: List[SourceCapabilityReport] = []
         summary = {"supported": 0, "experimental": 0, "degraded": 0, "blocked": 0}
         for entry in self.load_source_catalog():
-            metrics_row = db_metrics.get(entry.source_id, {})
+            canonical_source_id = canonicalize_source_id(entry.source_id)
+            metrics_row = db_metrics.get(canonical_source_id, {})
             row_count = int(metrics_row.get("row_count") or 0)
+            title_count = int(metrics_row.get("title_count") or 0)
+            price_count = int(metrics_row.get("price_count") or 0)
+            surface_area_count = int(metrics_row.get("surface_area_count") or 0)
+            location_count = int(metrics_row.get("location_count") or 0)
+            bedrooms_count = int(metrics_row.get("bedrooms_count") or 0)
+            bathrooms_count = int(metrics_row.get("bathrooms_count") or 0)
+            image_urls_count = int(metrics_row.get("image_urls_count") or 0)
             invalid_price_count = int(metrics_row.get("invalid_price_count") or 0)
             invalid_surface_area_count = int(metrics_row.get("invalid_surface_area_count") or 0)
             last_seen_raw = metrics_row.get("last_seen")
             last_seen = pd.to_datetime(last_seen_raw, format="mixed", errors="coerce") if last_seen_raw else None
             contract_support = self._discover_contract_support(entry.source_id)
             doc_state = doc_status.get(_norm_source_base(entry.source_id), "unknown")
+            latest_run = latest_runs.get(canonical_source_id)
+            latest_run_status = str((latest_run or {}).get("status") or "")
+            latest_run_created_at = (latest_run or {}).get("created_at")
+            latest_run_metrics = dict((latest_run or {}).get("metrics") or {})
 
             invalid_price_ratio = _safe_ratio(invalid_price_count, row_count)
             invalid_surface_area_ratio = _safe_ratio(invalid_surface_area_count, row_count)
 
             reasons: List[str] = []
             status = "experimental"
-            if doc_state == "blocked":
+            recent_run_available = (
+                latest_run_created_at is not None
+                and not pd.isna(latest_run_created_at)
+                and latest_run_created_at.to_pydatetime() >= now - timedelta(days=thresholds.freshness_days)
+            )
+            if recent_run_available and latest_run_status == "blocked":
+                status = "blocked"
+                reasons.append("latest_run_blocked")
+            elif recent_run_available and latest_run_status == "policy_blocked":
+                status = "blocked"
+                reasons.append("latest_run_policy_blocked")
+            elif doc_state == "blocked":
                 status = "blocked"
                 reasons.append("crawler_status_blocked")
             else:
@@ -232,6 +331,8 @@ class SourceCapabilityService:
                     reasons.append("stale_or_missing_rows")
                 elif last_seen.to_pydatetime() < freshness_deadline:
                     reasons.append("stale_rows")
+                if recent_run_available and latest_run_status and latest_run_status not in {"supported"}:
+                    reasons.append(f"latest_run_{latest_run_status}")
 
                 if row_count >= thresholds.experimental_min_rows and not reasons:
                     status = "supported"
@@ -250,12 +351,28 @@ class SourceCapabilityService:
                     status=status,
                     reasons=reasons,
                     metrics={
+                        "canonical_source_id": canonical_source_id,
+                        "source_aliases": sorted(source_aliases(canonical_source_id) | set(metrics_row.get("aliases") or set())),
                         "row_count": row_count,
+                        "title_coverage_ratio": round(_safe_ratio(title_count, row_count), 6),
+                        "price_coverage_ratio": round(_safe_ratio(price_count, row_count), 6),
+                        "surface_area_coverage_ratio": round(_safe_ratio(surface_area_count, row_count), 6),
+                        "location_coverage_ratio": round(_safe_ratio(location_count, row_count), 6),
+                        "bedrooms_coverage_ratio": round(_safe_ratio(bedrooms_count, row_count), 6),
+                        "bathrooms_coverage_ratio": round(_safe_ratio(bathrooms_count, row_count), 6),
+                        "image_urls_coverage_ratio": round(_safe_ratio(image_urls_count, row_count), 6),
                         "invalid_price_count": invalid_price_count,
                         "invalid_surface_area_count": invalid_surface_area_count,
                         "invalid_price_ratio": round(invalid_price_ratio, 6),
                         "invalid_surface_area_ratio": round(invalid_surface_area_ratio, 6),
                         "last_seen": last_seen.isoformat() if last_seen is not None and not pd.isna(last_seen) else None,
+                        "latest_run_status": latest_run_status or None,
+                        "latest_run_created_at": (
+                            latest_run_created_at.isoformat()
+                            if latest_run_created_at is not None and not pd.isna(latest_run_created_at)
+                            else None
+                        ),
+                        "latest_run_metrics": latest_run_metrics,
                         **contract_support,
                         "doc_state": doc_state,
                     },

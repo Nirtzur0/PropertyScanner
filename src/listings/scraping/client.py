@@ -94,14 +94,26 @@ class ScrapeClient:
         retries: int = 3,
         timeout_s: float = 30.0,
         backoff_base: float = 1.4,
+        skip_compliance: bool = False,
     ) -> Optional[str]:
         if self._running_loop():
             raise RuntimeError("scrape_client_async_required")
-        if not self.compliance_manager.check_and_wait(
-            url, rate_limit_seconds=self.rate_limit_seconds
-        ):
-            logger.warning("crawler_blocked_by_robots", url=url)
-            return None
+        if not skip_compliance:
+            decision = (
+                self.compliance_manager.assess_url(url, rate_limit_seconds=self.rate_limit_seconds)
+                if hasattr(self.compliance_manager, "assess_url")
+                else None
+            )
+            allowed = bool(decision.allowed) if decision is not None else self.compliance_manager.check_and_wait(
+                url, rate_limit_seconds=self.rate_limit_seconds
+            )
+            if not allowed:
+                logger.warning(
+                    "crawler_blocked_by_robots",
+                    url=url,
+                    reason=getattr(decision, "reason", None),
+                )
+                return None
 
         for attempt in range(retries):
             html = self.browser_fetcher.fetch(url, timeout_s=timeout_s)
@@ -118,13 +130,24 @@ class ScrapeClient:
         retries: int = 3,
         timeout_s: float = 30.0,
         backoff_base: float = 1.4,
+        skip_compliance: bool = False,
     ) -> Optional[str]:
-        allowed = await asyncio.to_thread(
-            self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
-        )
-        if not allowed:
-            logger.warning("crawler_blocked_by_robots", url=url)
-            return None
+        if not skip_compliance:
+            if hasattr(self.compliance_manager, "assess_url"):
+                decision = await asyncio.to_thread(
+                    self.compliance_manager.assess_url, url, self.rate_limit_seconds
+                )
+                allowed = bool(getattr(decision, "allowed", False))
+                reason = getattr(decision, "reason", None)
+            else:
+                decision = None
+                allowed = await asyncio.to_thread(
+                    self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
+                )
+                reason = None
+            if not allowed:
+                logger.warning("crawler_blocked_by_robots", url=url, reason=reason)
+                return None
 
         for attempt in range(retries):
             html = await self.browser_fetcher.fetch_async(url, timeout_s=timeout_s)
@@ -153,8 +176,19 @@ class ScrapeClient:
         if not deduped:
             return []
         max_concurrency = max_workers if max_workers is not None else None
+        preflight_errors: dict[str, str] = {}
 
         async def preflight(url: str) -> bool:
+            if hasattr(self.compliance_manager, "assess_url"):
+                decision = await asyncio.to_thread(
+                    self.compliance_manager.assess_url, url, self.rate_limit_seconds
+                )
+                if not bool(getattr(decision, "allowed", False)):
+                    reason = str(getattr(decision, "reason", "") or "preflight")
+                    prefix = "policy_blocked" if reason.startswith("robots_") else "blocked"
+                    preflight_errors[url] = f"{prefix}:{reason}:{url}"
+                    return False
+                return True
             return await asyncio.to_thread(
                 self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
             )
@@ -179,13 +213,16 @@ class ScrapeClient:
         results: list[FetchResult] = []
         for item in browser_results:
             html = item.html
-            error = item.error
+            error = preflight_errors.get(item.url) or item.error
             if not html:
-                html = self.fetch_html(url=item.url, retries=max(1, retries), timeout_s=timeout_s)
-                if html:
-                    error = None
-                elif not error:
-                    error = f"fetch_failed:{item.url}"
+                if error and (error.startswith("policy_blocked:") or error.startswith("blocked:")):
+                    html = None
+                else:
+                    html = self.fetch_html(url=item.url, retries=max(1, retries), timeout_s=timeout_s)
+                    if html:
+                        error = None
+                    elif not error:
+                        error = f"fetch_failed:{item.url}"
             results.append(FetchResult(url=item.url, html=html, error=error))
         return results
 
@@ -206,8 +243,19 @@ class ScrapeClient:
         if not deduped:
             return []
         max_concurrency = max_workers if max_workers is not None else None
+        preflight_errors: dict[str, str] = {}
 
         async def preflight(url: str) -> bool:
+            if hasattr(self.compliance_manager, "assess_url"):
+                decision = await asyncio.to_thread(
+                    self.compliance_manager.assess_url, url, self.rate_limit_seconds
+                )
+                if not bool(getattr(decision, "allowed", False)):
+                    reason = str(getattr(decision, "reason", "") or "preflight")
+                    prefix = "policy_blocked" if reason.startswith("robots_") else "blocked"
+                    preflight_errors[url] = f"{prefix}:{reason}:{url}"
+                    return False
+                return True
             return await asyncio.to_thread(
                 self.compliance_manager.check_and_wait, url, self.rate_limit_seconds
             )
@@ -223,7 +271,14 @@ class ScrapeClient:
             logger.warning("browser_batch_failed", error=str(exc))
             raise
 
-        results = [FetchResult(url=item.url, html=item.html, error=item.error) for item in browser_results]
+        results = [
+            FetchResult(
+                url=item.url,
+                html=item.html,
+                error=preflight_errors.get(item.url) or item.error,
+            )
+            for item in browser_results
+        ]
         return results
 
     def extract_links(self, html: str, spec: LinkExtractorSpec) -> list[str]:

@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.interfaces.api.pipeline import PipelineAPI
+from src.platform.domain.models import Base, SourceContractRun
+from src.platform.storage import StorageService
+from src.platform.utils.time import utcnow
 from src.platform.settings import AppConfig, PipelineConfig, SourceConfig, SourcesConfig
 
 
@@ -94,3 +97,53 @@ def test_pipeline_status__embeds_source_support_summary(tmp_path: Path, monkeypa
     assert "under-sampled" in badges["jackknife_fallback"]["summary"]
     assert "under-covered" in badges["jackknife_fallback"]["summary"]
     assert badges["decomposition_diagnostics"]["status"] == "gap"
+
+
+def test_source_support_summary__prefers_latest_source_contract_run_over_doc(tmp_path: Path) -> None:
+    db_path = tmp_path / "support.db"
+    storage = StorageService(db_url=f"sqlite:///{db_path}")
+    Base.metadata.create_all(storage.engine)
+
+    session = storage.get_session()
+    try:
+        session.add(
+            SourceContractRun(
+                id="run-1",
+                source_id="imovirtual_pt",
+                status="supported",
+                metrics={"persisted_count": 3},
+                created_at=utcnow(),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    crawler_status_doc = tmp_path / "crawler_status.md"
+    crawler_status_doc.write_text(
+        "\n".join(
+            [
+                "| Crawler | Country | Status | Verification Result | Notes |",
+                "| :--- | :--- | :--- | :--- | :--- |",
+                "| **Imovirtual** | Portugal | ❌ **Blocked** | Failing | - |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    app_config = AppConfig(
+        pipeline=PipelineConfig(db_path=str(db_path), db_url=f"sqlite:///{db_path}"),
+        sources=SourcesConfig(
+            sources=[
+                SourceConfig(id="imovirtual_pt", name="Imovirtual", enabled=True, countries=["PT"]),
+            ]
+        ),
+    )
+    api = PipelineAPI(app_config=app_config)
+
+    summary = api.source_support_summary(crawler_status_path=str(crawler_status_doc))
+    by_id = {row["id"]: row for row in summary["sources"]}
+
+    assert summary["summary"] == {"supported": 1, "blocked": 0, "fallback": 0}
+    assert by_id["imovirtual_pt"]["runtime_label"] == "supported"
+    assert by_id["imovirtual_pt"]["reason"] == "source_contract_supported"

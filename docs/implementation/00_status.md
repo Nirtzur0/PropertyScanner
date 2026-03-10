@@ -1,5 +1,108 @@
 # Implementation Status
 
+## CodeWiki Teaching Docs + README Front-Door Packet (2026-03-11)
+
+- Objective: make the repository teachable at first contact by adding a concept-first explanation page and rewriting the README around the current primary product surface, real runtime commands, and the actual valuation philosophy.
+- This step advances objective by: adding a repo-level teaching document that explains the problem landscape, solution approach, math, architecture, and code mapping; replacing the README’s mixed product framing with a cleaner React-workbench-first front door; wiring a real workbench screenshot into the docs; and making the new explanation page discoverable from the docs index.
+- Risks of misalignment: if onboarding continues to emphasize the deprecated Streamlit path or explain the repo only as a command dump, newcomers will miss the comparable-anchored valuation logic and the local-first operating model that actually define the project.
+- Cycle stage: `build`
+- Appetite: `small`
+- Packet state: `downhill`
+
+### Now
+
+- Completed:
+  - added a new explanation-first teaching page:
+    - `docs/explanation/problem_landscape_and_solution.md`
+  - rewrote `README.md` as a practical front door centered on:
+    - the FastAPI-served React workbench,
+    - verified install/run commands,
+    - direct links into the new teaching page and existing docs
+  - added a real workbench screenshot for the README:
+    - `docs/images/workbench-overview.png`
+  - updated `docs/INDEX.md` so the teaching document is discoverable from the Explanation section
+
+### Next
+
+- Optionally align the shorter quickstart/how-to pages with the new README voice if a future docs pass wants the same framing throughout the rest of the docs tree.
+
+### Not now
+
+- No new API/reference docs packet in this slice.
+- No architectural or runtime behavior change in this slice.
+
+### Blocked
+
+- None at the docs level; the packet is bounded to documentation, links, and image assets.
+
+### Verification commands run
+
+- `python3 -m src.interfaces.cli -h`
+- `python3 -m src.interfaces.cli preflight --help`
+- verified presence of:
+  - `requirements.lock`
+  - `docker-compose.yml`
+  - `config/runtime.yaml`
+  - `docs/INDEX.md`
+- validated local image asset paths for:
+  - `docs/images/workbench-overview.png`
+
+## Scraper Reliability And Coverage Packet (2026-03-10)
+
+- Objective: make scraper support reporting and the live Python/PyDoll crawler path truthful by canonicalizing source identity, turning policy/robots blocks into explicit statuses, persisting crawl-health evidence, and tightening supported-source completeness expectations.
+- This step advances objective by: aligning crawler, normalizer, persistence, audit, and runtime support surfaces around canonical source IDs; making `policy_blocked` and `fetch_failed` outcomes explicit instead of opaque failures; recording crawl-health metrics into `source_contract_runs`; and reclassifying source support from recent evidence before falling back to the manual crawler-status doc.
+- Risks of misalignment: if source IDs keep drifting between crawlers and the DB, or if policy-blocked portals still look like generic crawler failures, the dashboard and API will continue to misstate what actually works.
+- Cycle stage: `build`
+- Appetite: `medium`
+- Packet state: `downhill`
+
+### Now
+
+- Completed:
+  - added shared source ID canonicalization for runtime aliases:
+    - `src/listings/source_ids.py`
+  - added shared crawl status and completeness helpers:
+    - `src/listings/crawl_contract.py`
+  - upgraded compliance semantics so robots failures are explicit:
+    - `robots_fetch_denied`
+    - `robots_fetch_failed`
+    - `robots_disallowed`
+  - propagated policy-block reasons through batch scraping and crawler error surfaces instead of collapsing them into generic `failure`
+  - canonicalized live source IDs across crawlers, normalizers, persistence, and observations, including the old `imovirtual` -> `imovirtual_pt` mismatch
+  - made supported crawlers emit measurable run metadata:
+    - search fetch success
+    - search pages attempted/succeeded
+    - listing URLs discovered/fetched
+    - detail fetch success ratio
+  - recorded source-contract evidence from unified crawl into `source_contract_runs`
+  - expanded source-capability audits to:
+    - aggregate alias source IDs under one canonical source
+    - use recent `source_contract_runs` evidence before the manual crawler-status doc
+    - track field-coverage ratios in addition to row count and corruption ratios
+  - re-aligned runtime docs so Python crawlers + `ScrapeClient`/PyDoll are described truthfully as the live path today, with the Node sidecar as a secondary harness
+- In progress:
+  - none
+
+### Next
+
+- Refresh or backfill the main live sources through unified crawl so the DB accumulates fresh `listing_observations`, `listing_entities`, and `source_contract_runs` outside of test runs.
+
+### Not now
+
+- No proxy-based anti-bot escalation in this packet.
+- No source-by-source sidecar migration in this packet.
+
+### Blocked
+
+- DataDome/Akamai/Cloudflare-protected portals remain infrastructure-blocked on the current local stack and are now reported as such instead of being forced into fake success.
+
+### Verification commands run
+
+- `venv/bin/python -m pytest tests/unit/listings/scraping/test_scrape_client__batch_error_propagation.py tests/unit/listings/crawlers/test_rightmove_crawler__structured_fetch_errors.py tests/unit/application/test_source_capability_service.py tests/unit/interfaces/test_pipeline_api__source_support.py tests/integration/listings/unified_crawl/test_unified_crawl_runner__persists_observations_and_source_contracts.py tests/integration/listings/unified_crawl/test_crawl_normalize_persist__fixture_html__saves_rows.py -q`
+- `venv/bin/python -m pytest tests/live/scrapers/test_rightmove_real_live.py tests/live/scrapers/test_imovirtual_real_live.py tests/live/scrapers/test_idealista_real_live.py tests/live/scrapers/test_onthemarket_real_live.py tests/live/scrapers/test_immobiliare_real_live.py --run-live -q`
+- `venv/bin/python -m pytest -m "not integration and not e2e and not live" -q`
+- `venv/bin/python -m pytest --run-integration -m integration -q`
+
 ## Product Validation And Recovery Packet (2026-03-10)
 
 - Objective: make the current product packet internally consistent by fixing the failing local contract gate, turning browser-crawl failures into explicit diagnosable outcomes, reducing `pisos` parser corruption at the source, and replacing train/benchmark `--research-only` gating with explicit dataset-readiness behavior.

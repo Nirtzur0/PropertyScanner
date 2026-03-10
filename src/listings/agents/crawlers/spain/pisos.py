@@ -5,7 +5,9 @@ from typing import Any, Dict, Optional
 
 import structlog
 
+from src.listings.crawl_contract import classify_crawl_status, primary_block_reason
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
+from src.listings.source_ids import canonicalize_source_id
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
 from src.platform.utils.compliance import ComplianceManager
@@ -21,7 +23,7 @@ class PisosCrawlerAgent(BaseAgent):
     def __init__(self, config: Dict[str, Any], compliance_manager: ComplianceManager):
         super().__init__(name="PisosCrawler", config=config)
         self.compliance_manager = compliance_manager
-        self.source_id = config.get("id", "pisos")
+        self.source_id = canonicalize_source_id(config.get("id", "pisos"))
         self.base_url = config.get("base_url", "https://www.pisos.com")
         self.user_agent = config.get(
             "user_agent",
@@ -36,7 +38,7 @@ class PisosCrawlerAgent(BaseAgent):
             base_url=self.base_url,
             compliance_manager=self.compliance_manager,
             user_agent=self.user_agent,
-            rate_limit_seconds=float(config.get("period_seconds", 3)),
+            rate_limit_seconds=float((config.get("rate_limit", {}) or {}).get("period_seconds", config.get("period_seconds", 3))),
             browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
@@ -78,12 +80,16 @@ class PisosCrawlerAgent(BaseAgent):
                 start_urls.append(f"{self.base_url}/{search_path}")
 
         errors = []
+        search_pages_attempted = 0
+        search_pages_succeeded = 0
         if not listing_urls:
             for url in start_urls:
+                search_pages_attempted += 1
                 html = self._fetch_url(url)
                 if not html:
                     errors.append(f"fetch_failed:{url}")
                     continue
+                search_pages_succeeded += 1
                 try:
                     debug_path = self.scrape_client.build_raw_listing(
                         external_id=f"search_pisos_{unix_ts()}",
@@ -113,7 +119,20 @@ class PisosCrawlerAgent(BaseAgent):
         if not listing_urls:
             if not errors:
                 errors.append("no_listings_found")
-            return AgentResponse(status="failure", data=[], errors=errors)
+            return AgentResponse(
+                status=classify_crawl_status(listing_count=0, errors=errors),
+                data=[],
+                errors=errors,
+                metadata={
+                    "search_fetch_ok": search_pages_succeeded > 0,
+                    "search_block_reason": primary_block_reason(errors),
+                    "search_pages_attempted": search_pages_attempted,
+                    "search_pages_succeeded": search_pages_succeeded,
+                    "listing_urls_discovered": 0,
+                    "listing_urls_fetched": 0,
+                    "detail_fetch_success_ratio": 0.0,
+                },
+            )
 
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=30, retries=3):
@@ -151,5 +170,18 @@ class PisosCrawlerAgent(BaseAgent):
             )
             results.append(raw_listing)
             
-        status = "success" if results else "failure"
-        return AgentResponse(status=status, data=results, errors=errors)
+        status = classify_crawl_status(listing_count=len(results), errors=errors)
+        return AgentResponse(
+            status=status,
+            data=results,
+            errors=errors,
+            metadata={
+                "search_fetch_ok": search_pages_succeeded > 0 or not start_urls,
+                "search_block_reason": primary_block_reason(errors),
+                "search_pages_attempted": search_pages_attempted,
+                "search_pages_succeeded": search_pages_succeeded,
+                "listing_urls_discovered": len(listing_urls),
+                "listing_urls_fetched": len(results),
+                "detail_fetch_success_ratio": round(len(results) / max(len(listing_urls), 1), 6),
+            },
+        )
