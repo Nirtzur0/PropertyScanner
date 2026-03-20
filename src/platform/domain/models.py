@@ -158,6 +158,19 @@ class DataQualityEvent(Base):
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 
+class UIEvent(Base):
+    __tablename__ = "ui_events"
+
+    id = Column(String, primary_key=True)
+    event_name = Column(String, nullable=False, index=True)
+    route = Column(String, nullable=False, index=True)
+    subject_type = Column(String, nullable=True, index=True)
+    subject_id = Column(String, nullable=True, index=True)
+    context = Column(JSON, default=dict)
+    occurred_at = Column(DateTime, default=utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
 class ListingObservation(Base):
     __tablename__ = "listing_observations"
 

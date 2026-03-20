@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Redfin Fixture</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "House",
+        "name": "88 Dolores St, San Francisco, CA 94103",
+        "description": "Detached home with updated finishes and backyard studio.",
+        "image": ["https://cdn.example.com/redfin/front.jpg"],
+        "numberOfRooms": 4,
+        "numberOfBathroomsTotal": 3,
+        "floorSize": {"@type": "QuantitativeValue", "value": 172, "unitCode": "MTK"},
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "88 Dolores St",
+          "addressLocality": "San Francisco",
+          "addressRegion": "CA",
+          "postalCode": "94103",
+          "addressCountry": "US"
+        },
+        "geo": {"@type": "GeoCoordinates", "latitude": 37.7681, "longitude": -122.4267},
+        "offers": {"@type": "Offer", "price": 1495000, "priceCurrency": "USD"}
+      }
+    </script>
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "propertyInfo": {
+              "price": 1495000,
+              "beds": 4,
+              "baths": 3,
+              "addressInfo": {
+                "streetLine": "88 Dolores St",
+                "city": "San Francisco",
+                "state": "CA",
+                "zip": "94103"
+              },
+              "latLong": {"latitude": 37.7681, "longitude": -122.4267},
+              "sqFt": {"value": 1851},
+              "photos": ["https://cdn.example.com/redfin/front.jpg"],
+              "propertyType": "House"
+            }
+          }
+        }
+      }
+    </script>
+    <h1 data-rf-test-id="abp-address">88 Dolores St, San Francisco, CA 94103</h1>
+    <div id="marketing-remarks-scroll">Detached home with updated finishes and backyard studio.</div>
+  </body>
+</html>

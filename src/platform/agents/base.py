@@ -12,6 +12,7 @@ class AgentResponse(BaseModel):
         "partial",
         "blocked",
         "policy_blocked",
+        "proxy_required",
         "fetch_failed",
         "no_listings_found",
     ]

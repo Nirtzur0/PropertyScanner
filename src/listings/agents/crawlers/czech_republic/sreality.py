@@ -7,6 +7,7 @@ import re
 import structlog
 import requests
 
+from src.listings.crawl_contract import build_crawl_response
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 from src.platform.agents.base import BaseAgent, AgentResponse
 from src.platform.domain.schema import RawListing
@@ -25,13 +26,13 @@ class SrealityCrawlerAgent(BaseAgent):
         self.compliance = compliance
         self.source_id = config.get("id", "sreality_cz")
         self.base_url = config.get("base_url", "https://www.sreality.cz")
+        rate_conf = config.get("rate_limit", {}) or {}
+        self.rate_limit_seconds = float(rate_conf.get("period_seconds", config.get("period_seconds", 5)))
         self.user_agent = config.get(
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 4)
-        )
+        browser_max_concurrency = int(config.get("browser_max_concurrency") or 4)
 
         rate_conf = config.get("rate_limit", {}) or {}
         self.rate_limit_seconds = float(rate_conf.get("period_seconds", 5))
@@ -156,15 +157,26 @@ class SrealityCrawlerAgent(BaseAgent):
         if not start_urls and not listing_urls:
             start_urls.append(f"{self.base_url}/en/search/for-sale/apartments")
 
-        errors = []
+        errors: list[str] = []
+        search_pages_attempted = len(start_urls) if not listing_urls else 0
+        search_pages_succeeded = 0
         # Try the HTML route first so fixture-based tests can stub fetch_html/fetch_html_batch.
         # If the page served a cookie-consent (CMP) iframe, we fall back to the public API.
         if not listing_urls:
             for url in start_urls:
+                if hasattr(self.compliance, "assess_url"):
+                    decision = self.compliance.assess_url(
+                        url,
+                        rate_limit_seconds=self.rate_limit_seconds,
+                    )
+                    if not decision.allowed:
+                        errors.append(f"policy_blocked:{decision.reason}:{url}")
+                        continue
                 html = self._fetch_url(url)
                 if not html:
                     errors.append(f"fetch_failed:{url}")
                     continue
+                search_pages_succeeded += 1
                 if "Nastavení souhlasu s personalizací" in html:
                     continue
 
@@ -217,7 +229,13 @@ class SrealityCrawlerAgent(BaseAgent):
         if not listing_urls:
             if not errors:
                 errors.append("no_listings_found")
-            return AgentResponse(status="failure", data=[], errors=errors)
+            return build_crawl_response(
+                listings=[],
+                errors=errors,
+                search_pages_attempted=search_pages_attempted,
+                search_pages_succeeded=search_pages_succeeded,
+                listing_urls_discovered=0,
+            )
 
         results = []
         logger.info("sreality_crawling_listings", count=len(listing_urls))
@@ -268,5 +286,13 @@ class SrealityCrawlerAgent(BaseAgent):
             )
             results.append(raw_listing)
             
-        status = "success" if results else "failure"
-        return AgentResponse(status=status, data=results, errors=errors)
+        if not results and not errors:
+            errors.append("no_listings_found")
+
+        return build_crawl_response(
+            listings=results,
+            errors=errors,
+            search_pages_attempted=search_pages_attempted,
+            search_pages_succeeded=search_pages_succeeded,
+            listing_urls_discovered=len(listing_urls),
+        )

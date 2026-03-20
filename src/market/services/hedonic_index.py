@@ -164,7 +164,7 @@ class HedonicIndexService:
         if pd.isna(dt):
             return None
         period = dt.to_period("M")
-        return period.end_time.to_pydatetime()
+        return period.to_timestamp(how="end").floor("us").to_pydatetime()
 
     def _registry_providers(self) -> List[str]:
         if self.config.registry_provider_priority:

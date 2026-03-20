@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Realtor Fixture</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "House",
+        "name": "123 Market St, San Francisco, CA",
+        "description": "Renovated three-bedroom townhouse near downtown.",
+        "image": [
+          "https://cdn.example.com/realtor/front.jpg",
+          "https://cdn.example.com/realtor/kitchen.jpg"
+        ],
+        "numberOfRooms": 3,
+        "numberOfBathroomsTotal": 2,
+        "floorSize": {"@type": "QuantitativeValue", "value": 145, "unitCode": "MTK"},
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "123 Market St",
+          "addressLocality": "San Francisco",
+          "addressRegion": "CA",
+          "postalCode": "94105",
+          "addressCountry": "US"
+        },
+        "geo": {"@type": "GeoCoordinates", "latitude": 37.7899, "longitude": -122.3942},
+        "offers": {"@type": "Offer", "price": 1250000, "priceCurrency": "USD"}
+      }
+    </script>
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "property": {
+              "list_price": 1250000,
+              "beds": 3,
+              "baths": 2,
+              "sqft": 1560,
+              "coordinates": {"lat": 37.7899, "lon": -122.3942},
+              "location": {"city": "San Francisco"},
+              "photos": [
+                "https://cdn.example.com/realtor/front.jpg",
+                "https://cdn.example.com/realtor/kitchen.jpg"
+              ],
+              "description": {
+                "name": "123 Market St, San Francisco, CA",
+                "text": "Renovated three-bedroom townhouse near downtown."
+              }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 data-testid="address">123 Market St, San Francisco, CA 94105</h1>
+    <div data-testid="description">Renovated three-bedroom townhouse near downtown.</div>
+  </body>
+</html>

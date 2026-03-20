@@ -1,25 +1,37 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import { api } from "./api";
 import {
-  CommandCenterPage,
   CompReviewPage,
+  DecisionsPage,
   ListingPage,
-  MemosPage,
   PipelinePage,
-  WatchlistsPage,
   WorkbenchPage,
 } from "./pages";
+import { track } from "./track";
 import "./styles.css";
 
 const NAV_ITEMS = [
   { to: "/workbench", label: "Workbench" },
-  { to: "/watchlists", label: "Watchlists" },
+  { to: "/watchlists", label: "Decisions" },
   { to: "/pipeline", label: "Pipeline" },
-  { to: "/command-center", label: "Command Center" },
-  { to: "/memos", label: "Memos" },
 ] as const;
+
+function CommandCenterRedirect() {
+  useEffect(() => {
+    track({
+      event_name: "command_center_redirected",
+      route: "/command-center",
+      subject_type: "route",
+      subject_id: "pipeline",
+      context: { destination: "/pipeline" },
+    });
+  }, []);
+
+  return <Navigate replace to="/pipeline" />;
+}
 
 function AppChrome() {
   const healthQuery = useQuery({
@@ -89,10 +101,10 @@ function AppChrome() {
         <Route path="/workbench" element={<WorkbenchPage />} />
         <Route path="/listings/:listingId" element={<ListingPage />} />
         <Route path="/comp-reviews/:listingId" element={<CompReviewPage />} />
-        <Route path="/memos" element={<MemosPage />} />
-        <Route path="/watchlists" element={<WatchlistsPage />} />
+        <Route path="/memos" element={<Navigate replace to="/watchlists?tab=memos" />} />
+        <Route path="/watchlists" element={<DecisionsPage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
-        <Route path="/command-center" element={<CommandCenterPage />} />
+        <Route path="/command-center" element={<CommandCenterRedirect />} />
       </Routes>
     </div>
   );

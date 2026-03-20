@@ -21,6 +21,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
 
 # IDEs
 .vscode/
@@ -35,9 +36,18 @@ __pycache__/
 
 # Snapshots
 data/snapshots/
+.playwright-cli/
+.tmp/
+.tmp*/
 
 # Models
 models/comp_cache.json
 models/*.pt
 models/*.pth
 models/*.ckpt
+
+# Frontend / sidecar build artifacts
+frontend/dist/
+frontend/node_modules/
+dist/
+scraper/node_modules/

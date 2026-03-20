@@ -33,9 +33,11 @@ This document defines interface contracts used by the architecture in `docs/mani
 | `API-05` | `PipelineAPI.train_model(**kwargs)` | training kwargs | list/dict training payload | `src/interfaces/api/pipeline.py`, `src/ml/training/train.py` |
 | `API-06` | `PipelineAPI.evaluate_listing(...)` | `CanonicalListing`/`DBListing`/dict | `DealAnalysis` | `src/interfaces/api/pipeline.py`, `src/platform/domain/schema.py`, `src/valuation/services/valuation.py` |
 | `API-07` | `PipelineAPI.evaluate_listing_id(id, ...)` | listing id | `DealAnalysis` | `src/interfaces/api/pipeline.py` |
-| `API-08` | `PipelineAPI.source_support_summary(...)` | optional crawler-status path override | source-level `supported|blocked|fallback` labels + counts | `src/interfaces/api/pipeline.py`, `docs/crawler_status.md`, `config/sources.yaml` |
+| `API-08` | `PipelineAPI.source_support_summary(...)` | optional crawler-status path override | source-level `supported|blocked|experimental` labels + counts | `src/interfaces/api/pipeline.py`, `docs/crawler_status.md`, `config/sources.yaml` |
 | `API-09` | `PipelineAPI.pipeline_status(...)` | optional crawler-status path override | pipeline freshness snapshot + `source_support` + `assumption_badges` payloads | `src/interfaces/api/pipeline.py`, `src/platform/pipeline/state.py`, `src/interfaces/dashboard/services/loaders.py` |
 | `API-10` | `PipelineAPI.assumption_badges(...)` | normalized `source_support` payload | artifact-backed assumption badges (`id`, `label`, `status`, `artifact_ids`, `summary`, `guide_path`) | `src/interfaces/api/pipeline.py`, `docs/implementation/checklists/08_artifact_feature_alignment.md`, `docs/implementation/reports/artifact_feature_alignment.md` |
+| `API-11` | `ReportingService.pipeline_trust_summary()` | none | aggregated analyst trust digest (`freshness`, `source_summary`, `top_blockers`, `benchmark_gate`, `jobs_summary`, `latest_quality_events`, `details_available`) | `src/application/reporting.py`, `src/application/pipeline.py`, `src/adapters/http/app.py` |
+| `API-12` | `ReportingService.record_ui_event(payload)` | `event_name`, `route`, optional subject fields, context, `occurred_at` | accepted event id + status | `src/application/reporting.py`, `src/adapters/http/app.py`, `src/adapters/http/schemas.py` |
 
 ## Workflow Orchestration Contracts (Prefect)
 
@@ -63,6 +65,7 @@ This document defines interface contracts used by the architecture in `docs/mani
 | `EVENT-01` | `pipeline_runs` | `(run_id, run_type, step_name, status, started_at, completed_at, metadata)` | `src/platform/pipeline/repositories/pipeline_runs.py` |
 | `EVENT-02` | `agent_runs` | persisted cognitive run summary and trace pointers | `src/platform/domain/models.py`, `src/agentic/memory.py` |
 | `EVENT-03` | `valuations` | valuation snapshot tied to listing id + model version + evidence JSON | `src/platform/domain/models.py`, `src/valuation/services/valuation_persister.py` |
+| `EVENT-04` | `ui_events` | persisted analyst interaction events (`event_name`, `route`, `subject_type`, `subject_id`, `context`, `occurred_at`) | `src/platform/domain/models.py`, `src/platform/migrations.py`, `src/application/reporting.py` |
 
 ## Domain Data Contracts
 

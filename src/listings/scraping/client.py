@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 import structlog
 from bs4 import BeautifulSoup
 
+from src.listings.crawl_contract import detect_block_reason_from_html
 from src.listings.scraping.engine import BrowserFetcher, _run_async
 from src.listings.utils.seen_url_store import SeenUrlStore
 from src.listings.services.snapshot_storage import SnapshotService
@@ -214,6 +215,10 @@ class ScrapeClient:
         for item in browser_results:
             html = item.html
             error = preflight_errors.get(item.url) or item.error
+            block_reason = detect_block_reason_from_html(html)
+            if block_reason:
+                html = None
+                error = f"blocked:{block_reason}:{item.url}"
             if not html:
                 if error and (error.startswith("policy_blocked:") or error.startswith("blocked:")):
                     html = None

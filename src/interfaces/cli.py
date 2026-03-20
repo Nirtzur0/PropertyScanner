@@ -4,22 +4,26 @@ import subprocess
 import sys
 from typing import List
 
-from src.application.container import get_container
+def _run_command(cmd: List[str]) -> int:
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except KeyboardInterrupt:
+        return 130
 
 
 def _run_module(module: str, args: List[str]) -> int:
     cmd = [sys.executable, "-m", module] + args
-    return subprocess.run(cmd, check=False).returncode
+    return _run_command(cmd)
 
 
 def _run_streamlit(args: List[str]) -> int:
     cmd = [sys.executable, "-m", "streamlit", "run", "src/interfaces/dashboard/app.py"] + args
-    return subprocess.run(cmd, check=False).returncode
+    return _run_command(cmd)
 
 
 def _run_uvicorn(args: List[str]) -> int:
     cmd = [sys.executable, "-m", "uvicorn", "src.adapters.http.app:app"] + args
-    return subprocess.run(cmd, check=False).returncode
+    return _run_command(cmd)
 
 
 def _add_passthrough_parser(subparsers, name: str, help_text: str) -> None:
@@ -47,6 +51,12 @@ def _add_preflight_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--transactions-path", type=str, default=None, help="CSV/JSONL path for sold transactions")
     parser.add_argument("--skip-transactions", action="store_true", help="Skip transactions ingest step")
     parser.add_argument("--disable-cache", action="store_true", help="Disable Prefect task caching")
+
+
+def _get_container():
+    from src.application.container import get_container
+
+    return get_container()
 
 
 def _build_preflight_args(parsed: argparse.Namespace, extras: List[str]) -> List[str]:
@@ -123,6 +133,11 @@ def main(argv: List[str] = None) -> int:
     _add_passthrough_parser(subparsers, "train-pipeline", "Run full training sequence: VLM prep + Fusion Train (runs Prefect flow)")
     _add_passthrough_parser(subparsers, "caption-images", "Run image captioning batch job (runs Prefect maintenance flow)")
     _add_passthrough_parser(subparsers, "audit-serving-data", "Audit serving eligibility issues into data_quality_events")
+    seed_parser = subparsers.add_parser(
+        "seed-sample-data",
+        help="Seed a small local sample dataset for smoke tests and first-run demos",
+    )
+    seed_parser.add_argument("--db", type=str, default=None, help="SQLite DB path")
 
     preflight_parser = subparsers.add_parser(
         "preflight",
@@ -168,7 +183,17 @@ def main(argv: List[str] = None) -> int:
     if args.command == "api":
         return _run_uvicorn(cmd_args)
 
-    container = get_container()
+    if args.command == "seed-sample-data":
+        from src.application.sample_data import seed_sample_data
+        from src.platform.db.base import resolve_db_url
+        from src.platform.storage import StorageService
+
+        db_url = resolve_db_url(db_path=args.db) if args.db else None
+        storage = StorageService(db_url=db_url) if db_url else _get_container().storage
+        print(json.dumps(seed_sample_data(storage=storage), indent=2, default=str))
+        return 0
+
+    container = _get_container()
     if args.command == "preflight":
         payload = {
             "source_ids": args.crawl_source,

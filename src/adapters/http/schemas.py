@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -81,3 +82,12 @@ class CompReviewRequest(BaseModel):
     rejected_comp_ids: List[str] = Field(default_factory=list)
     overrides: dict = Field(default_factory=dict)
     notes: Optional[str] = None
+
+
+class UIEventRequest(BaseModel):
+    event_name: str = Field(min_length=1)
+    route: str = Field(min_length=1)
+    subject_type: Optional[str] = None
+    subject_id: Optional[str] = None
+    context: dict = Field(default_factory=dict)
+    occurred_at: datetime

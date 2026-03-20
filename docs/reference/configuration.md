@@ -42,6 +42,33 @@ From `config/paths.yaml`:
 | `PROPERTY_SCANNER_TFT_MODEL_PATH` | `${models_dir}/tft_forecaster.pt` |
 | `PROPERTY_SCANNER_TRANSACTIONS_PATH` | `${data_dir}/transactions.csv` |
 
+## Proxy-backed Crawl Overrides
+
+The first-wave proxy-backed sources are `realtor_us`, `redfin_us`, `seloger_fr`, and `immowelt_de`.
+
+Global provider-agnostic overrides:
+
+| Variable | Meaning |
+| --- | --- |
+| `PROPERTY_SCANNER_PROXY_URL` | Browser context proxy URL (`http://`, `https://`, or provider-compatible proxy endpoint) |
+| `PROPERTY_SCANNER_PROXY_BYPASS` | Optional bypass list forwarded to the browser context |
+| `PROPERTY_SCANNER_REMOTE_BROWSER_WS` | Optional remote browser WebSocket endpoint instead of a local browser session |
+
+Source-specific overrides take precedence over the global values:
+
+| Source | Proxy URL | Proxy Bypass | Remote Browser |
+| --- | --- | --- | --- |
+| `realtor_us` | `PROPERTY_SCANNER_REALTOR_US_PROXY_URL` | `PROPERTY_SCANNER_REALTOR_US_PROXY_BYPASS` | `PROPERTY_SCANNER_REALTOR_US_REMOTE_BROWSER_WS` |
+| `redfin_us` | `PROPERTY_SCANNER_REDFIN_US_PROXY_URL` | `PROPERTY_SCANNER_REDFIN_US_PROXY_BYPASS` | `PROPERTY_SCANNER_REDFIN_US_REMOTE_BROWSER_WS` |
+| `seloger_fr` | `PROPERTY_SCANNER_SELOGER_FR_PROXY_URL` | `PROPERTY_SCANNER_SELOGER_FR_PROXY_BYPASS` | `PROPERTY_SCANNER_SELOGER_FR_REMOTE_BROWSER_WS` |
+| `immowelt_de` | `PROPERTY_SCANNER_IMMOWELT_DE_PROXY_URL` | `PROPERTY_SCANNER_IMMOWELT_DE_PROXY_BYPASS` | `PROPERTY_SCANNER_IMMOWELT_DE_REMOTE_BROWSER_WS` |
+
+Runtime behavior:
+
+- direct/no-proxy mode remains the default local path
+- sources marked with `browser_config.proxy_required: true` do not attempt a direct crawl without a resolved proxy or remote-browser setting
+- missing proxy config surfaces as explicit `proxy_required` runtime evidence rather than a fake successful crawl
+
 ## Key Valuation Settings (`config/valuation.yaml`)
 
 | Key | Default | Meaning |
@@ -101,6 +128,7 @@ If the configured backend rejects image inputs, the VLM path fails explicitly an
 
 Each source contains:
 - `id`, `name`, `base_url`, `type`, `enabled`
+- optional browser runtime settings such as `browser_max_concurrency` and `browser_config`
 - rate limit policy
 - compliance section (`robots_txt_url`, allowed/disallowed paths)
 

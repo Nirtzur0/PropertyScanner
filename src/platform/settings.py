@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -74,6 +74,8 @@ class SourceConfig(BaseModel):
     listing_url_template: Optional[str] = None
 
     user_agent: Optional[str] = None
+    browser_max_concurrency: Optional[int] = None
+    browser_config: Dict[str, Any] = Field(default_factory=dict)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 

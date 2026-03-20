@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <title>SeLoger Fixture</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Apartment",
+        "name": "Appartement familial, Paris 11e",
+        "description": "Appartement lumineux proche du Canal Saint-Martin.",
+        "image": [
+          "https://cdn.example.com/seloger/front.jpg",
+          "https://cdn.example.com/seloger/living.jpg"
+        ],
+        "numberOfRooms": 4,
+        "numberOfBathroomsTotal": 2,
+        "floorSize": {"@type": "QuantitativeValue", "value": 102, "unitCode": "MTK"},
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "12 Rue Oberkampf",
+          "addressLocality": "Paris",
+          "postalCode": "75011",
+          "addressCountry": "FR"
+        },
+        "geo": {"@type": "GeoCoordinates", "latitude": 48.8642, "longitude": 2.3791},
+        "offers": {"@type": "Offer", "price": 890000, "priceCurrency": "EUR"}
+      }
+    </script>
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "listingData": {
+              "title": "Appartement familial, Paris 11e",
+              "description": "Appartement lumineux proche du Canal Saint-Martin.",
+              "pricing": {"price": 890000},
+              "bedrooms": 3,
+              "bathrooms": 2,
+              "livingArea": 102,
+              "propertyType": "Appartement",
+              "location": {
+                "city": "Paris",
+                "latitude": 48.8642,
+                "longitude": 2.3791
+              },
+              "photos": [
+                "https://cdn.example.com/seloger/front.jpg",
+                "https://cdn.example.com/seloger/living.jpg"
+              ]
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 data-testid="sl-title-bar-address">12 Rue Oberkampf, 75011 Paris</h1>
+    <div data-testid="sl-description">Appartement lumineux proche du Canal Saint-Martin.</div>
+  </body>
+</html>

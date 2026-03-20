@@ -6,6 +6,12 @@ import json
 import re
 import structlog
 import numpy as np
+
+# The retriever only uses text embeddings; letting transformers probe TensorFlow
+# drags in heavyweight optional deps and triggers startup warnings on local CLI paths.
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
 try:
     import lancedb
     import pyarrow as pa

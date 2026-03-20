@@ -33,6 +33,7 @@ from src.platform.settings import AppConfig
 from src.platform.storage import StorageService
 from src.platform.utils.compliance import ComplianceManager
 from src.platform.utils.config import ConfigLoader, load_app_config_safe
+from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger(__name__)
 
@@ -229,6 +230,7 @@ class UnifiedCrawlRunner:
         metrics = {
             "search_fetch_ok": bool(crawl_response.get("search_fetch_ok")),
             "search_block_reason": crawl_response.get("search_block_reason"),
+            "proxy_required": bool(crawl_response.get("proxy_required")),
             "search_pages_attempted": int(crawl_response.get("search_pages_attempted") or 0),
             "search_pages_succeeded": int(crawl_response.get("search_pages_succeeded") or 0),
             "listing_urls_discovered": int(crawl_response.get("listing_urls_discovered") or raw_count),
@@ -249,6 +251,8 @@ class UnifiedCrawlRunner:
         crawl_status = str(metrics["crawl_status"])
         if crawl_status in {"blocked", "policy_blocked"}:
             contract_status = "blocked"
+        elif crawl_status == "proxy_required":
+            contract_status = "experimental"
         elif saved > 0 and invalid_count == 0 and not errors:
             contract_status = "supported"
         elif saved > 0 or valid_count > 0:
@@ -310,7 +314,8 @@ class UnifiedCrawlRunner:
         # We create a new manager for this source to bind the specific seen check
         compliance = ComplianceManager(
             user_agent=self.app_config.agents.defaults.uastring,
-            seen_check=_is_seen
+            seen_check=_is_seen,
+            source_policy=crawler_config.get("compliance"),
         )
 
         crawler = AgentFactory.create_crawler(plan.source_id, crawler_config, compliance)

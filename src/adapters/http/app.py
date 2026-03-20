@@ -14,6 +14,7 @@ from src.adapters.http.schemas import (
     MemoRequest,
     PreflightJobRequest,
     SavedSearchRequest,
+    UIEventRequest,
     ValuationRequest,
     WatchlistRequest,
 )
@@ -46,6 +47,28 @@ _VALUATION_FAILURE_MESSAGES = {
 }
 
 
+def _source_status_by_source(container) -> dict[str, str]:
+    report = _source_audit_report(container)
+    return {
+        str(item["source_id"]): str(item.get("status") or "experimental")
+        for item in report.get("sources", [])
+        if item.get("source_id")
+    }
+
+
+def _source_metrics_by_source(container) -> dict[str, dict]:
+    report = _source_audit_report(container)
+    return {
+        str(item["source_id"]): dict(item.get("metrics") or {})
+        for item in report.get("sources", [])
+        if item.get("source_id")
+    }
+
+
+def _source_audit_report(container) -> dict:
+    return container.sources.audit_sources(persist=False).model_dump(mode="json")
+
+
 def _valuation_failure_response(code: str, request: ValuationRequest) -> HTTPException:
     return HTTPException(
         status_code=422,
@@ -71,6 +94,11 @@ def health() -> dict:
 @api_router.get("/pipeline-status")
 def pipeline_status() -> dict:
     return get_container().pipeline.pipeline_status()
+
+
+@api_router.get("/pipeline/trust-summary")
+def pipeline_trust_summary() -> dict:
+    return get_container().pipeline.pipeline_trust_summary()
 
 
 @api_router.get("/sources")
@@ -111,11 +139,32 @@ def create_valuation(request: ValuationRequest) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     container = get_container()
+    source_audit_report = _source_audit_report(container)
+    source_status_by_source = {
+        str(item["source_id"]): str(item.get("status") or "experimental")
+        for item in source_audit_report.get("sources", [])
+        if item.get("source_id")
+    }
+    source_metrics_by_source = {
+        str(item["source_id"]): dict(item.get("metrics") or {})
+        for item in source_audit_report.get("sources", [])
+        if item.get("source_id")
+    }
     try:
         if request.listing_id:
-            analysis = container.valuation.evaluate_listing_id(request.listing_id, persist=request.persist)
+            analysis = container.valuation.evaluate_listing_id(
+                request.listing_id,
+                persist=request.persist,
+                source_status_by_source=source_status_by_source,
+                source_metrics_by_source=source_metrics_by_source,
+            )
         else:
-            analysis = container.valuation.evaluate_listing(request.listing, persist=request.persist)  # type: ignore[arg-type]
+            analysis = container.valuation.evaluate_listing(
+                request.listing,
+                persist=request.persist,
+                source_status_by_source=source_status_by_source,
+                source_metrics_by_source=source_metrics_by_source,
+            )  # type: ignore[arg-type]
     except ValueError as exc:
         code = str(exc)
         if code in _VALUATION_FAILURE_MESSAGES:
@@ -215,6 +264,19 @@ def list_data_quality_events(limit: int = 100) -> dict:
     return {"total": len(items), "items": items}
 
 
+@api_router.post("/ui-events")
+def record_ui_event(request: UIEventRequest) -> dict:
+    event_id = get_container().reporting.record_ui_event(
+        event_name=request.event_name,
+        route=request.route,
+        subject_type=request.subject_type,
+        subject_id=request.subject_id,
+        context=request.context,
+        occurred_at=request.occurred_at,
+    )
+    return {"id": event_id, "status": "recorded"}
+
+
 @api_router.get("/source-contract-runs")
 def list_source_contract_runs(limit: int = 50) -> dict:
     items = get_container().reporting.list_source_contract_runs(limit=limit)
@@ -276,9 +338,20 @@ def list_comp_reviews(listing_id: str | None = None) -> dict:
     return {"total": len(items), "items": items}
 
 
+@api_router.get("/comp-reviews/{listing_id}/workspace")
+def get_comp_review_workspace(listing_id: str) -> dict:
+    try:
+        return get_container().workbench.comp_review_workspace(listing_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @api_router.post("/comp-reviews")
 def create_comp_review(request: CompReviewRequest) -> dict:
-    return get_container().workspace.create_comp_review(**request.model_dump(mode="json"))
+    try:
+        return get_container().workspace.create_comp_review(**request.model_dump(mode="json"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @api_router.get("/command-center/runs")

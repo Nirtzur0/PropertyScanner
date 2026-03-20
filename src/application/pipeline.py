@@ -6,13 +6,9 @@ import pandas as pd
 
 from src.application.analytics import AnalyticsArtifactService
 from src.core.runtime import RuntimeConfig
-from src.listings.workflows.unified_crawl import run_backfill
-from src.market.workflows.market_data import build_market_data
-from src.ml.training.benchmark import load_training_frame, run_benchmark
 from src.platform.db.base import resolve_db_url
 from src.platform.pipeline.state import PipelineStateService
 from src.platform.storage import StorageService
-from src.valuation.workflows.indexing import build_vector_index
 from src.application.model_readiness import ModelReadinessService
 from src.application.reporting import ReportingService
 from src.application.sources import SourceCapabilityService
@@ -41,11 +37,25 @@ class PipelineApplicationService:
     def db_url(self) -> str:
         return resolve_db_url(db_path=self.runtime_config.paths.db_path)
 
-    def pipeline_status(self) -> Dict[str, Any]:
+    def _source_audit_snapshot(self, *, persist: bool = False) -> Dict[str, Any]:
+        return self.source_capability_service.audit_sources(persist=persist).model_dump(mode="json")
+
+    def _pipeline_status_with_source_audit(self, source_audit: Dict[str, Any]) -> Dict[str, Any]:
         state = PipelineStateService(db_path=str(self.runtime_config.paths.db_path)).snapshot().to_dict()
-        state["source_capabilities"] = self.source_capability_service.audit_sources().model_dump(mode="json")
+        state["source_capabilities"] = source_audit
         state["model_readiness"] = self.model_readiness_service.sale_training_readiness()
         return state
+
+    def pipeline_status(self) -> Dict[str, Any]:
+        return self._pipeline_status_with_source_audit(self._source_audit_snapshot())
+
+    def pipeline_trust_summary(self) -> Dict[str, Any]:
+        source_audit = self._source_audit_snapshot()
+        pipeline_state = self._pipeline_status_with_source_audit(source_audit)
+        return self.reporting_service.pipeline_trust_summary(
+            pipeline_state=pipeline_state,
+            source_audit=source_audit,
+        )
 
     def run_crawl(
         self,
@@ -56,6 +66,8 @@ class PipelineApplicationService:
         page_size: int = 24,
         run_vlm: bool = False,
     ) -> Dict[str, Any]:
+        from src.listings.workflows.unified_crawl import run_backfill
+
         results = run_backfill(
             source_ids=source_ids,
             max_listings=max_listings,
@@ -66,10 +78,14 @@ class PipelineApplicationService:
         return {"results": results}
 
     def run_market_data(self) -> Dict[str, Any]:
+        from src.market.workflows.market_data import build_market_data
+
         build_market_data(db_path=str(self.runtime_config.paths.db_path))
         return {"status": "ok"}
 
     def run_index(self, *, listing_type: str = "all", limit: int = 0) -> Dict[str, Any]:
+        from src.valuation.workflows.indexing import build_vector_index
+
         indexed = build_vector_index(
             db_url=self.db_url,
             listing_type=listing_type,
@@ -111,6 +127,8 @@ class PipelineApplicationService:
         if listing_type == "sale" and benchmark_label_source == "auto":
             benchmark_label_source = "sold"
         try:
+            from src.ml.training.benchmark import load_training_frame, run_benchmark
+
             frame = load_training_frame(
                 db_url=self.db_url,
                 listing_type=listing_type,
@@ -229,8 +247,8 @@ class PipelineApplicationService:
             else:
                 steps.append({"step": "training", "result": {"status": "blocked", "reasons": readiness["reasons"]}})
 
-        final_status = self.pipeline_status()
-        final_status["source_capabilities"] = self.source_capability_service.audit_sources(persist=True).model_dump(mode="json")
+        final_source_audit = self._source_audit_snapshot(persist=True)
+        final_status = self._pipeline_status_with_source_audit(final_source_audit)
 
         return {
             "initial_status": initial,

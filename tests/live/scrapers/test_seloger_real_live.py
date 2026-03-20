@@ -1,7 +1,20 @@
 import pytest
+import os
 from src.platform.utils.compliance import ComplianceManager
 from src.listings.agents.crawlers.france.seloger import SeLogerCrawlerAgent
 from src.listings.utils.seen_url_store import SeenUrlStore
+
+def _proxy_available() -> bool:
+    return any(
+        os.getenv(name, "").strip()
+        for name in (
+            "PROPERTY_SCANNER_SELOGER_FR_PROXY_URL",
+            "PROPERTY_SCANNER_SELOGER_FR_REMOTE_BROWSER_WS",
+            "PROPERTY_SCANNER_PROXY_URL",
+            "PROPERTY_SCANNER_REMOTE_BROWSER_WS",
+        )
+    )
+
 
 @pytest.mark.live
 @pytest.mark.network
@@ -10,6 +23,8 @@ def test_live_crawl__seloger__returns_listings_or_skips_when_blocked():
     Test real network call to SeLoger search.
     Expected: Success (200 OK) + Listings found.
     """
+    if not _proxy_available():
+        pytest.skip("SeLoger live crawl requires proxy or remote browser configuration")
     # Reset seen URLs
     SeenUrlStore().reset_mode("fetch:seloger")
 
@@ -20,7 +35,8 @@ def test_live_crawl__seloger__returns_listings_or_skips_when_blocked():
         "id": "seloger",
         "prefer_browser": True, 
         "browser_wait_s": 5.0,
-        "maximize_stealth": True 
+        "maximize_stealth": True,
+        "browser_config": {"proxy_required": True},
     }
     
     crawler = SeLogerCrawlerAgent(config=config, compliance=compliance)
@@ -34,6 +50,8 @@ def test_live_crawl__seloger__returns_listings_or_skips_when_blocked():
     
     response = crawler.run(payload)
     
+    if response.status in {"blocked", "policy_blocked", "fetch_failed"}:
+        pytest.skip(f"SeLoger blocked under current live conditions: {response.errors}")
     assert response.status == "success"
     assert len(response.data) > 0, "Should find at least one listing on SeLoger real search"
     assert response.data[0].url.startswith("https://www.seloger.com")

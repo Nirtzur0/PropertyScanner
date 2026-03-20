@@ -44,3 +44,28 @@
   - Verify: `python3 -m src.interfaces.cli preflight --help` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /Users/nirtzur/Documents/projects/property_scanner/venv/bin/python -m pytest tests/unit/platform/test_llm__chatmock_routing.py tests/unit/listings/services/test_description_analyst__chatmock.py tests/unit/listings/services/test_vlm__chatmock.py --run-integration tests/integration/listings/test_feature_fusion__chatmock_paths.py -q`
   - Files: `src/platform/utils/llm.py`, `src/listings/services/description_analyst.py`, `src/listings/services/vlm.py`, `src/platform/settings.py`
   - Docs: `README.md`, `docs/reference/configuration.md`, `docs/how_to/configuration.md`, `docs/manifest/02_tech_stack.md`, `docs/manifest/03_decisions.md`, `docs/manifest/07_observability.md`, `docs/manifest/10_testing.md`
+
+- [x] AC-10: The primary product journey is the React workbench with `Decisions` as the merged watchlist/memo destination.
+  - Verify: `rg -n "Decisions|/memos -> /watchlists\\?tab=memos|/workbench" frontend/src/App.tsx docs/manifest/00_overview.md docs/manifest/03_decisions.md`
+  - Files: `frontend/src/App.tsx`, `frontend/src/pages.tsx`
+  - Docs: `docs/manifest/00_overview.md`, `docs/manifest/03_decisions.md`, `docs/implementation/reports/dashboard_ux_audit_redesign.md`
+
+- [x] AC-11: Major React routes have implementation parity with the redesign packet and no CTA points to an API-only surface.
+  - Verify: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q`
+  - Files: `frontend/src/App.tsx`, `frontend/src/pages.tsx`, `frontend/src/api.ts`, `src/application/workbench.py`, `src/adapters/http/app.py`
+  - Docs: `docs/implementation/reports/figma_live_alignment_matrix.md`, `docs/implementation/reports/dashboard_ux_audit_redesign.md`
+
+- [x] AC-12: Workbench, dossier, comp review, decision hub, and pipeline render explicit loading/empty/degraded/error states, and `/command-center` no longer exposes a separate product UI.
+  - Verify: `rg -n "Loading |EmptyState|warning-card|error-state|data_gaps|No benchmark runs|command_center_redirected" frontend/src/pages.tsx frontend/src/App.tsx frontend/src/track.ts`
+  - Files: `frontend/src/pages.tsx`, `frontend/src/styles.css`
+  - Docs: `docs/implementation/reports/dashboard_ux_audit_redesign.md`
+
+- [x] AC-13: The redesign reuses shared component patterns and token foundations instead of screen-by-screen ad hoc styling.
+  - Verify: `rg -n "truth-grid|detail-main-grid|queue-grid|page-stack|status-pill|metric-card" frontend/src/styles.css frontend/src/pages.tsx design/figma_redesign/styles.css`
+  - Files: `frontend/src/styles.css`, `frontend/src/pages.tsx`, `design/figma_redesign/styles.css`
+  - Docs: `docs/implementation/reports/dashboard_ux_audit_redesign.md`
+
+- [x] AC-14: Pipeline trust and UI instrumentation are backed by explicit lightweight contracts instead of UI-only state.
+  - Verify: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_reporting_service.py tests/unit/adapters/http/test_fastapi_local_api.py -q`
+  - Files: `src/application/reporting.py`, `src/application/pipeline.py`, `src/adapters/http/app.py`, `src/adapters/http/schemas.py`, `frontend/src/api.ts`, `frontend/src/track.ts`
+  - Docs: `docs/manifest/04_api_contracts.md`, `docs/manifest/07_observability.md`, `docs/implementation/reports/figma_live_alignment_matrix.md`

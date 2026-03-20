@@ -30,9 +30,7 @@ class ImovirtualCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 4)
-        )
+        browser_max_concurrency = int(config.get("browser_max_concurrency") or 4)
 
         rate_conf = config.get("rate_limit", {}) or {}
         

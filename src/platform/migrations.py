@@ -1,18 +1,27 @@
 
 import sqlite3
+from pathlib import Path
 from datetime import datetime
 
 import structlog
 from src.platform.config import DEFAULT_DB_PATH
+from src.listings.source_ids import canonical_source_map
 
 logger = structlog.get_logger(__name__)
+CURRENT_SCHEMA_VERSION = 1
 
 def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     """
     Applies all schema changes in order. Idempotent check should be improved in production (using version table).
     """
-    logger.info("migration_start")
+    Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=60.0)
+    current_version_row = conn.execute("PRAGMA user_version").fetchone()
+    current_version = int(current_version_row[0] or 0) if current_version_row else 0
+    if current_version >= CURRENT_SCHEMA_VERSION:
+        conn.close()
+        return
+    logger.info("migration_start", from_version=current_version, to_version=CURRENT_SCHEMA_VERSION)
     
     # 1. Market Indices
     conn.execute("""
@@ -253,6 +262,23 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS ix_data_quality_events_source_code ON data_quality_events (source_id, code)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ui_events (
+            id TEXT PRIMARY KEY,
+            event_name TEXT NOT NULL,
+            route TEXT NOT NULL,
+            subject_type TEXT,
+            subject_id TEXT,
+            context JSON,
+            occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_ui_events_event_route ON ui_events (event_name, route)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_ui_events_occurred_at ON ui_events (occurred_at)")
 
     conn.execute(
         """
@@ -596,10 +622,49 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         conn.execute("ALTER TABLE macro_scenarios ADD COLUMN retrieved_at DATETIME")
     except Exception:
         pass
+
+    legacy_aliases = canonical_source_map(
+        [
+            "imovirtual",
+            "rightmove",
+            "zoopla",
+            "onthemarket",
+            "immobiliare",
+            "funda",
+            "immowelt",
+            "realtor",
+            "redfin",
+            "homes",
+            "daft",
+            "sreality",
+            "seloger",
+            "pararius",
+        ]
+    )
+
+    def _canonicalize_source_ids(table_name: str) -> None:
+        if not _table_exists(table_name):
+            return
+        for legacy_source_id, canonical_source_id in legacy_aliases.items():
+            if legacy_source_id == canonical_source_id:
+                continue
+            conn.execute(
+                f"UPDATE {table_name} SET source_id = ? WHERE source_id = ?",
+                (canonical_source_id, legacy_source_id),
+            )
+
+    for table_name in (
+        "listings",
+        "source_contract_runs",
+        "data_quality_events",
+        "listing_observations",
+    ):
+        _canonicalize_source_ids(table_name)
         
+    conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
     conn.commit()
     conn.close()
-    logger.info("migration_complete")
+    logger.info("migration_complete", version=CURRENT_SCHEMA_VERSION)
 
 if __name__ == "__main__":
     run_migrations()

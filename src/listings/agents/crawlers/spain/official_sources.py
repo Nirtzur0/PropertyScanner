@@ -8,6 +8,7 @@ Fetches "ground truth" market data from official Spanish government sources:
 These sources provide the authoritative "macro" signal to anchor our "micro" listing observations.
 """
 
+from io import StringIO
 import pandas as pd
 import structlog
 from datetime import datetime
@@ -22,6 +23,8 @@ from src.platform.utils.time import utcnow
 logger = structlog.get_logger(__name__)
 
 class OfficialSourcesAgent:
+    ERI_REQUEST_TIMEOUT_SECONDS = 15
+
     def __init__(self, db_path: str = str(DEFAULT_DB_PATH)):
         self.db_path = db_path
         self.session = create_session("PropertyScanner/1.0 (Research; contact@example.com)")
@@ -121,14 +124,19 @@ class OfficialSourcesAgent:
                 url = pattern.format(quarter=q)
                 try:
                     logger.info("fetching_eri_csv", url=url)
-                    df = pd.read_csv(url, sep=";", encoding="latin1") # Common Spanish format
-                    
+                    response = request_get(
+                        self.session,
+                        url,
+                        timeout=self.ERI_REQUEST_TIMEOUT_SECONDS,
+                    )
+                    response.raise_for_status()
+                    df = pd.read_csv(StringIO(response.text), sep=";")
                     if not df.empty:
                         self._process_eri_csv(df, year, q)
                         break # Found it
                 except Exception as e:
                     # 404 is expected for future quarters
-                    pass
+                    logger.warning("eri_csv_fetch_failed", url=url, error=str(e))
 
     def _process_eri_csv(self, df: pd.DataFrame, year: int, quarter: int):
         """

@@ -27,7 +27,7 @@ class ServiceContainer:
         self.reporting = ReportingService(storage=self.storage)
         self.listings = ListingQueryService(storage=self.storage)
         self.valuation = ComparableBaselineValuationService(storage=self.storage)
-        self.workspace = WorkspaceService(storage=self.storage)
+        self.workspace = WorkspaceService(storage=self.storage, source_capability_service=self.sources)
         self.jobs = JobService(storage=self.storage, runtime_config=runtime_config)
         self.workbench = WorkbenchService(
             storage=self.storage,

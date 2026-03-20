@@ -1,9 +1,19 @@
 # Prompt Execution Plan
 
-- Generated: `2026-02-09`
+- Generated: `2026-03-11`
 - Prompt pack source: `prompts` submodule @ `63d6ac94e91b4e303caa895e394176b8d6c6fd15`
 - Target repo: `/Users/nirtzur/Documents/projects/property_scanner`
 - Objective anchor: `docs/manifest/00_overview.md#Core Objective`
+
+## Current Route
+
+- Active route: `Dashboard V3 simplification -> contract support -> partial Figma resync -> UI verification`
+- Active packet: `dashboard V3 prune`
+- Evidence:
+  - canonical product surface is now the FastAPI-served React workbench, not the deprecated Streamlit dashboard
+  - the follow-up V3 packet prunes the live IA to three primary destinations and removes Command Center as a product surface
+  - lightweight backend support now exists for `GET /api/v1/pipeline/trust-summary` and `POST /api/v1/ui-events`
+  - repo-owned HTML prototypes were updated for V3, but the second Figma MCP sync pass is only partially complete because the seat/tool-call limit re-blocked the import after the new Workbench capture
 
 ## Inferred Cycle Stage + Key Signals
 
@@ -26,9 +36,9 @@
 
 | Prompt ID | Why now | Appetite | Decision |
 | --- | --- | --- | --- |
-| `prompt-02-app-development-playbook` | `M6` requires code + docs execution across API/dashboard status surfaces and milestone tracking. | `medium` | `Immediate #1` |
-| `prompt-06-ui-e2e-verification-loop` | `C-01` explicitly requires UI verification artifacts and dashboard-focused E2E evidence. | `medium` | `Immediate #2` |
-| `prompt-03-alignment-review-gate` | Needed immediately after `M6` to confirm drift closure and route remaining gaps. | `small` | `Immediate #3` |
+| `prompt-02-app-development-playbook` | `M10` follow-through requires code + docs execution across the pruned IA, trust-summary contract, and instrumentation surfaces. | `medium` | `Immediate #1` |
+| `prompt-06-ui-e2e-verification-loop` | The V3 prune needs browser evidence for the reduced nav, command-center redirect, and simplified Decisions/Pipeline flows. | `medium` | `Immediate #2` |
+| `prompt-03-alignment-review-gate` | Needed immediately after the V3 prune to confirm Figma/live drift and record the MCP sync blocker truthfully. | `small` | `Immediate #3` |
 | `prompt-15-artifact-feature-alignment-gate` | `O-04` (assumption badges) is open but should follow `M6` runtime/UI trust baseline. | `small` | `Deferred / Not now` |
 | `prompt-11-docs-diataxis-release` | Release-readiness checklist is open, but should not preempt active build packet risks. | `small` | `Deferred / Not now` |
 | `prompt-10-tests-stabilization-loop` | Use only if `M6` introduces failing/flaky tests; no current failure signal requires it first. | `small` | `Deferred / Conditional` |
@@ -43,17 +53,17 @@
 ### Why now + dependencies + expected deliverables
 
 1. `prompt-02-app-development-playbook`
-   - Why now: execute `M6` implementation core (`C-02`) and keep milestone/status/worklog synchronized.
+   - Why now: execute the V3 simplification packet against the React product and keep milestone/status/worklog synchronized.
    - Dependencies: `charter-prompt-system.md`, `charter-app-implementation-system.md`, `charter-docs-system.md`, `guardrails-repo-change.md`
-   - Expected deliverables for this packet: updates to `src/interfaces/api/pipeline.py`, `src/interfaces/dashboard/app.py`, `docs/crawler_status.md`, `docs/manifest/07_observability.md`, `docs/implementation/checklists/02_milestones.md`, `docs/implementation/00_status.md`, `docs/implementation/03_worklog.md`
+   - Expected deliverables for this packet: `docs/implementation/reports/dashboard_ux_audit_redesign.md`, React route/UI updates under `frontend/src/*`, trust-summary + UI-event contracts, design-source updates under `design/figma_redesign/*`, milestone/status/worklog sync, and route/data-contract verification
 2. `prompt-06-ui-e2e-verification-loop`
-   - Why now: close `C-01` with explicit UI inventory, reproducible run commands, and minimal stable dashboard E2E smoke coverage.
+   - Why now: verify the pruned React routes, command-center redirect, slimmer Decisions surface, and pipeline trust summary with browser-level evidence.
    - Dependencies: `charter-prompt-system.md`, `charter-docs-system.md`, `charter-test-system.md`, `guardrails-repo-change.md`
-   - Expected deliverables: `docs/implementation/checklists/05_ui_verification.md`, `docs/implementation/reports/ui_verification_final_report.md`, `docs/implementation/00_status.md`, `docs/implementation/03_worklog.md`, `tests/` (UI-focused E2E coverage)
+   - Expected deliverables: route-level React UI smoke coverage and verification references in planning/status docs
 3. `prompt-03-alignment-review-gate`
-   - Why now: verify objective alignment immediately after `M6` and route follow-up (`O-04`) as explicit bet or closure.
+   - Why now: verify that the new IA, route map, and partial V3 Figma sync state are explicit instead of implied.
    - Dependencies: `charter-prompt-system.md`, `charter-docs-system.md`, `guardrails-repo-change.md`
-   - Expected deliverables: `docs/implementation/checklists/07_alignment_review.md`, `docs/implementation/reports/alignment_review.md`, `docs/implementation/00_status.md`, `docs/implementation/03_worklog.md`
+   - Expected deliverables: refreshed alignment matrix, decision log, and checkpoint docs
 
 ## Deferred / Not Now Prompt IDs
 

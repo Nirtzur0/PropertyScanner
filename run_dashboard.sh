@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Prefer the project's venv if present so this works without requiring an
 # activated shell environment.
@@ -9,13 +10,10 @@ elif [ -x "./.venv/bin/python" ]; then
   PYTHON_BIN="./.venv/bin/python"
 fi
 
-# Kill any process running on port 8501
-PID=$(lsof -ti :8501)
-if [ ! -z "$PID" ]; then
-  echo "Killing process on port 8501 (PID: $PID)..."
-  kill -9 $PID
-fi
+HOST="${PROPERTY_SCANNER_HOST:-127.0.0.1}"
+PORT="${PROPERTY_SCANNER_PORT:-8001}"
 
-# Run the dashboard
-echo "Starting Property Scanner Dashboard..."
-"$PYTHON_BIN" -m src.interfaces.cli dashboard
+echo "Starting Property Scanner local API on http://${HOST}:${PORT}"
+echo "Open the React workbench at http://${HOST}:${PORT}/workbench"
+echo "Use 'python3 -m src.interfaces.cli legacy-dashboard --skip-preflight' only if you explicitly need the deprecated Streamlit surface."
+exec "$PYTHON_BIN" -m src.interfaces.cli api --host "$HOST" --port "$PORT" "$@"

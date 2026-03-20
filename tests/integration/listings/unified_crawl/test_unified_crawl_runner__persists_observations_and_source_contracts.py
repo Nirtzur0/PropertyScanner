@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import text
 
 from src.listings.workflows.unified_crawl import (
@@ -65,6 +67,7 @@ def test_unified_crawl_runner__persists_observations_entities_and_source_contrac
     runner = UnifiedCrawlRunner(
         app_config=app_config,
         db_url=f"sqlite:///{db_path}",
+        seen_urls_db=str(tmp_path / "seen_urls.sqlite3"),
         settings=UnifiedCrawlSettings(enable_fusion=False, enable_augment=False, source_workers=1),
     )
     monkeypatch.setattr(
@@ -96,3 +99,59 @@ def test_unified_crawl_runner__persists_observations_entities_and_source_contrac
     assert len(source_runs) == 1
     assert source_runs[0][0] == "imovirtual_pt"
     assert source_runs[0][1] in {"supported", "degraded"}
+
+
+def test_unified_crawl_runner__proxy_required_source_persists_truthful_contract_status(tmp_path, monkeypatch):
+    monkeypatch.delenv("PROPERTY_SCANNER_PROXY_URL", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REMOTE_BROWSER_WS", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REALTOR_US_PROXY_URL", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REALTOR_US_REMOTE_BROWSER_WS", raising=False)
+
+    db_path = tmp_path / "crawl_proxy.db"
+    app_config = AppConfig.model_validate(
+        {
+            "pipeline": {"db_path": str(db_path), "db_url": f"sqlite:///{db_path}"},
+            "sources": {
+                "sources": [
+                    {
+                        "id": "realtor_us",
+                        "name": "Realtor.com",
+                        "enabled": False,
+                        "countries": ["US"],
+                        "browser_config": {"proxy_required": True},
+                        "rate_limit": {"period_seconds": 0},
+                        "base_url": "https://www.realtor.com",
+                    }
+                ]
+            },
+        }
+    )
+    runner = UnifiedCrawlRunner(
+        app_config=app_config,
+        db_url=f"sqlite:///{db_path}",
+        seen_urls_db=str(tmp_path / "seen_urls.sqlite3"),
+        settings=UnifiedCrawlSettings(enable_fusion=False, enable_augment=False, source_workers=1),
+    )
+
+    result = runner.run_source(UnifiedSourcePlan(source_id="realtor_us"))
+
+    assert result["saved"] == 0
+    assert result["errors"] == ["proxy_required:realtor_us"]
+
+    storage = StorageService(db_url=f"sqlite:///{db_path}")
+    session = storage.get_session()
+    try:
+        source_runs = session.execute(
+            text("SELECT status, metrics FROM source_contract_runs ORDER BY created_at DESC")
+        ).fetchall()
+    finally:
+        session.close()
+        runner.close()
+
+    assert len(source_runs) == 1
+    assert source_runs[0][0] == "experimental"
+    metrics = source_runs[0][1]
+    if isinstance(metrics, str):
+        metrics = json.loads(metrics)
+    assert metrics["crawl_status"] == "proxy_required"
+    assert metrics["proxy_required"] is True

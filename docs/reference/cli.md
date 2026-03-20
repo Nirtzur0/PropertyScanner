@@ -3,10 +3,20 @@
 Primary entrypoint:
 
 ```bash
-python3 -m src.interfaces.cli -h
+property-scanner --help
 ```
 
-The CLI is a wrapper over module entrypoints in `src/interfaces/cli.py`.
+Repo-owned command surface:
+
+```bash
+make build-package
+make test-offline
+make test-integration
+make test-e2e
+make smoke-api
+```
+
+The CLI is a wrapper over module entrypoints in `src/interfaces/cli.py`. `property-scanner` is the supported console entrypoint; `python3 -m src.interfaces.cli` remains compatible.
 
 ## Commands
 
@@ -32,13 +42,14 @@ The CLI is a wrapper over module entrypoints in `src/interfaces/cli.py`.
 | `train-pipeline` | `src.platform.workflows.prefect_orchestration` | VLM + fusion training flow |
 | `caption-images` | `src.platform.workflows.prefect_orchestration maintenance --vlm` | VLM captioning path |
 | `audit-serving-data` | application reporting service | Scans current listings and records serving-eligibility issues into `data_quality_events` |
+| `seed-sample-data` | application sample-data seeder | Seeds a small local `pisos` dataset for smoke tests and first-run demos |
 
 ## Getting detailed flags
 
 `preflight` now exposes common freshness/caching flags at top-level help:
 
 ```bash
-python3 -m src.interfaces.cli preflight --help
+property-scanner preflight --help
 ```
 
 For full Prefect flow-level arguments, use:
@@ -85,3 +96,10 @@ python3 -m src.listings.scraping.sidecar --help
 
 - CLI returns delegated module exit code.
 - Unknown command fails with parser error.
+
+## Supported local slice
+
+- `pisos` is the documented supported end-to-end local slice for this packet.
+- `rightmove_uk`, `zoopla_uk`, `imovirtual_pt`, `onthemarket_uk`, and `sreality_cz` should be treated as experimental unless fresh runtime evidence upgrades them.
+- `realtor_us`, `redfin_us`, `seloger_fr`, and `immowelt_de` now have deterministic normalizers but require proxy-backed browser configuration for live crawling.
+- blocked portals remain blocked, and proxy-required portals now fail explicitly rather than silently degrading to fake success.

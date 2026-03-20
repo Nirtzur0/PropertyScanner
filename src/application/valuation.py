@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from math import atan2, cos, radians, sin, sqrt
 from statistics import mean
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from src.application.serving import MAX_PRICE, MAX_SURFACE_AREA, MIN_PRICE, MIN_SURFACE_AREA
+from src.listings.source_ids import canonicalize_source_id
 from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.platform.domain.models import DBListing
 from src.platform.domain.schema import CanonicalListing, CompEvidence, DealAnalysis, EvidencePack, ValuationProjection
+from src.platform.settings import ValuationConfig
 from src.platform.storage import StorageService
+from src.platform.utils.time import utcnow
 from src.valuation.services.valuation_persister import ValuationPersister
 
 
@@ -30,8 +35,9 @@ def _weighted_quantile(values: Sequence[float], weights: Sequence[float], quanti
 
 
 class ComparableBaselineValuationService:
-    def __init__(self, *, storage: StorageService) -> None:
+    def __init__(self, *, storage: StorageService, config: Optional[ValuationConfig] = None) -> None:
         self.storage = storage
+        self.config = config or ValuationConfig()
 
     @staticmethod
     def _distance_km(
@@ -48,7 +54,93 @@ class ComparableBaselineValuationService:
         a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
         return 6371.0 * 2 * atan2(sqrt(a), sqrt(1 - a))
 
-    def _candidate_rows(self, target: CanonicalListing, k: int = 10) -> List[Tuple[DBListing, float, float]]:
+    @staticmethod
+    def _candidate_observed_at(row: DBListing):
+        return row.listed_at or row.updated_at or row.fetched_at
+
+    @staticmethod
+    def _candidate_source_status(
+        row: DBListing,
+        source_status_by_source: Optional[Dict[str, str]],
+    ) -> Optional[str]:
+        if not source_status_by_source:
+            return None
+        canonical_source_id = canonicalize_source_id(str(row.source_id))
+        return (
+            source_status_by_source.get(canonical_source_id)
+            or source_status_by_source.get(str(row.source_id))
+        )
+
+    @staticmethod
+    def _candidate_source_metrics(
+        row: DBListing,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        if not source_metrics_by_source:
+            return {}
+        canonical_source_id = canonicalize_source_id(str(row.source_id))
+        return dict(
+            source_metrics_by_source.get(canonical_source_id)
+            or source_metrics_by_source.get(str(row.source_id))
+            or {}
+        )
+
+    @staticmethod
+    def _source_metric_penalty(source_metrics: Optional[Dict[str, Any]]) -> float:
+        if not source_metrics:
+            return 0.0
+        invalid_price_ratio = max(float(source_metrics.get("invalid_price_ratio") or 0.0), 0.0)
+        invalid_surface_area_ratio = max(float(source_metrics.get("invalid_surface_area_ratio") or 0.0), 0.0)
+        freshness_window_days = max(float(source_metrics.get("freshness_window_days") or 14.0), 1.0)
+        coverage_floor = min(
+            1.0,
+            float(source_metrics.get("title_coverage_ratio") or 1.0),
+            float(source_metrics.get("price_coverage_ratio") or 1.0),
+            float(source_metrics.get("surface_area_coverage_ratio") or 1.0),
+            float(source_metrics.get("location_coverage_ratio") or 1.0),
+        )
+        last_seen_age_days_raw = source_metrics.get("last_seen_age_days")
+        latest_run_age_days_raw = source_metrics.get("latest_run_age_days")
+        last_seen_age_days = (
+            max(float(last_seen_age_days_raw), 0.0) if last_seen_age_days_raw not in (None, "") else None
+        )
+        latest_run_age_days = (
+            max(float(latest_run_age_days_raw), 0.0) if latest_run_age_days_raw not in (None, "") else None
+        )
+        invalid_penalty = min((invalid_price_ratio * 0.18) + (invalid_surface_area_ratio * 0.18), 0.22)
+        coverage_penalty = max(0.0, 1.0 - coverage_floor) * 0.15
+        freshness_penalty = (
+            min(last_seen_age_days / freshness_window_days, 1.0) * 0.03 if last_seen_age_days is not None else 0.0
+        )
+        contract_run_penalty = (
+            min(latest_run_age_days / freshness_window_days, 1.0) * 0.02
+            if latest_run_age_days is not None
+            else 0.0
+        )
+        return min(invalid_penalty + coverage_penalty + freshness_penalty + contract_run_penalty, 0.34)
+
+    @classmethod
+    def _source_health_multiplier(
+        cls,
+        source_status: Optional[str],
+        source_metrics: Optional[Dict[str, Any]] = None,
+    ) -> float:
+        if source_status == "degraded":
+            base = 0.9
+        elif source_status == "experimental":
+            base = 0.97
+        else:
+            base = 1.0
+        return max(0.55, min(1.0, base - cls._source_metric_penalty(source_metrics)))
+
+    def _candidate_rows(
+        self,
+        target: CanonicalListing,
+        k: int = 10,
+        *,
+        source_status_by_source: Optional[Dict[str, str]] = None,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> List[Tuple[DBListing, float, float]]:
         if target.location is None or not target.location.city:
             raise ValueError("target_city_required")
         if not target.surface_area_sqm or target.surface_area_sqm <= 0:
@@ -62,9 +154,11 @@ class ComparableBaselineValuationService:
                 .filter(DBListing.city == target.location.city)
                 .filter(DBListing.listing_type == (target.listing_type or "sale"))
                 .filter(DBListing.price.isnot(None))
-                .filter(DBListing.price > 0)
+                .filter(DBListing.price >= MIN_PRICE)
+                .filter(DBListing.price <= MAX_PRICE)
                 .filter(DBListing.surface_area_sqm.isnot(None))
-                .filter(DBListing.surface_area_sqm > 5)
+                .filter(DBListing.surface_area_sqm >= MIN_SURFACE_AREA)
+                .filter(DBListing.surface_area_sqm <= MAX_SURFACE_AREA)
             )
             if target.property_type:
                 query = query.filter(DBListing.property_type == str(getattr(target.property_type, "value", target.property_type)))
@@ -73,7 +167,15 @@ class ComparableBaselineValuationService:
             session.close()
 
         scored: List[Tuple[DBListing, float, float]] = []
+        age_cutoff = utcnow() - timedelta(days=max(int(self.config.max_age_months), 0) * 30)
         for row in rows:
+            source_status = self._candidate_source_status(row, source_status_by_source)
+            source_metrics = self._candidate_source_metrics(row, source_metrics_by_source)
+            if source_status == "blocked":
+                continue
+            observed_at = self._candidate_observed_at(row)
+            if observed_at is not None and observed_at < age_cutoff:
+                continue
             row_sqm = float(row.surface_area_sqm or 0.0)
             if row_sqm <= 0:
                 continue
@@ -89,6 +191,7 @@ class ComparableBaselineValuationService:
                 row.lon,
             )
             similarity = 1.0 / (1.0 + abs(1.0 - ratio) + (distance / 10.0))
+            similarity *= self._source_health_multiplier(source_status, source_metrics)
             implied_value = (float(row.price) / row_sqm) * float(target.surface_area_sqm)
             scored.append((row, similarity, implied_value))
 
@@ -101,8 +204,15 @@ class ComparableBaselineValuationService:
         *,
         persist: bool = False,
         model_version: str = "baseline-comp-v1",
+        source_status_by_source: Optional[Dict[str, str]] = None,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> DealAnalysis:
-        candidates = self._candidate_rows(target, k=10)
+        candidates = self._candidate_rows(
+            target,
+            k=10,
+            source_status_by_source=source_status_by_source,
+            source_metrics_by_source=source_metrics_by_source,
+        )
         if len(candidates) < 3:
             raise ValueError("insufficient_comps")
 
@@ -174,7 +284,14 @@ class ComparableBaselineValuationService:
                 session.close()
         return analysis
 
-    def evaluate_listing_id(self, listing_id: str, *, persist: bool = False) -> DealAnalysis:
+    def evaluate_listing_id(
+        self,
+        listing_id: str,
+        *,
+        persist: bool = False,
+        source_status_by_source: Optional[Dict[str, str]] = None,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> DealAnalysis:
         session = self.storage.get_session()
         try:
             row = session.query(DBListing).filter(DBListing.id == listing_id).first()
@@ -183,4 +300,9 @@ class ComparableBaselineValuationService:
             target = db_listing_to_canonical(row)
         finally:
             session.close()
-        return self.evaluate_listing(target, persist=persist)
+        return self.evaluate_listing(
+            target,
+            persist=persist,
+            source_status_by_source=source_status_by_source,
+            source_metrics_by_source=source_metrics_by_source,
+        )

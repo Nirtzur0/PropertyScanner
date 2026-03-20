@@ -35,11 +35,11 @@ We are building a local-first property intelligence system for investors/analyst
 
 ### Primary user journeys
 
-1. Setup and first run: clone -> install dependencies -> run dashboard -> inspect outputs.
-2. Data refresh: run preflight/crawl path -> ingest updates -> validate run status.
-3. Market and index refresh: build market data + vector index -> verify artifacts.
-4. Model and valuation workflow: train/backfill/calibrate -> review valuation outputs.
-5. Analyst workflow: run agent-assisted query -> inspect candidates and evidence trail.
+1. Setup and first run: clone -> install dependencies -> run the FastAPI-served React workbench -> inspect readiness, listings, and trust surfaces.
+2. Data refresh: run preflight/crawl path -> ingest updates -> validate pipeline/source status before trusting downstream UI.
+3. Market and index refresh: build market data + vector index -> verify artifacts and benchmark/coverage implications.
+4. Listing investigation workflow: move from workbench -> dossier -> comp review -> decision hub memo/watchlist outputs.
+5. Analyst workflow: use workbench, decisions, and pipeline as one coherent local-first product surface, with dossier and comp-review drill-downs for deeper investigation.
 6. Contributor workflow: run tests -> make scoped change -> verify docs/tests alignment.
 
 ## Target Users
@@ -55,4 +55,4 @@ We are building a local-first property intelligence system for investors/analyst
 - Market/official metrics ingest and derived index generation.
 - Comp indexing and retrieval for valuation evidence.
 - Training + backfill + calibration lifecycle for valuation quality.
-- Dashboard/CLI/API access layers over the same pipeline surface.
+- React workbench + CLI + API access layers over the same local-first pipeline surface.

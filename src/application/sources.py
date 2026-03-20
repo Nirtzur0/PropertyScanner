@@ -13,10 +13,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from src.core.runtime import RuntimeConfig
+from src.listings.scraping.proxy_config import (
+    browser_proxy_configured,
+    browser_proxy_required,
+    resolve_browser_runtime_config,
+)
 from src.listings.source_ids import canonicalize_source_id, source_aliases
 from src.platform.domain.models import DataQualityEvent, SourceContractRun
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
+
+_SUPPORTED_BASELINE_SOURCES = {"pisos"}
 
 
 def _norm_source_base(source_id: str) -> str:
@@ -30,6 +37,16 @@ def _safe_ratio(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
     return float(numerator) / float(denominator)
+
+
+def _age_days(now: datetime, value: Any) -> float | None:
+    if value is None:
+        return None
+    observed_at = pd.to_datetime(value, format="mixed", errors="coerce")
+    if observed_at is None or pd.isna(observed_at):
+        return None
+    age_days = max((now - observed_at.to_pydatetime()).total_seconds() / 86400.0, 0.0)
+    return round(age_days, 6)
 
 
 class SourceCapabilityReport(BaseModel):
@@ -54,6 +71,7 @@ class SourceCatalogEntry:
     name: str
     enabled: bool
     countries: List[str]
+    browser_config: Dict[str, Any]
 
 
 class SourceCapabilityService:
@@ -76,6 +94,7 @@ class SourceCapabilityService:
                     name=str(item.get("name") or item.get("id") or "").strip(),
                     enabled=bool(item.get("enabled", False)),
                     countries=list(item.get("countries") or []),
+                    browser_config=dict(item.get("browser_config") or {}),
                 )
             )
         return [entry for entry in results if entry.source_id]
@@ -289,6 +308,9 @@ class SourceCapabilityService:
             latest_run_status = str((latest_run or {}).get("status") or "")
             latest_run_created_at = (latest_run or {}).get("created_at")
             latest_run_metrics = dict((latest_run or {}).get("metrics") or {})
+            resolved_browser_config = resolve_browser_runtime_config(entry.source_id, entry.browser_config)
+            proxy_required = browser_proxy_required(resolved_browser_config)
+            proxy_configured = browser_proxy_configured(resolved_browser_config)
 
             invalid_price_ratio = _safe_ratio(invalid_price_count, row_count)
             invalid_surface_area_ratio = _safe_ratio(invalid_surface_area_count, row_count)
@@ -306,10 +328,15 @@ class SourceCapabilityService:
             elif recent_run_available and latest_run_status == "policy_blocked":
                 status = "blocked"
                 reasons.append("latest_run_policy_blocked")
+            elif recent_run_available and latest_run_status == "proxy_required":
+                status = "experimental"
+                reasons.append("latest_run_proxy_required")
             elif doc_state == "blocked":
                 status = "blocked"
                 reasons.append("crawler_status_blocked")
             else:
+                if proxy_required and not proxy_configured:
+                    reasons.append("proxy_required_unconfigured")
                 if row_count == 0:
                     reasons.append("no_rows")
                 if row_count < thresholds.experimental_min_rows:
@@ -334,7 +361,12 @@ class SourceCapabilityService:
                 if recent_run_available and latest_run_status and latest_run_status not in {"supported"}:
                     reasons.append(f"latest_run_{latest_run_status}")
 
-                if row_count >= thresholds.experimental_min_rows and not reasons:
+                is_supported_baseline = canonical_source_id in _SUPPORTED_BASELINE_SOURCES
+                if (
+                    row_count >= thresholds.experimental_min_rows
+                    and not reasons
+                    and (is_supported_baseline or (recent_run_available and latest_run_status == "supported"))
+                ):
                     status = "supported"
                 elif any(reason in reasons for reason in ("price_corruption_high", "area_corruption_high", "stale_rows")):
                     status = "degraded"
@@ -366,13 +398,20 @@ class SourceCapabilityService:
                         "invalid_price_ratio": round(invalid_price_ratio, 6),
                         "invalid_surface_area_ratio": round(invalid_surface_area_ratio, 6),
                         "last_seen": last_seen.isoformat() if last_seen is not None and not pd.isna(last_seen) else None,
+                        "last_seen_age_days": _age_days(now, last_seen),
                         "latest_run_status": latest_run_status or None,
                         "latest_run_created_at": (
                             latest_run_created_at.isoformat()
                             if latest_run_created_at is not None and not pd.isna(latest_run_created_at)
                             else None
                         ),
+                        "latest_run_age_days": _age_days(now, latest_run_created_at),
                         "latest_run_metrics": latest_run_metrics,
+                        "freshness_window_days": thresholds.freshness_days,
+                        "has_recent_supported_run": bool(recent_run_available and latest_run_status == "supported"),
+                        "proxy_required": proxy_required,
+                        "proxy_configured": proxy_configured,
+                        "supported_baseline": canonical_source_id in _SUPPORTED_BASELINE_SOURCES,
                         **contract_support,
                         "doc_state": doc_state,
                     },

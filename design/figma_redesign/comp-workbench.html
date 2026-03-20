@@ -20,21 +20,20 @@
         <a href="./workbench.html">Workbench</a>
         <a href="./listing-detail.html">Listing Detail</a>
         <a class="active" href="./comp-workbench.html">Comp Workbench</a>
-        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a href="./memo-watchlists.html">Decision Hub</a>
         <a href="./pipeline-health.html">Pipeline</a>
-        <a href="./command-center.html">Command Center</a>
       </nav>
 
       <section class="artboard">
         <div class="artboard-header">
           <div>
-            <div class="eyebrow">12 Comp Workbench</div>
-            <h2>Manual review, overrides, and valuation deltas</h2>
+            <div class="eyebrow">12 Comp Workbench V3</div>
+            <h2>Manual review with the value effect surfaced early</h2>
           </div>
           <div class="tool-row">
             <div class="toolbar-pill">Pin / reject</div>
             <div class="toolbar-pill">Adjustment matrix</div>
-            <div class="toolbar-pill">Audit history</div>
+            <div class="toolbar-pill">Audit on disclosure</div>
           </div>
         </div>
 
@@ -52,8 +51,8 @@
               <div class="nav-item">Override log</div>
             </div>
             <div class="sidebar-footer">
-              <h4>Effect-on-value</h4>
-              <p>Current override set adds +11k EUR to fair value and narrows interval 4%.</p>
+              <h4>Memo gate</h4>
+              <p>Keep the publish decision simple: retained comps, value shift, and guardrails first.</p>
             </div>
           </aside>
 
@@ -131,17 +130,16 @@
             <div class="two-col">
               <section class="panel">
                 <div class="panel-title">
-                  <h4>Value delta simulator</h4>
+                  <h4>Memo gate</h4>
                   <div class="toolbar-pill">What changed</div>
                 </div>
-                <div class="bar-chart">
-                  <div class="bar" style="height: 56%"><span>Base</span></div>
-                  <div class="bar accent" style="height: 73%"><span>Pinned</span></div>
-                  <div class="bar gold" style="height: 66%"><span>Adjusted</span></div>
-                  <div class="bar" style="height: 61%"><span>Memo</span></div>
+                <div class="list-stack">
+                  <div class="metric-card">Candidate pool median: 362k.</div>
+                  <div class="metric-card">Retained median: 370k.</div>
+                  <div class="metric-card">Publish only when the retained set still passes guardrails.</div>
                 </div>
                 <p style="margin-top: 18px">
-                  Every override updates the interval, confidence, and memo rationale in one place.
+                  Every override updates the interval, confidence, and decision rationale in one place.
                 </p>
               </section>
 
@@ -177,7 +175,7 @@
               </div>
               <div class="timeline">
                 <div class="timeline-item">Reject publish if fewer than 5 retained comps remain.</div>
-                <div class="timeline-item">Manual assumptions must appear in memo risk section.</div>
+                <div class="timeline-item">Manual assumptions must appear in the memo risk section.</div>
               </div>
             </div>
           </aside>

@@ -1,9 +1,11 @@
 import uuid
 from datetime import timedelta
 from typing import Dict, Optional, Tuple
+
 from sqlalchemy.orm import Session
+
 from src.platform.domain.models import PropertyValuation
-from src.valuation.services.valuation import DealAnalysis
+from src.platform.domain.schema import DealAnalysis
 from src.platform.utils.time import utcnow
 
 

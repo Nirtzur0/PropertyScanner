@@ -2,6 +2,20 @@
 
 ## Checkpoint Notes
 
+- [x] 2026-03-11 Dashboard V3 prune packet: the React analyst surface now ships with three primary destinations, a command-center redirect, slimmer Decisions tabs, a trust-summary pipeline contract, and UI instrumentation.
+  - AC: `Workbench`, `Decisions`, and `Pipeline` are the only primary destinations; `/command-center` redirects to `/pipeline`; Decisions only exposes watchlists + memos; pipeline consumes `GET /api/v1/pipeline/trust-summary`; tracked UI events persist through `POST /api/v1/ui-events`.
+  - Verify: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/platform/test_migrations__runtime_tables.py tests/unit/application/test_reporting_service.py tests/unit/adapters/http/test_fastapi_local_api.py -q && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q && (cd frontend && npm run build)`
+  - Files: `frontend/src/App.tsx`, `frontend/src/pages.tsx`, `frontend/src/api.ts`, `frontend/src/track.ts`, `src/adapters/http/app.py`, `src/application/reporting.py`, `src/application/pipeline.py`, `src/platform/domain/models.py`
+  - Docs: `docs/implementation/reports/figma_live_alignment_matrix.md`, `docs/manifest/03_decisions.md`, `docs/manifest/04_api_contracts.md`, `docs/manifest/07_observability.md`, `docs/implementation/00_status.md`, `docs/implementation/03_worklog.md`
+  - Alternatives: keep V2 breadth and the separate Command Center destination (rejected: too much conceptual weight for too little analyst value)
+
+- [x] 2026-03-11 Dashboard UX redesign packet: the canonical React analyst surface now follows the V2 IA, with `Decisions` replacing split watchlist/memo navigation and real dossier/comp-review/pipeline/command-center routes implemented.
+  - AC: workbench truth strip, dossier parity, comp-review workspace, decision-hub merge, pipeline trust surface, and guarded command-center UI all exist with route/data-contract coverage.
+  - Verify: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q && (cd frontend && npm run build)`
+  - Files: `frontend/src/*`, `src/application/workbench.py`, `src/adapters/http/app.py`, `tests/e2e/ui/test_react_dashboard_routes.py`
+  - Docs: `docs/implementation/reports/dashboard_ux_audit_redesign.md`, `docs/implementation/reports/figma_live_alignment_matrix.md`, `docs/implementation/00_status.md`, `docs/implementation/03_worklog.md`
+  - Alternatives: keep the old route skeletons and API-only decision surfaces (rejected: misleading hierarchy and fragmented workflows)
+
 - [x] 2026-03-10 ChatMock default backend: shared text, description-analysis, and VLM routes now default to ChatMock/OpenAI-compatible endpoints with explicit Ollama compatibility mode.
   - AC: repo-default model configuration is ChatMock/OpenAI-compatible, unsupported vision requests fail explicitly, and targeted text+vision regression coverage passes.
   - Verify: `python3 -m src.interfaces.cli preflight --help && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /Users/nirtzur/Documents/projects/property_scanner/venv/bin/python -m pytest tests/unit/platform/test_llm__chatmock_routing.py tests/unit/listings/services/test_description_analyst__chatmock.py tests/unit/listings/services/test_vlm__chatmock.py --run-integration tests/integration/listings/test_feature_fusion__chatmock_paths.py -q`
@@ -17,6 +31,22 @@
   - Alternatives: force a preflight refresh before every dashboard load (rejected: broader behavior change than needed for this hotfix)
 
 ## Active Packet
+
+- [x] M10: React dashboard UX redesign, V3 prune, and instrumentation are implemented and verified.
+  - Progress:
+    - [x] UX redesign: workbench truth strip, review queue, and active dossier rail now lead the primary route.
+    - [x] V3 prune: primary navigation is now limited to `Workbench`, `Decisions`, and `Pipeline`.
+    - [x] Decision Hub simplification: `/watchlists` is the canonical decision-memory destination and `/memos` redirects to its memo tab.
+    - [x] Dossier parity: listing detail is now an evidence/provenance-heavy dossier with merged trust framing.
+    - [x] Pipeline trust surface: the page now leads with `GET /api/v1/pipeline/trust-summary` and hides lower-level ops detail behind disclosure.
+    - [x] Instrumentation: UI events persist through `POST /api/v1/ui-events`.
+  - Owner: maintainer
+  - Effort: M
+  - AC: all major React routes are implemented against real contracts; no major screen ships without explicit state coverage; primary nav is limited to three destinations; pipeline trust and UI instrumentation have explicit backend support; planning/alignment docs reflect the new IA.
+  - Verify: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/platform/test_migrations__runtime_tables.py tests/unit/application/test_reporting_service.py tests/unit/adapters/http/test_fastapi_local_api.py -q && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q && (cd frontend && npm run build)`
+  - Files: `frontend/src/App.tsx`, `frontend/src/pages.tsx`, `frontend/src/api.ts`, `frontend/src/types.ts`, `frontend/src/track.ts`, `frontend/src/styles.css`, `src/application/reporting.py`, `src/application/pipeline.py`, `src/adapters/http/app.py`, `src/platform/domain/models.py`
+  - Docs: `docs/implementation/reports/dashboard_ux_audit_redesign.md`, `docs/implementation/reports/figma_live_alignment_matrix.md`, `docs/manifest/00_overview.md`, `docs/manifest/03_decisions.md`, `docs/manifest/04_api_contracts.md`, `docs/manifest/07_observability.md`
+  - Alternatives: defer simplification until after more backend work (rejected: the product hierarchy itself was still distorting user understanding)
 
 - [ ] M9: Fallback interval policy and post-ablation monitoring triggers are execution-ready.
   - Progress:

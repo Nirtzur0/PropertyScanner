@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from src.application.serving import evaluate_serving_eligibility
 from src.listings.source_ids import canonicalize_source_id
-from src.platform.domain.models import BenchmarkRun, CoverageReport, DataQualityEvent, SourceContractRun
+from src.platform.domain.models import BenchmarkRun, CoverageReport, DataQualityEvent, JobRun, SourceContractRun, UIEvent
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
 
@@ -195,6 +195,31 @@ class ReportingService:
         finally:
             session.close()
 
+    def list_ui_events(self, *, limit: int = 100) -> List[Dict[str, Any]]:
+        session = self.storage.get_session()
+        try:
+            rows = (
+                session.query(UIEvent)
+                .order_by(UIEvent.occurred_at.desc())
+                .limit(max(1, min(limit, 500)))
+                .all()
+            )
+            return [
+                {
+                    "id": row.id,
+                    "event_name": row.event_name,
+                    "route": row.route,
+                    "subject_type": row.subject_type,
+                    "subject_id": row.subject_id,
+                    "context": dict(row.context or {}),
+                    "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ]
+        finally:
+            session.close()
+
     def record_data_quality_event(
         self,
         *,
@@ -228,6 +253,36 @@ class ReportingService:
                     severity=severity,
                     code=code,
                     details=dict(details),
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+            return event_id
+        finally:
+            session.close()
+
+    def record_ui_event(
+        self,
+        *,
+        event_name: str,
+        route: str,
+        subject_type: str | None,
+        subject_id: str | None,
+        context: Dict[str, Any],
+        occurred_at,
+    ) -> str:
+        event_id = uuid4().hex
+        session = self.storage.get_session()
+        try:
+            session.add(
+                UIEvent(
+                    id=event_id,
+                    event_name=str(event_name),
+                    route=str(route),
+                    subject_type=str(subject_type) if subject_type else None,
+                    subject_id=str(subject_id) if subject_id else None,
+                    context=dict(context),
+                    occurred_at=occurred_at,
                     created_at=utcnow(),
                 )
             )
@@ -304,3 +359,92 @@ class ReportingService:
             ]
         finally:
             session.close()
+
+    def pipeline_trust_summary(self, *, pipeline_state: Dict[str, Any], source_audit: Dict[str, Any]) -> Dict[str, Any]:
+        sources = list(source_audit.get("sources") or [])
+        latest_quality_events = self.list_data_quality_events(limit=6)
+        latest_benchmark = next(iter(self.list_benchmark_runs(limit=1)), None)
+        latest_jobs = self.storage.get_session()
+        try:
+            job_rows = (
+                latest_jobs.query(JobRun)
+                .order_by(JobRun.created_at.desc())
+                .limit(12)
+                .all()
+            )
+            jobs = [
+                {
+                    "id": row.id,
+                    "job_type": row.job_type,
+                    "status": row.status,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in job_rows
+            ]
+        finally:
+            latest_jobs.close()
+
+        source_summary = dict(source_audit.get("summary") or {})
+        blockers: List[Dict[str, Any]] = []
+        if pipeline_state.get("needs_refresh"):
+            blockers.append(
+                {
+                    "kind": "freshness",
+                    "title": "Pipeline refresh needed",
+                    "detail": ", ".join(pipeline_state.get("reasons") or []) or "Pipeline state indicates refresh is needed.",
+                }
+            )
+        if latest_benchmark and latest_benchmark.get("status") not in {"succeeded", "success", "pass"}:
+            blockers.append(
+                {
+                    "kind": "benchmark",
+                    "title": "Benchmark gate is not passing",
+                    "detail": str(latest_benchmark.get("status") or "unknown"),
+                }
+            )
+        for event in latest_quality_events[:3]:
+            blockers.append(
+                {
+                    "kind": "quality",
+                    "title": str(event.get("code") or "quality_event"),
+                    "detail": f"{event.get('source_id') or 'unknown source'} · {event.get('severity') or 'unknown severity'}",
+                }
+            )
+
+        return {
+            "freshness": {
+                "needs_refresh": bool(pipeline_state.get("needs_refresh")),
+                "status": "refresh_needed" if pipeline_state.get("needs_refresh") else "fresh",
+                "reasons": list(pipeline_state.get("reasons") or []),
+            },
+            "source_summary": {
+                "counts": source_summary,
+                "top_sources": [
+                    {
+                        "source_id": item.get("source_id"),
+                        "name": item.get("name"),
+                        "status": item.get("status"),
+                        "reasons": list(item.get("reasons") or [])[:2],
+                    }
+                    for item in sources[:5]
+                ],
+            },
+            "top_blockers": blockers[:4],
+            "benchmark_gate": {
+                "status": latest_benchmark.get("status") if latest_benchmark else "no_runs",
+                "created_at": latest_benchmark.get("created_at") if latest_benchmark else None,
+                "completed_at": latest_benchmark.get("completed_at") if latest_benchmark else None,
+            },
+            "jobs_summary": {
+                "running": len([job for job in jobs if str(job.get("status")).lower() == "running"]),
+                "failed": len([job for job in jobs if str(job.get("status")).lower() == "failed"]),
+                "recent": jobs[:4],
+            },
+            "latest_quality_events": latest_quality_events[:4],
+            "details_available": {
+                "jobs": bool(jobs),
+                "coverage": bool(self.list_coverage_reports(limit=1)),
+                "quality": bool(latest_quality_events),
+                "source_contracts": bool(self.list_source_contract_runs(limit=1)),
+            },
+        }

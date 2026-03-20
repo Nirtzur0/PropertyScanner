@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Property Scanner Memo and Watchlists</title>
+    <title>Property Scanner Decision Hub</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -20,69 +20,62 @@
         <a href="./workbench.html">Workbench</a>
         <a href="./listing-detail.html">Listing Detail</a>
         <a href="./comp-workbench.html">Comp Workbench</a>
-        <a class="active" href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a class="active" href="./memo-watchlists.html">Decision Hub</a>
         <a href="./pipeline-health.html">Pipeline</a>
-        <a href="./command-center.html">Command Center</a>
       </nav>
 
       <section class="artboard">
         <div class="artboard-header">
           <div>
-            <div class="eyebrow">13 Memo + Watchlists</div>
-            <h2>Decision output and portfolio memory</h2>
+            <div class="eyebrow">13 Decision Hub V3</div>
+            <h2>Decision memory only: watchlists and memos</h2>
           </div>
           <div class="tool-row">
+            <div class="toolbar-pill">Watchlists</div>
             <div class="toolbar-pill">Memo export</div>
-            <div class="toolbar-pill">Saved searches</div>
-            <div class="toolbar-pill">Alerting</div>
+            <div class="toolbar-pill">Back to workbench</div>
           </div>
         </div>
 
         <div class="screen-grid">
           <article class="panel">
             <div class="panel-title">
-              <h4>Memo builder</h4>
+              <h4>Watchlist board</h4>
               <div class="status-pill status-good">Publish ready</div>
             </div>
             <div class="list-stack">
               <div class="metric-card">
-                <span class="mono">Header block</span>
-                <strong>Buy / hold / skip</strong>
-                <p>Clear thesis, price, support, and timestamp.</p>
+                <span class="mono">Core Madrid</span>
+                <strong>Priority review bucket</strong>
+                <p>Use watchlists for ongoing decision memory, not for saved filter mechanics.</p>
               </div>
               <div class="metric-card">
-                <span class="mono">Evidence block</span>
-                <p>Comp strip, valuation range, source provenance, benchmark notes.</p>
-              </div>
-              <div class="metric-card">
-                <span class="mono">Risk block</span>
-                <p>Manual assumptions, source caveats, calibration gaps, market threats.</p>
+                <span class="mono">Blocked by trust</span>
+                <p>Items stay visible here when source quality or benchmark state weakens.</p>
               </div>
             </div>
           </article>
 
           <article class="panel">
             <div class="panel-title">
-              <h4>Export presets</h4>
-              <div class="toolbar-pill">PDF / markdown / share link</div>
+              <h4>Memo queue</h4>
+              <div class="toolbar-pill">Markdown / export</div>
             </div>
             <div class="list-stack">
-              <div class="list-card">Investor memo: concise narrative + tables + map snapshot.</div>
-              <div class="list-card">Ops memo: evidence, assumptions, source health, benchmark deltas.</div>
-              <div class="list-card">Committee memo: executive summary, risks, and watchlist context.</div>
+              <div class="list-card">Target memo: comp-reviewed and ready for export.</div>
+              <div class="list-card">Porto shortlist memo: draft, waiting for final downside note.</div>
+              <div class="list-card">Committee memo: exported with assumptions and risks.</div>
             </div>
           </article>
 
           <article class="panel">
             <div class="panel-title">
-              <h4>Watchlist board</h4>
-              <div class="toolbar-pill">12 active assets</div>
+              <h4>Navigation note</h4>
+              <div class="toolbar-pill">Lean IA</div>
             </div>
             <div class="list-stack">
-              <div class="list-card">Conviction now</div>
-              <div class="list-card">Needs comp review</div>
-              <div class="list-card">Blocked by source issues</div>
-              <div class="list-card">Wait for market refresh</div>
+              <div class="list-card">Saved searches move back to Workbench as lens-saving.</div>
+              <div class="list-card">Alerts move to Pipeline because they are trust signals, not memory objects.</div>
             </div>
           </article>
         </div>
@@ -90,30 +83,30 @@
         <div class="screen-grid section">
           <article class="panel">
             <div class="panel-title">
-              <h4>Saved search anatomy</h4>
-              <div class="status-pill status-good">Alerting on</div>
+              <h4>Watchlist anatomy</h4>
+              <div class="status-pill status-good">Persistent</div>
             </div>
             <table class="table">
               <thead>
                 <tr>
-                  <th>Search</th>
-                  <th>Region</th>
-                  <th>Trigger</th>
-                  <th>Mode</th>
+                  <th>Watchlist</th>
+                  <th>Listings</th>
+                  <th>Status</th>
+                  <th>Purpose</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Iberia value arbitrage</td>
-                  <td>ES, PT</td>
-                  <td>support &gt; 0.82</td>
-                  <td>Daily</td>
+                  <td>Core Madrid</td>
+                  <td>8</td>
+                  <td>active</td>
+                  <td>Priority analyst review</td>
                 </tr>
                 <tr>
-                  <td>Milan memo-ready</td>
-                  <td>IT</td>
-                  <td>memo published</td>
-                  <td>Event</td>
+                  <td>Porto upside</td>
+                  <td>5</td>
+                  <td>active</td>
+                  <td>Memo candidates</td>
                 </tr>
               </tbody>
             </table>
@@ -133,13 +126,13 @@
 
           <article class="panel">
             <div class="panel-title">
-              <h4>Notes and alerts</h4>
+              <h4>Decision notes</h4>
               <div class="toolbar-pill">Persistent</div>
             </div>
             <div class="timeline">
               <div class="timeline-item">Analyst note: revisit after benchmark rerun on Friday.</div>
-              <div class="timeline-item">Alert: one pinned source moved from supported to degraded.</div>
               <div class="timeline-item">Memo draft shared to committee channel.</div>
+              <div class="timeline-item">Saved lenses are created from Workbench, not from the decision hub.</div>
             </div>
           </article>
         </div>

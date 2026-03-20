@@ -3,14 +3,26 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from src.application.sources import SourceCapabilityService
+from src.application.valuation import ComparableBaselineValuationService
+from src.application.serving import evaluate_valuation_readiness
+from src.listings.services.listing_adapter import db_listing_to_canonical
+from src.platform.domain.models import DBListing
 from src.platform.domain.models import AgentRun, CompReview, Memo, SavedSearch, Watchlist
 from src.platform.storage import StorageService
 from src.platform.utils.time import utcnow
 
 
 class WorkspaceService:
-    def __init__(self, *, storage: StorageService) -> None:
+    def __init__(
+        self,
+        *,
+        storage: StorageService,
+        source_capability_service: SourceCapabilityService | None = None,
+    ) -> None:
         self.storage = storage
+        self.valuation_service = ComparableBaselineValuationService(storage=storage)
+        self.source_capability_service = source_capability_service
 
     @staticmethod
     def _watchlist_to_dict(row: Watchlist) -> Dict[str, Any]:
@@ -86,6 +98,79 @@ class WorkspaceService:
             "top_listing_ids": list(row.top_listing_ids or []),
             "ui_blocks": list(row.ui_blocks or []),
         }
+
+    @staticmethod
+    def _normalize_listing_ids(values: Optional[List[str]]) -> List[str]:
+        normalized: List[str] = []
+        for value in values or []:
+            text = str(value or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+    def _source_status_by_source(self) -> Dict[str, str]:
+        if self.source_capability_service is None:
+            return {}
+        report = self.source_capability_service.audit_sources(persist=False).model_dump(mode="json")
+        return {
+            str(item.get("source_id")): str(item.get("status") or "experimental")
+            for item in report.get("sources", [])
+            if item.get("source_id")
+        }
+
+    def _validate_comp_review(
+        self,
+        session,
+        *,
+        listing_id: str,
+        selected_comp_ids: Optional[List[str]],
+        rejected_comp_ids: Optional[List[str]],
+    ) -> tuple[DBListing, List[str], List[str]]:
+        target = session.query(DBListing).filter(DBListing.id == listing_id).first()
+        if target is None:
+            raise ValueError("listing_not_found")
+
+        readiness = evaluate_valuation_readiness(target)
+        if not readiness.ready:
+            raise ValueError(f"comp_review_target_not_ready:{readiness.reason}")
+
+        selected_ids = self._normalize_listing_ids(selected_comp_ids)
+        rejected_ids = self._normalize_listing_ids(rejected_comp_ids)
+
+        overlap = sorted(set(selected_ids) & set(rejected_ids))
+        if overlap:
+            raise ValueError("comp_review_selection_overlap")
+
+        referenced_ids = sorted(set(selected_ids) | set(rejected_ids))
+        if listing_id in referenced_ids:
+            raise ValueError("comp_review_target_cannot_be_its_own_comp")
+
+        if referenced_ids:
+            rows = (
+                session.query(DBListing.id)
+                .filter(DBListing.id.in_(referenced_ids))
+                .all()
+            )
+            existing_ids = {str(row.id) for row in rows}
+            missing_ids = sorted(set(referenced_ids) - existing_ids)
+            if missing_ids:
+                raise ValueError(f"comp_review_comp_not_found:{','.join(missing_ids)}")
+
+            target_listing = db_listing_to_canonical(target)
+            source_status_by_source = self._source_status_by_source()
+            eligible_ids = {
+                str(row.id)
+                for row, _, _ in self.valuation_service._candidate_rows(
+                    target_listing,
+                    k=12,
+                    source_status_by_source=source_status_by_source,
+                )
+            }
+            ineligible_ids = sorted(set(referenced_ids) - eligible_ids)
+            if ineligible_ids:
+                raise ValueError(f"comp_review_comp_not_eligible:{','.join(ineligible_ids)}")
+
+        return target, selected_ids, rejected_ids
 
     def list_watchlists(self) -> List[Dict[str, Any]]:
         session = self.storage.get_session()
@@ -266,12 +351,18 @@ class WorkspaceService:
     ) -> Dict[str, Any]:
         session = self.storage.get_session()
         try:
+            _, normalized_selected_ids, normalized_rejected_ids = self._validate_comp_review(
+                session,
+                listing_id=listing_id,
+                selected_comp_ids=selected_comp_ids,
+                rejected_comp_ids=rejected_comp_ids,
+            )
             row = CompReview(
                 id=uuid4().hex,
                 listing_id=listing_id,
                 status=status,
-                selected_comp_ids=list(selected_comp_ids or []),
-                rejected_comp_ids=list(rejected_comp_ids or []),
+                selected_comp_ids=normalized_selected_ids,
+                rejected_comp_ids=normalized_rejected_ids,
                 overrides=dict(overrides or {}),
                 notes=notes,
                 created_at=utcnow(),

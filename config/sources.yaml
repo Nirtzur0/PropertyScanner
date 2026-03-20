@@ -149,6 +149,8 @@ sources:
       rate_limit:
         requests: 1
         period_seconds: 2
+      browser_config:
+        proxy_required: true
       compliance:
         robots_txt_url: "https://www.seloger.com/robots.txt"
         allowed_paths: ["/list", "/annonce"]
@@ -164,6 +166,8 @@ sources:
       rate_limit:
         requests: 1
         period_seconds: 2
+      browser_config:
+        proxy_required: true
       compliance:
         robots_txt_url: "https://www.realtor.com/robots.txt"
         allowed_paths:
@@ -180,6 +184,8 @@ sources:
       rate_limit:
         requests: 1
         period_seconds: 2
+      browser_config:
+        proxy_required: true
       compliance:
         robots_txt_url: "https://www.redfin.com/robots.txt"
         allowed_paths: ["/city", "/state", "/zip"]
@@ -225,6 +231,8 @@ sources:
       rate_limit:
         requests: 1
         period_seconds: 2
+      browser_config:
+        proxy_required: true
       compliance:
         robots_txt_url: "https://www.immowelt.de/robots.txt"
         allowed_paths: ["/liste", "/expose"]

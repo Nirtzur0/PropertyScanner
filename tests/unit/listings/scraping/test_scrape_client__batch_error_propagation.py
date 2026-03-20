@@ -104,3 +104,42 @@ def test_fetch_html_batch__maps_policy_blocked_preflight_reason_without_fallback
     assert fallback_calls == []
     assert results[0].html is None
     assert results[0].error == "policy_blocked:robots_fetch_denied:https://example.com/listing"
+
+
+def test_fetch_html_batch__maps_challenge_html_to_blocked_error(monkeypatch) -> None:
+    client = ScrapeClient(
+        source_id="idealista",
+        base_url="https://example.com",
+        compliance_manager=DummyCompliance(),
+        user_agent="PropertyScanner/Test/1.0",
+        rate_limit_seconds=0.0,
+    )
+
+    async def fake_fetch_many(urls, **_kwargs):
+        return [
+            BrowserFetchResult(
+                url=urls[0],
+                html="<html><script src='https://ct.captcha-delivery.com/c.js'></script></html>",
+                error=None,
+            ),
+        ]
+
+    fallback_calls: list[str] = []
+
+    def fake_fetch_html(url: str, **_kwargs):
+        fallback_calls.append(url)
+        return None
+
+    monkeypatch.setattr(client.browser_engine, "fetch_many", fake_fetch_many)
+    monkeypatch.setattr(client, "fetch_html", fake_fetch_html)
+    monkeypatch.setattr(client, "_filter_seen_urls", lambda urls: urls)
+
+    results = client.fetch_html_batch(
+        ["https://example.com/listing"],
+        retries=1,
+        timeout_s=5.0,
+    )
+
+    assert fallback_calls == []
+    assert results[0].html is None
+    assert results[0].error == "blocked:datadome_captcha:https://example.com/listing"

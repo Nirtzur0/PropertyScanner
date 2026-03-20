@@ -1,5 +1,680 @@
 # Worklog
 
+## 2026-03-20 (README production refresh packet)
+
+- Reworked the repository landing page in `README.md` so it reads like a production system instead of a long-form internal explainer.
+- Root-cause changes:
+  - replaced the older README structure with:
+    - a compact hero
+    - tighter docs links
+    - a three-shot product gallery
+    - a shorter quickstart
+    - explicit operating notes about the current local-first baseline
+  - captured fresh screenshots from the running FastAPI + React app into:
+    - `docs/images/readme-workbench.png`
+    - `docs/images/readme-pipeline.png`
+    - `docs/images/readme-decisions.png`
+  - kept the new copy aligned with the actual shipped product path rather than the broader historical surface area
+- Verification evidence:
+  - `command -v npx` confirmed the Playwright CLI wrapper prerequisites were present
+  - `python3 -m src.interfaces.cli api --host 127.0.0.1 --port 8011` served the live app for screenshot capture
+  - Playwright CLI captured fresh product shots for:
+    - `/workbench`
+    - `/pipeline`
+    - `/watchlists?tab=saved-searches`
+  - `make smoke-api` (`status: ok`)
+  - `cd frontend && npm run build` (`✓ built`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/e2e/ui/test_react_dashboard_routes.py -q --run-e2e` (`1 passed`)
+- Residual limits:
+  - the README is now aligned to the primary product surface, but the rest of the docs set still has a more uneven voice and visual density
+  - the repo still carries legacy/deprecated surfaces that are intentionally de-emphasized rather than removed in this packet
+
+## 2026-03-13 (local launch readiness packet)
+
+- Executed the real-data launch-readiness packet against the normal runtime database at `data/listings.db` instead of the seeded smoke-test database.
+- Root-cause changes:
+  - updated crawler constructors under `src/listings/agents/crawlers/*` so `browser_max_concurrency=None` from `model_dump()`-style configs falls back to per-source defaults instead of crashing with `int(None)`
+  - updated `src/listings/agents/crawlers/spain/official_sources.py` so ERI CSV ingestion now:
+    - uses explicit `request_get(...)`
+    - enforces a bounded timeout
+    - parses CSV from response text
+    - logs explicit fetch failures instead of relying on implicit pandas URL loading
+- Added regression coverage:
+  - `tests/unit/listings/crawlers/test_crawler_init__browser_concurrency_defaults.py`
+  - `tests/unit/listings/crawlers/test_official_sources_agent.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/listings/crawlers/test_crawler_init__browser_concurrency_defaults.py -q` (`18 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/listings/crawlers/test_official_sources_agent.py -q` (`2 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/interfaces/test_cli__local_contracts.py -q` (`2 passed`)
+  - `python3 -m src.interfaces.cli preflight --skip-transactions` completed successfully on the real DB:
+    - fresh `pisos` listings were persisted
+    - source-contract evidence was refreshed
+    - vector index rebuilt to `indexed=7868`
+  - real API validation on `http://127.0.0.1:8792` confirmed:
+    - `GET /api/v1/listings?source_id=pisos&limit=3` returned fresh `2026-03-13` rows
+    - `POST /api/v1/valuations` returned `200` for listing `b7bd20cc2d5b9724b135bced82f80c5a`
+    - `GET /api/v1/pipeline/trust-summary` reflected current freshness and source-state blockers
+  - real Playwright browser validation on `http://127.0.0.1:8792` confirmed:
+    - `/workbench` rendered a populated shortlist and review queue on the real dataset
+    - `/pipeline` rendered the trust surface with current blockers and source summary
+    - browser console warnings/errors remained `0`
+- Residual limits:
+  - the real DB is now fresh at the listing/source-contract layer, but the trust surface still reports `market_data_behind_listings`, `index_behind_listings`, and `model_behind_listings`
+  - optional description analysis still emits explicit LLM auth failures when credentials are not configured, although it no longer blocks preflight completion
+  - the prompt-pack bootstrap validation scripts referenced by `AGENTS.md` were not present under this repo’s `scripts/` directory
+
+## 2026-03-12 (preflight final snapshot packet)
+
+- Executed a pipeline data-flow packet to stop `run_preflight()` from composing `final_status` out of two different source-audit snapshots.
+- Root-cause changes:
+  - updated `src/application/pipeline.py` so preflight now resolves one persisted final source-audit snapshot and uses it to build the whole `final_status`
+  - preserved the expected two-audit lifecycle:
+    - one non-persisted snapshot for `initial_status`
+    - one persisted snapshot for `final_status`
+  - removed the old pattern where `final_status` was built from `pipeline_status()` and then had `source_capabilities` overwritten separately
+- Added regression coverage:
+  - `tests/unit/application/test_pipeline_application_service.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_pipeline_application_service.py -q -k preflight_reuses_one_persisted_final_source_audit_snapshot` (`1 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_pipeline_application_service.py -q` (`2 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:62649` through `/api/v1/jobs/preflight`:
+    - the job completed successfully
+    - audit call pattern was exactly:
+      - `persist=False`
+      - `persist=True`
+    - `result.final_status.source_capabilities` came from the persisted snapshot with:
+      - `snapshot_id=2`
+      - `persist=true`
+- Residual limits:
+  - workbench routes still audit sources independently inside each request path
+  - the prompt-pack bootstrap validation scripts referenced by `AGENTS.md` were not present under this repo’s `scripts/` directory
+
+## 2026-03-12 (pipeline trust snapshot packet)
+
+- Executed a pipeline data-flow packet to stop `pipeline_trust_summary()` from consuming two different source-audit snapshots within one request.
+- Root-cause changes:
+  - updated `src/application/pipeline.py` so the pipeline application service now has:
+    - a shared source-audit snapshot helper
+    - a shared pipeline-status builder that accepts that snapshot
+  - `pipeline_trust_summary()` now resolves one `audit_sources()` payload and reuses it for both:
+    - `pipeline_state["source_capabilities"]`
+    - the `source_audit` argument passed into `ReportingService.pipeline_trust_summary()`
+  - preserved the external pipeline trust-summary response contract
+- Added regression coverage:
+  - `tests/unit/application/test_pipeline_application_service.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_pipeline_application_service.py -q` (`1 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/interfaces/test_pipeline_api__source_support.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:62585` using a counted source service:
+    - `GET /api/v1/pipeline/trust-summary` returned the trust payload successfully
+    - the request triggered exactly `1` call to `audit_sources()`
+    - the captured `pipeline_state["source_capabilities"]` matched the captured `source_audit` exactly
+- Residual limits:
+  - `run_preflight()` still computes final pipeline status before immediately attaching a separately persisted source audit
+  - the prompt-pack bootstrap validation scripts referenced by `AGENTS.md` were not present under this repo’s `scripts/` directory
+
+## 2026-03-12 (valuation source snapshot packet)
+
+- Executed a valuation API data-flow packet to stop `POST /api/v1/valuations` from recomputing source audits twice inside one request.
+- Root-cause changes:
+  - updated `src/adapters/http/app.py` so the valuation endpoint now resolves one `audit_sources(persist=False)` payload and derives both:
+    - `source_status_by_source`
+    - `source_metrics_by_source`
+    from that same snapshot
+  - preserved the existing endpoint contract and valuation behavior while removing the per-request snapshot split risk
+- Added regression coverage:
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q -k one_source_audit_snapshot` (`1 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:62526` using a counted source service:
+    - `POST /api/v1/valuations` returned `listing_id=target`
+    - the request triggered exactly `1` call to `audit_sources()`
+    - the captured valuation inputs came from the same snapshot:
+      - `source_status_by_source={"pisos": "supported-1"}`
+      - `source_metrics_by_source={"pisos": {"snapshot_id": 1}}`
+- Residual limits:
+  - other endpoints still recompute source audits independently and may benefit from the same single-snapshot treatment
+  - the prompt-pack bootstrap validation scripts referenced by `AGENTS.md` were not present under this repo’s `scripts/` directory
+
+## 2026-03-12 (source freshness ranking packet)
+
+- Executed a valuation-ranking packet to make source recency affect comp ordering even when sources share the same coarse capability status.
+- Root-cause changes:
+  - updated `src/application/sources.py` so source capability metrics now emit:
+    - `last_seen_age_days`
+    - `latest_run_age_days`
+    - `freshness_window_days`
+    - `has_recent_supported_run`
+  - updated `src/application/valuation.py` so source-health scoring now adds a small penalty for:
+    - older source-level listing freshness
+    - older latest contract-run evidence
+  - preserved the existing corruption, coverage, and status penalties without widening the packet into new source classifications
+  - extended the seeded FastAPI fixture with:
+    - `fresh_feed`
+    - `laggy_feed`
+    - `Fresh Recency`
+    - `Laggy Recency`
+    - matching supported contract runs with different ages
+- Added regression coverage:
+  - `tests/unit/application/test_source_capability_service.py`
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_source_capability_service.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`7 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:62376` seeded from the repo test container:
+    - `POST /api/v1/valuations` returned top comp IDs:
+      - `idealista-clean`
+      - `experimental-mirror`
+      - `fresh-recency`
+      - `laggy-recency`
+      - `degraded-mirror`
+      - `mild-degraded`
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs with:
+      - `fresh-recency` ahead of `laggy-recency`
+      - `severe-degraded` still present deeper in the pool
+    - a real Playwright browser run against `/comp-reviews/target` found:
+      - `Fresh Recency` earlier in the page text than `Laggy Recency`
+- Residual limits:
+  - the source-quality penalty still does not use source-level trend signals beyond freshness, corruption, and coverage
+  - the valuation API still computes source status and source metrics from separate `audit_sources()` calls per request
+
+## 2026-03-12 (metric-driven source ranking packet)
+
+- Executed a valuation-ranking packet to replace the fixed status-only source penalty with a metric-driven source-quality penalty.
+- Root-cause changes:
+  - updated `src/application/valuation.py` so source-health ranking now considers:
+    - `invalid_price_ratio`
+    - `invalid_surface_area_ratio`
+    - key field coverage ratios
+  - preserved the existing status tiers (`supported`, `experimental`, `degraded`, `blocked`) while allowing two degraded sources to rank differently based on actual audited quality
+  - updated `src/application/workbench.py` and `src/adapters/http/app.py` so valuation callers now pass both:
+    - source status
+    - source metrics
+  - extended the seeded FastAPI fixture with:
+    - `mild_feed`
+    - `severe_feed`
+    - candidate rows and filler rows to generate meaningfully different degraded-source metrics
+- Added regression coverage:
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`6 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:8009` seeded from the repo test container:
+    - `POST /api/v1/valuations` returned top comp IDs:
+      - `idealista-clean`
+      - `experimental-mirror`
+      - `degraded-mirror`
+      - `mild-degraded`
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+      - `comp-3`
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs with:
+      - `mild-degraded` at index `3`
+      - `severe-degraded` at index `8`
+    - a real Playwright browser run against `/comp-reviews/target` rendered the first candidate rows as:
+      - `Idealista Clean`
+      - `Experimental Mirror`
+      - `Degraded Mirror`
+      - `Mild Degraded`
+      - `Comp 2`
+      - `Ready Unvalued`
+- Residual limits:
+  - the metric-driven penalty still does not account for freshness or recent contract-run outcomes
+  - Playwright MCP itself remained flaky on Chrome persistent-session launch during the live UI check, so browser proof came from the repo Playwright runtime instead
+
+## 2026-03-12 (experimental source ranking packet)
+
+- Executed a valuation-ranking packet to demote experimental-source comps below supported rows while keeping them eligible.
+- Root-cause changes:
+  - updated `src/application/valuation.py` so comparable similarity now applies a smaller penalty when the source capability status is `experimental`
+  - preserved the previously added `degraded` penalty and `blocked` exclusion without widening the packet beyond ranking behavior
+  - extended the seeded FastAPI fixture with:
+    - `idealista-clean` as a supported comp
+    - `experimental-mirror` as an `idealista_shadow` experimental comp
+    - `degraded-mirror` as a degraded comp
+  - verified the ranking now orders those rows by trust when geometry is otherwise nearly identical
+- Added regression coverage:
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`5 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:8008` seeded from the repo test container:
+    - `POST /api/v1/valuations` returned top comp IDs:
+      - `idealista-clean`
+      - `experimental-mirror`
+      - `degraded-mirror`
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs in the same order
+    - a real Playwright browser run against `/comp-reviews/target` rendered the first candidate rows as:
+      - `Idealista Clean`
+      - `Experimental Mirror`
+      - `Degraded Mirror`
+      - `Comp 2`
+- Residual limits:
+  - the source-health ranking model still uses fixed penalties rather than a calibration based on source-capability metrics
+  - Playwright MCP itself remained flaky on Chrome persistent-session launch during the live UI check, so browser proof came from the repo Playwright runtime instead
+
+## 2026-03-12 (degraded source ranking packet)
+
+- Executed a valuation-ranking packet to demote degraded-source comps below cleaner supported-source rows when similarity is otherwise close.
+- Root-cause changes:
+  - updated `src/application/valuation.py` so comparable similarity now applies a degraded-source multiplier before ranking
+  - extended `evaluate_listing()` and `evaluate_listing_id()` to accept optional `source_status_by_source` input so callers can run source-aware valuation without changing existing default behavior
+  - updated `src/adapters/http/app.py` so `POST /api/v1/valuations` now passes audited source capability status into valuation
+  - updated `src/application/workbench.py` so `_valuation_payload()` uses the same audited source status when deciding whether a listing has enough comps and when building the valuation-adjacent comp context
+  - preserved the earlier `blocked` hard exclusion and did not broaden this packet into persistence or UI contract changes
+- Added regression coverage:
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`4 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:8007` seeded from the repo test container:
+    - `POST /api/v1/valuations` returned top comp IDs:
+      - `idealista-clean`
+      - `degraded-mirror`
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+      - `comp-3`
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs in the same order, with `idealista-clean` first
+    - a real Playwright browser run against `/comp-reviews/target` rendered the first candidate rows as:
+      - `Idealista Clean`
+      - `Degraded Mirror`
+      - `Comp 2`
+- Residual limits:
+  - degraded rows are now demoted, but `experimental` rows are still treated the same as supported rows
+  - Playwright MCP itself remained flaky on Chrome persistent-session launch during the live UI check, so browser proof came from the repo Playwright runtime instead
+
+## 2026-03-12 (blocked source comp eligibility packet)
+
+- Executed a comp-review truthfulness packet to keep listings from blocked sources out of the live candidate pool and out of persisted comp reviews.
+- Root-cause changes:
+  - updated `src/application/workbench.py` so `comp_review_workspace()` now resolves source capability status and passes it into the comparable-selection path
+  - updated `src/application/workspace.py` so comp-review validation reuses the same source-capability-aware candidate gate
+  - updated `src/application/container.py` to inject `SourceCapabilityService` into `WorkspaceService` for the real app/runtime path
+  - updated `src/application/valuation.py` so comparable selection now excludes candidates only when their source capability status is `blocked`
+  - during validation, verified that excluding all `degraded` sources was too aggressive because it removed the current local baseline source from the seeded workspace; narrowed the rule to `blocked` to match the repo’s present trust model
+- Added regression coverage:
+  - `tests/unit/application/test_workspace_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_workspace_service.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server on `http://127.0.0.1:8006` seeded from the repo test container:
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs:
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+      - `comp-3`
+    - `POST /api/v1/comp-reviews` with `selected_comp_ids=["blocked-comp"]` returned `400`
+    - the returned error was `comp_review_comp_not_eligible:blocked-comp`
+    - `/comp-reviews/target` rendered `4 candidates`
+    - the `Blocked Comp` row did not appear in the live comp-workbench table
+- Residual limits:
+  - blocked-source rows are now excluded, but degraded-source rows are still eligible and are not yet rank-demoted relative to cleaner supported-source rows
+
+## 2026-03-12 (comparable age-gating packet)
+
+- Executed a valuation packet to make the comparable selector honor the configured age limit for baseline comps.
+- Root-cause changes:
+  - updated `src/application/valuation.py` so `_candidate_rows()` now excludes listings older than `ValuationConfig.max_age_months`
+  - the age check uses the candidate’s latest available observation timestamp from:
+    - `listed_at`
+    - `updated_at`
+    - `fetched_at`
+  - stale listings are now removed before:
+    - similarity scoring
+    - implied-value calculation
+    - evidence construction
+    - comp-workbench candidate rendering
+- Added regression coverage:
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - live run against a real local FastAPI server seeded from the repo test container:
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs:
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+      - `comp-3`
+    - `/comp-reviews/target` rendered `4 candidates`
+    - the stale comp did not appear in the live comp-workbench table
+- Residual limits:
+  - comparable selection now respects numeric validity and age, but it still does not incorporate source-health state when choosing otherwise valid rows
+
+## 2026-03-12 (comp-review candidate-eligibility packet)
+
+- Executed a comp-review persistence packet to stop existing-but-ineligible listings from being saved as comps for a target listing.
+- Root-cause changes:
+  - updated `src/application/workspace.py` so comp-review validation now reuses the comparable-selection logic for the target listing
+  - create-comp-review still rejects:
+    - missing target listings
+    - valuation-unready targets
+    - overlapping selected/rejected comp IDs
+    - target-as-comp payloads
+    - missing comp IDs
+  - and now also rejects:
+    - existing listing IDs that are not in the target listing's current eligible candidate pool
+- Added regression coverage:
+  - `tests/unit/application/test_workspace_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_workspace_service.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - live run against a real local FastAPI server seeded from the repo test container:
+    - valid `POST /api/v1/comp-reviews` for `target` with `comp-1` and `comp-2` returned `200`
+    - invalid `POST /api/v1/comp-reviews` for `target` with existing listing `isolated` returned `400`
+    - the returned error was `comp_review_comp_not_eligible:isolated`
+- Residual limits:
+  - the validation currently aligns to the current candidate-pool selection (`k=12`) rather than a larger eligible comp universe
+
+## 2026-03-12 (comparable candidate quality packet)
+
+- Executed a valuation-quality packet to stop corrupted listings from entering the baseline comparable set and the live comp-review workbench.
+- Root-cause changes:
+  - updated `src/application/valuation.py` so `_candidate_rows()` now filters candidate listings using the repo’s trusted serving ranges for:
+    - `price`
+    - `surface_area_sqm`
+  - this removes numerically corrupted listings before:
+    - similarity scoring
+    - implied-value calculation
+    - top-comp evidence construction
+    - comp-workbench candidate rendering
+- Added regression coverage:
+  - `tests/unit/application/test_comparable_baseline_valuation_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_comparable_baseline_valuation_service.py -q` (`2 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - live run against a real local FastAPI server seeded from the repo test container:
+    - `/comp-reviews/target` rendered `4 candidates` instead of `5`
+    - the `Bad Price` row no longer appeared in the comp-workbench candidate table
+    - `GET /api/v1/comp-reviews/target/workspace` returned candidate IDs:
+      - `comp-2`
+      - `ready-unvalued`
+      - `comp-1`
+      - `comp-3`
+- Residual limits:
+  - candidate eligibility is now numerically cleaner, but the comp selector still does not use freshness or source-health gating when ranking otherwise valid rows
+
+## 2026-03-12 (comp-review save-gating packet)
+
+- Executed a comp-review contract packet to stop invalid review drafts from being persisted when the target listing is not reviewable.
+- Root-cause changes:
+  - added backend validation in `src/application/workspace.py` so comp-review creation now rejects:
+    - missing target listings
+    - valuation-unready targets
+    - overlapping selected/rejected comp IDs
+    - target-as-comp payloads
+    - missing comp IDs
+  - extended `src/application/workbench.py` to emit explicit `save_review` readiness alongside the existing `publish_to_memo` gate
+  - updated `src/adapters/http/app.py` so invalid comp-review requests return `400` instead of persisting bad rows
+  - updated `frontend/src/pages.tsx` and `frontend/src/types.ts` so the live comp-review screen disables `Save review` and explains the block reason when the target is not ready
+- Added regression coverage:
+  - `tests/unit/application/test_workspace_service.py`
+  - `tests/unit/adapters/http/test_fastapi_local_api.py`
+  - `tests/e2e/ui/test_react_dashboard_routes.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/application/test_workspace_service.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `npm run build` in `frontend/` (`built`; existing Vite warnings unchanged)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - live run against a real local FastAPI server seeded from the repo test container:
+    - `/comp-reviews/target` kept `Save review` enabled
+    - `/comp-reviews/missing-area` rendered `Save review` disabled with the surface-area-required message
+    - `POST /api/v1/comp-reviews` for `missing-area` returned `400` with `comp_review_target_not_ready:target_surface_area_required`
+- Residual limits:
+  - comp-review validation still checks that referenced comp IDs exist, but it does not yet prove they belong to the current candidate pool for the target
+
+## 2026-03-12 (proxy-backed first-wave source support + normalizer truthfulness packet)
+
+- Executed the first-wave source-truthfulness packet for `realtor_us`, `redfin_us`, `seloger_fr`, and `immowelt_de`.
+- Root-cause changes:
+  - added provider-agnostic proxy resolution in `src/listings/scraping/proxy_config.py` with:
+    - global env overrides:
+      - `PROPERTY_SCANNER_PROXY_URL`
+      - `PROPERTY_SCANNER_PROXY_BYPASS`
+      - `PROPERTY_SCANNER_REMOTE_BROWSER_WS`
+    - source-specific overrides:
+      - `PROPERTY_SCANNER_<SOURCE_ID>_PROXY_URL`
+      - `PROPERTY_SCANNER_<SOURCE_ID>_PROXY_BYPASS`
+      - `PROPERTY_SCANNER_<SOURCE_ID>_REMOTE_BROWSER_WS`
+  - marked the first-wave sources as `browser_config.proxy_required: true` in `config/sources.yaml`
+  - updated the first-wave crawlers so they now exit explicitly with `proxy_required:<source>` instead of attempting fake direct-mode success without proxy/runtime browser config
+  - extended crawl/status reporting so `proxy_required` persists through:
+    - `src/listings/crawl_contract.py`
+    - `src/listings/workflows/unified_crawl.py`
+    - `src/interfaces/api/pipeline.py`
+    - `src/application/sources.py`
+  - replaced the four empty registered normalizers with deterministic detail-page parsers backed by JSON-LD / hydration data plus DOM fallback:
+    - `src/listings/agents/processors/realtor.py`
+    - `src/listings/agents/processors/redfin.py`
+    - `src/listings/agents/processors/seloger.py`
+    - `src/listings/agents/processors/immowelt.py`
+  - added shared parser scaffolding in:
+    - `src/listings/agents/processors/detail_parser.py`
+  - refreshed repo truth in:
+    - `docs/how_to/run_end_to_end.md`
+    - `docs/reference/configuration.md`
+    - `docs/reference/cli.md`
+    - `docs/crawler_status.md`
+- Added regression coverage:
+  - proxy runtime config resolution and browser config preservation
+  - proxy-required crawler status
+  - deterministic fixture parsing for the four first-wave sources
+  - blocked challenge-page handling for those normalizers
+  - source-support / source-capability reporting for proxy-required-but-unconfigured sources
+  - fixture-backed integration crawl-normalize-persist coverage for the four first-wave sources
+  - unified-crawl source-contract persistence for `proxy_required`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/listings/scraping/test_proxy_config_resolution.py tests/unit/listings/scraping/test_browser_engine_config__aliases.py tests/unit/listings/crawlers/test_realtor_crawler__structured_fetch_errors.py tests/unit/listings/normalizers/test_realtor__fixture_html__extracts_fields.py tests/unit/listings/normalizers/test_redfin__fixture_html__extracts_fields.py tests/unit/listings/normalizers/test_seloger__fixture_html__extracts_fields.py tests/unit/listings/normalizers/test_immowelt__fixture_html__extracts_fields.py tests/unit/listings/normalizers/test_first_wave_normalizers__blocked_pages.py tests/unit/interfaces/test_pipeline_api__source_support.py tests/unit/application/test_source_capability_service.py -q` (`22 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-integration tests/integration/listings/unified_crawl/test_crawl_normalize_persist__fixture_html__saves_rows.py tests/integration/listings/unified_crawl/test_unified_crawl_runner__persists_observations_and_source_contracts.py -q` (`13 passed`)
+- Residual limits:
+  - live verification for the four first-wave sources still depends on real proxy or remote-browser credentials and remains success-or-explicit-block rather than guaranteed success
+  - the supported no-proxy local slice remains `pisos`
+
+## 2026-03-11 (pydoll scraper stabilization packet)
+
+- Executed the scraper stabilization packet to make the repo-owned Python browser stack more truthful and more usable across the current strongest live sources.
+- Root-cause changes:
+  - extended `src/platform/utils/compliance.py` so runtime compliance decisions can use repo-owned source policy from `config/sources.yaml`:
+    - `robots_txt_url`
+    - `allowed_paths`
+    - `disallowed_paths`
+  - added conservative fallback behavior for `robots.txt` fetch failures:
+    - allow only when the requested path is explicitly repo-allowed
+    - otherwise keep returning structured policy-block reasons
+  - normalized the browser config surface in `src/listings/scraping/browser_engine.py` so legacy `stealth` maps into the actual `pydoll` option used by the repo
+  - upgraded `src/listings/scraping/client.py` and `src/listings/crawl_contract.py` so anti-bot challenge HTML now becomes explicit blocked errors rather than silent empty search/detail pages
+  - standardized the previously opaque crawler cohort onto measurable crawl responses with:
+    - structured `status`
+    - structured `errors`
+    - populated search/detail metadata
+  - tightened live search handling for `zoopla`, `idealista`, and `immobiliare` so search-page challenge/block states no longer collapse into `no_listings_found`
+  - wired unified crawl to pass source compliance policy into its source-specific compliance manager
+- Added regression coverage:
+  - `tests/unit/platform/test_compliance__source_policy.py`
+  - `tests/unit/listings/scraping/test_browser_engine_config__aliases.py`
+  - `tests/unit/listings/crawlers/test_zoopla_crawler__policy_blocked_search.py`
+  - `tests/unit/listings/crawlers/test_realtor_crawler__structured_fetch_errors.py`
+  - extended `tests/unit/listings/scraping/test_scrape_client__batch_error_propagation.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/platform/test_compliance__source_policy.py tests/unit/listings/scraping/test_browser_engine_config__aliases.py tests/unit/listings/crawlers/test_zoopla_crawler__policy_blocked_search.py tests/unit/listings/crawlers/test_realtor_crawler__structured_fetch_errors.py tests/unit/listings/crawlers/test_rightmove_crawler__structured_fetch_errors.py tests/unit/listings/scraping/test_scrape_client__batch_error_propagation.py -q` (`10 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/integration/listings/unified_crawl/test_crawl_normalize_persist__fixture_html__saves_rows.py tests/integration/listings/unified_crawl/test_unified_crawl_runner__persists_observations_and_source_contracts.py -q` (`8 skipped`; no regressions surfaced in the targeted integration slice under this environment)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-live tests/live/scrapers/test_idealista_real_live.py tests/live/scrapers/test_immobiliare_real_live.py tests/live/scrapers/test_zoopla_real_live.py -q` (`3 passed`)
+  - reset persistent seen-URL modes for the targeted live cohort before the clean cohort rerun
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-live tests/live/scrapers/test_pisos_real_live.py tests/live/scrapers/test_rightmove_real_live.py tests/live/scrapers/test_idealista_real_live.py tests/live/scrapers/test_onthemarket_real_live.py tests/live/scrapers/test_imovirtual_real_live.py tests/live/scrapers/test_immobiliare_real_live.py tests/live/scrapers/test_zoopla_real_live.py -q` (`6 passed, 1 skipped`)
+- Residual limits:
+  - at least one live source in the target cohort still variably skips on explicit anti-bot blocking even after the code fixes
+  - repeated live verification remains sensitive to persistent seen-URL state unless those modes are reset or isolated per run
+
+## 2026-03-11 (dashboard V3 prune + instrumentation packet)
+
+- Executed the dashboard V3 follow-through packet to remove low-value surface area from the React analyst product and add only the backend support needed for a calmer, more defensible UI.
+- Root-cause changes:
+  - removed `Command Center` from the live product IA in `frontend/src/App.tsx` and replaced `/command-center` with a tracked redirect to `/pipeline`
+  - simplified the decision-memory surface in `frontend/src/pages.tsx` so `Decisions` now exposes only:
+    - watchlists
+    - memos
+  - simplified the workbench by:
+    - moving advanced filters behind disclosure
+    - removing low-value right-rail sections
+    - tightening shortlist/review UI
+    - keeping saved-lens creation close to the lens itself
+  - tightened listing dossier hierarchy so trust/provenance read as one block and market context is lighter
+  - tightened comp review hierarchy so value impact is surfaced earlier and override history is collapsed
+  - replaced the pipeline page’s lower-level fan-out with an analyst-facing aggregate:
+    - `GET /api/v1/pipeline/trust-summary`
+  - added persistent UI event tracking via:
+    - `POST /api/v1/ui-events`
+    - `src/platform/domain/models.py`
+    - `src/platform/migrations.py`
+    - `frontend/src/track.ts`
+  - wired live tracking for workbench, listing, comp-review, memo, pipeline-blocker, and command-center redirect interactions
+  - updated the repo-owned Figma/HTML design source to the V3 prune under:
+    - `design/figma_redesign/index.html`
+    - `design/figma_redesign/workbench.html`
+    - `design/figma_redesign/listing-detail.html`
+    - `design/figma_redesign/comp-workbench.html`
+    - `design/figma_redesign/memo-watchlists.html`
+    - `design/figma_redesign/pipeline-health.html`
+    - `design/figma_redesign/command-center.html`
+- Figma/MCP note:
+  - local static capture server remained available on `http://127.0.0.1:8012`
+  - completed one new V3 import into existing file `In3GpOiXHDFAwGWIUkC9lP`:
+    - `35:2` workbench V3
+  - attempted next listing-dossier import using capture id `e64f3b34-5370-4f10-a959-b9a951a8743a`
+  - stopped the sync after MCP returned the same seat/tool-call-limit error again on 2026-03-11; remaining V3 pages still need a resumed sync once the external limit resets
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/platform/test_migrations__runtime_tables.py tests/unit/application/test_reporting_service.py tests/unit/adapters/http/test_fastapi_local_api.py -q` (`9 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - `npm run build` in `frontend/` (`built`; existing Vite warnings unchanged)
+- Residual limits:
+  - V3 Figma sync is only partially complete because of the external MCP seat/tool-call limit
+  - lower-level compatibility endpoints remain in the backend intentionally even though the UI no longer treats them as first-class product surfaces
+
+## 2026-03-11 (dashboard UX audit + redesign packet)
+
+- Executed the React dashboard redesign packet against the canonical FastAPI-served product surface rather than the deprecated Streamlit UI.
+- Root-cause changes:
+  - extended `src/application/workbench.py` so the listing context is now dossier-grade:
+    - `source_health`
+    - `media_summary`
+    - `evidence_summary`
+    - `market_context`
+    - `provenance_timeline`
+    - `data_gaps`
+  - added a new comp-review aggregation contract:
+    - `GET /api/v1/comp-reviews/{listing_id}/workspace`
+  - updated `src/adapters/http/app.py` to expose that workspace route
+  - replaced anonymous frontend screen contracts with typed models in:
+    - `frontend/src/types.ts`
+    - `frontend/src/api.ts`
+  - rewrote the React route surfaces in `frontend/src/pages.tsx` around the new IA:
+    - workbench truth strip + queue + dossier rail
+    - evidence-rich listing dossier
+    - real comp workbench
+    - merged decision hub
+    - pipeline trust surface
+    - guarded command center
+  - changed primary navigation in `frontend/src/App.tsx`:
+    - `Watchlists` -> `Decisions`
+    - `/memos` now redirects into the decision hub memo tab
+  - added screen-level CSS structure in `frontend/src/styles.css`
+  - updated repo-owned HTML design sources under `design/figma_redesign/*` so the local design source matches the implemented IA
+  - added browser-level React route smoke coverage in:
+    - `tests/e2e/ui/test_react_dashboard_routes.py`
+  - refreshed planning/alignment docs and wrote:
+    - `docs/implementation/reports/dashboard_ux_audit_redesign.md`
+- Figma/MCP note:
+  - verified the existing Figma file and preserved node mapping:
+    - `6:2`
+    - `7:2`
+    - `8:2`
+    - `9:2`
+    - `10:2`
+    - `11:2`
+  - synced the repo-owned HTML V2 prototype set into existing file `In3GpOiXHDFAwGWIUkC9lP` via `existingFile` capture as top-level imported nodes:
+    - `26:2` foundations
+    - `27:2` workbench
+    - `28:2` listing dossier
+    - `29:2` comp workbench
+    - `30:2` decision hub
+    - `31:2` pipeline trust surface
+  - corrected the repo-owned command-center prototype headline to match the live guarded-briefing copy and recaptured the canonical command-center node as:
+    - `34:2`
+  - `32:2` and `33:2` remain as superseded command-center recaptures created during copy-alignment retry; current MCP tooling did not expose delete/rename controls
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q` (`3 passed`)
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest --run-e2e tests/e2e/ui/test_react_dashboard_routes.py -q` (`1 passed`)
+  - `npm run build` in `frontend/` (`built`; existing Vite chunk-size warning unchanged)
+  - manual Playwright inspection of:
+    - `/workbench`
+    - `/watchlists?tab=memos`
+    - `/pipeline`
+    - `/command-center`
+    - `/listings/3fe641d70a322bf312591463cebc7bbe`
+    - `/comp-reviews/3fe641d70a322bf312591463cebc7bbe`
+- Residual limits:
+  - command-center message-level persistence is still intentionally absent
+  - Figma `existingFile` capture imported top-level nodes rather than a clean new page set, so any editorial regrouping inside the file is still a manual cleanup concern
+
+## 2026-03-11 (package stabilization + seeded local app packet)
+
+- Executed the package/local-app stabilization packet to make the repo runnable from a fresh machine without relying on ambient packaging or test-plugin state.
+- Root-cause changes:
+  - added a public `property_scanner` facade package with:
+    - `PipelineAPI`
+    - `get_pipeline_api`
+    - `__version__`
+    - console wrapper `property-scanner`
+  - fixed `pyproject.toml` packaging metadata so Poetry can build both `src` and `property_scanner`
+  - removed eager container/training/retrieval imports from common CLI/API import paths so help/startup stays lightweight
+  - added `seed-sample-data` plus `src/application/sample_data.py` to seed a deterministic local `pisos` dataset for demos and smoke tests
+  - added repo-owned verification targets in `Makefile`
+  - added `scripts/smoke_api.py` to verify:
+    - health
+    - listings
+    - valuation
+    against a fresh seeded DB
+  - hardened SQLite bootstrap so missing parent directories are created automatically
+  - canonicalized legacy source IDs during migrations for tables that carry `source_id`
+  - tightened source-support semantics so doc-operational does not automatically mean runtime-supported; `pisos` is the baseline-supported local slice and other non-blocked sources remain experimental unless fresh runtime evidence upgrades them
+- Added regression coverage:
+  - `tests/unit/package/test_public_package_facade.py`
+  - `tests/unit/interfaces/test_cli__local_contracts.py`
+  - `tests/integration/api/test_local_api_seeded_smoke.py`
+  - extended `tests/unit/platform/test_migrations__runtime_tables.py`
+  - updated `tests/unit/interfaces/test_pipeline_api__source_support.py`
+  - updated `tests/e2e/ui/test_dashboard_ui_verification_loop.py`
+- Verification evidence:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/package/test_public_package_facade.py tests/unit/interfaces/test_cli__local_contracts.py tests/unit/platform/test_migrations__runtime_tables.py tests/unit/interfaces/test_pipeline_api__source_support.py tests/integration/api/test_local_api_seeded_smoke.py -q` (`8 passed, 1 skipped`)
+  - `python3 -m build` (`sdist` + wheel built)
+  - `python3 -m src.interfaces.cli --help`
+  - `python3 scripts/smoke_api.py`
+  - `python3 -m pip install -e .`
+
 ## 2026-03-11 (CodeWiki teaching docs + README front-door packet)
 
 - Executed the documentation/front-door packet to make the repository easier to understand as a system, not just a collection of commands.
@@ -1660,3 +2335,34 @@
   - structured `insufficient_comps` response for listing `4zLGu`
   - seeded one real `preflight` job run through `/jobs/preflight`
   - `coverage_reports` populated; `benchmark_runs` still empty
+
+## 2026-03-13 (runtime hardening and launch surface alignment)
+
+- Refactored `src/platform/storage.py` so schema bootstrap is explicit via `ensure_current_schema()` and optionally disabled for callers that only need an engine/session handle.
+- Added schema version tracking in `src/platform/migrations.py` using SQLite `PRAGMA user_version`; repeated runtime reads now skip full migration execution after the first successful bootstrap.
+- Hardened CLI process wrappers in `src/interfaces/cli.py` so interrupting the API wrapper returns shell exit code `130` instead of surfacing a `KeyboardInterrupt` traceback.
+- Rewrote legacy launch assets to match the actual product surface:
+  - `run_dashboard.sh` now launches the local FastAPI app and React workbench path.
+  - `docker-compose.yml` now runs a single SQLite-backed API service.
+  - `Dockerfile` now builds the frontend and serves the API/workbench on port `8001`.
+- Added `.gitignore` coverage for transient local build/runtime clutter:
+  - `.playwright-cli/`
+  - `.tmp*/`
+  - `frontend/dist/`
+  - `frontend/node_modules/`
+  - `scraper/node_modules/`
+- Added regression tests:
+  - `tests/unit/platform/test_storage_service.py`
+  - `tests/unit/interfaces/test_cli_process_wrappers.py`
+  - extended `tests/unit/platform/test_migrations__runtime_tables.py`
+- Verification:
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/platform/test_storage_service.py tests/unit/platform/test_migrations__runtime_tables.py -q`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/interfaces/test_cli_process_wrappers.py tests/unit/interfaces/test_cli__local_contracts.py -q`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/unit/adapters/http/test_fastapi_local_api.py -q`
+  - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/e2e/ui/test_react_dashboard_routes.py -q --run-e2e`
+  - `make smoke-api`
+  - manual API boot on `127.0.0.1:8796` with `/api/v1/health`, `/api/v1/listings`, and `/api/v1/pipeline/trust-summary`
+  - manual launcher boot via `PROPERTY_SCANNER_PORT=8795 ./run_dashboard.sh`
+- Remaining runtime noise still visible but non-blocking:
+  - third-party import warnings from `keras`, `jupyter_client`, `comet_ml`, and websocket dependencies
+  - no full Docker build/compose execution performed in this packet

@@ -54,7 +54,7 @@ def load_pipeline_status():
             "reasons": ["status_unavailable"],
             "source_support": {
                 "doc_path": "docs/crawler_status.md",
-                "summary": {"supported": 0, "blocked": 0, "fallback": 0},
+                "summary": {"supported": 0, "blocked": 0, "experimental": 0},
                 "sources": [],
             },
             "assumption_badges": [],

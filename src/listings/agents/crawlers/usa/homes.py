@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 import structlog
 
+from src.listings.crawl_contract import build_crawl_response
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 from src.listings.source_ids import canonicalize_source_id
 from src.platform.agents.base import BaseAgent, AgentResponse
@@ -23,20 +24,20 @@ class HomesCrawlerAgent(BaseAgent):
         self.compliance = compliance
         self.source_id = canonicalize_source_id(config.get("id", "homes_us"))
         self.base_url = config.get("base_url", "https://www.homes.com")
+        rate_conf = config.get("rate_limit", {}) or {}
+        self.rate_limit_seconds = float(rate_conf.get("period_seconds", config.get("period_seconds", 5)))
         self.user_agent = config.get(
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 4)
-        )
+        browser_max_concurrency = int(config.get("browser_max_concurrency") or 4)
         
         self.scrape_client = ScrapeClient(
             source_id=self.source_id,
             base_url=self.base_url,
             compliance_manager=self.compliance,
             user_agent=self.user_agent,
-            rate_limit_seconds=float(config.get("period_seconds", 5)),
+            rate_limit_seconds=self.rate_limit_seconds,
             browser_wait_s=float(config.get("browser_wait_s", 5.0)),
             browser_max_concurrency=browser_max_concurrency,
             browser_config=config.get("browser_config"),
@@ -59,13 +60,32 @@ class HomesCrawlerAgent(BaseAgent):
         else:
             start_url = f"{self.base_url}/{search_path}"
 
+        errors: list[str] = []
+        search_pages_attempted = 0
+        search_pages_succeeded = 0
         listing_urls = []
         if input_payload.get("target_urls"):
             listing_urls = input_payload["target_urls"]
         else:
+            search_pages_attempted = 1
+            if hasattr(self.compliance, "assess_url"):
+                decision = self.compliance.assess_url(
+                    start_url,
+                    rate_limit_seconds=self.rate_limit_seconds,
+                )
+                if not decision.allowed:
+                    errors.append(f"policy_blocked:{decision.reason}:{start_url}")
+                    return build_crawl_response(
+                        listings=[],
+                        errors=errors,
+                        search_pages_attempted=search_pages_attempted,
+                        search_pages_succeeded=0,
+                        listing_urls_discovered=0,
+                    )
             # Fetch Search Page
             html = self._fetch_url(start_url)
             if html:
+                search_pages_succeeded = 1
                 try:
                     debug_path = self.scrape_client.build_raw_listing(
                         external_id=f"search_homes_{unix_ts()}",
@@ -84,10 +104,13 @@ class HomesCrawlerAgent(BaseAgent):
                         include=["/property/"],
                     ),
                 )
+            else:
+                errors.append(f"fetch_failed:{start_url}")
         
         results = []
         for result in self.scrape_client.fetch_html_batch(listing_urls, timeout_s=45, retries=3):
             if not result.html:
+                errors.append(result.error or f"fetch_failed:{result.url}")
                 continue
             url = result.url
             html = result.html
@@ -112,5 +135,15 @@ class HomesCrawlerAgent(BaseAgent):
                 fetched_at=utcnow()
             )
             results.append(raw_listing)
-            
-        return AgentResponse(status="success" if results else "failure", data=results)
+
+        if not listing_urls and not errors:
+            errors.append("no_listings_found")
+
+        return build_crawl_response(
+            listings=results,
+            errors=errors,
+            search_pages_attempted=search_pages_attempted,
+            search_pages_succeeded=search_pages_succeeded,
+            listing_urls_discovered=len(listing_urls),
+            search_fetch_ok=search_pages_succeeded > 0 or bool(input_payload.get("target_urls")),
+        )

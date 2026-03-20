@@ -15,7 +15,13 @@ def _build_api() -> PipelineAPI:
         sources=SourcesConfig(
             sources=[
                 SourceConfig(id="pisos", name="Pisos.com", enabled=True, countries=["ES"]),
-                SourceConfig(id="realtor_us", name="Realtor.com", enabled=False, countries=["US"]),
+                SourceConfig(
+                    id="realtor_us",
+                    name="Realtor.com",
+                    enabled=False,
+                    countries=["US"],
+                    browser_config={"proxy_required": True},
+                ),
                 SourceConfig(id="idealista_it", name="Idealista Italy", enabled=False, countries=["IT"]),
                 SourceConfig(id="custom_source", name="Custom Source", enabled=True, countries=["PT"]),
             ]
@@ -24,7 +30,7 @@ def _build_api() -> PipelineAPI:
     return PipelineAPI(app_config=app_config)
 
 
-def test_source_support_summary__classifies_supported_blocked_fallback(tmp_path: Path) -> None:
+def test_source_support_summary__classifies_supported_blocked_experimental(tmp_path: Path) -> None:
     crawler_status_doc = tmp_path / "crawler_status.md"
     crawler_status_doc.write_text(
         "\n".join(
@@ -42,13 +48,30 @@ def test_source_support_summary__classifies_supported_blocked_fallback(tmp_path:
     api = _build_api()
     summary = api.source_support_summary(crawler_status_path=str(crawler_status_doc))
 
-    assert summary["summary"] == {"supported": 1, "blocked": 2, "fallback": 1}
+    assert summary["summary"] == {"supported": 1, "blocked": 1, "experimental": 2}
     by_id = {row["id"]: row for row in summary["sources"]}
 
     assert by_id["pisos"]["runtime_label"] == "supported"
-    assert by_id["realtor_us"]["runtime_label"] == "blocked"
+    assert by_id["realtor_us"]["runtime_label"] == "experimental"
+    assert by_id["realtor_us"]["reason"] == "proxy_required_unconfigured"
     assert by_id["idealista_it"]["runtime_label"] == "blocked"
-    assert by_id["custom_source"]["runtime_label"] == "fallback"
+    assert by_id["custom_source"]["runtime_label"] == "experimental"
+
+
+def test_source_support_summary__reports_proxy_required_sources_as_experimental_when_unconfigured(monkeypatch) -> None:
+    monkeypatch.delenv("PROPERTY_SCANNER_PROXY_URL", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REMOTE_BROWSER_WS", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REALTOR_US_PROXY_URL", raising=False)
+    monkeypatch.delenv("PROPERTY_SCANNER_REALTOR_US_REMOTE_BROWSER_WS", raising=False)
+
+    api = _build_api()
+    summary = api.source_support_summary(crawler_status_path=str(Path("/tmp/does-not-exist.md")))
+    by_id = {row["id"]: row for row in summary["sources"]}
+
+    assert by_id["realtor_us"]["runtime_label"] == "experimental"
+    assert by_id["realtor_us"]["reason"] == "proxy_required_unconfigured"
+    assert by_id["realtor_us"]["proxy_required"] is True
+    assert by_id["realtor_us"]["proxy_configured"] is False
 
 
 def test_pipeline_status__embeds_source_support_summary(tmp_path: Path, monkeypatch) -> None:
@@ -89,7 +112,7 @@ def test_pipeline_status__embeds_source_support_summary(tmp_path: Path, monkeypa
     badges = {badge["id"]: badge for badge in payload["assumption_badges"]}
     assert badges["source_coverage"]["artifact_ids"] == ["lit-case-shiller-1988"]
     assert badges["source_coverage"]["status"] == "caution"
-    assert "fallback" in badges["source_coverage"]["summary"]
+    assert "experimental" in badges["source_coverage"]["summary"]
     assert badges["conditional_coverage"]["artifact_ids"] == ["lit-conformal-tutorial-2021"]
     assert badges["conditional_coverage"]["status"] == "caution"
     assert badges["jackknife_fallback"]["status"] == "caution"
@@ -144,6 +167,6 @@ def test_source_support_summary__prefers_latest_source_contract_run_over_doc(tmp
     summary = api.source_support_summary(crawler_status_path=str(crawler_status_doc))
     by_id = {row["id"]: row for row in summary["sources"]}
 
-    assert summary["summary"] == {"supported": 1, "blocked": 0, "fallback": 0}
+    assert summary["summary"] == {"supported": 1, "blocked": 0, "experimental": 0}
     assert by_id["imovirtual_pt"]["runtime_label"] == "supported"
     assert by_id["imovirtual_pt"]["reason"] == "source_contract_supported"

@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from sqlalchemy import text
@@ -14,18 +14,20 @@ from src.platform.domain.schema import CanonicalListing, DealAnalysis
 import structlog
 
 from src.listings.source_ids import canonicalize_source_id, source_aliases
+from src.listings.scraping.proxy_config import (
+    browser_proxy_configured,
+    browser_proxy_required,
+    resolve_browser_runtime_config,
+)
 from src.platform.settings import AppConfig, PipelineConfig, ValuationConfig
 from src.platform.db.base import resolve_db_url
 from src.listings.services.listing_adapter import db_listing_to_canonical
-from src.valuation.services.retrieval import build_retriever
 from src.platform.storage import StorageService
-from src.valuation.services.valuation import ValuationService
-from src.valuation.services.valuation_persister import ValuationPersister
-from src.ml.training.train import train_model as train_model_workflow
-from src.market.services.transactions import TransactionsIngestService
-from src.listings.workflows.unified_crawl import run_backfill
 from src.platform.pipeline.state import PipelineStateService
 from src.platform.utils.config import load_app_config_safe
+
+if TYPE_CHECKING:  # pragma: no cover
+    from src.valuation.services.valuation import ValuationService
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +38,7 @@ _OBSERVABILITY_DOC_PATH = "docs/manifest/07_observability.md"
 _RUNBOOK_DOC_PATH = "docs/manifest/09_runbook.md"
 _ARTIFACT_ALIGNMENT_REPORT_PATH = "docs/implementation/reports/artifact_feature_alignment.md"
 _ARTIFACT_ALIGNMENT_CHECKLIST_PATH = "docs/implementation/checklists/08_artifact_feature_alignment.md"
+_SUPPORTED_BASELINE_SOURCES = {"pisos"}
 
 
 def _strip_md(value: str) -> str:
@@ -103,8 +106,8 @@ def _runtime_label_from_contract_status(contract_status: str) -> Tuple[str, str]
     if value == "supported":
         return "supported", "source_contract_supported"
     if value:
-        return "fallback", f"source_contract_{value}"
-    return "fallback", "source_contract_unknown"
+        return "experimental", f"source_contract_{value}"
+    return "experimental", "source_contract_unknown"
 
 
 def _resolve_crawler_status(source_id: str, source_name: Optional[str], status_by_name: Dict[str, str]) -> str:
@@ -127,14 +130,24 @@ def _resolve_crawler_status(source_id: str, source_name: Optional[str], status_b
     return best_status
 
 
-def _classify_runtime_label(enabled: bool, crawler_status: str) -> Tuple[str, str]:
+def _classify_runtime_label(
+    source_id: str,
+    enabled: bool,
+    crawler_status: str,
+    *,
+    proxy_required: bool = False,
+    proxy_configured: bool = False,
+) -> Tuple[str, str]:
+    if proxy_required and not proxy_configured:
+        return "experimental", "proxy_required_unconfigured"
     if crawler_status == "blocked":
         return "blocked", "crawler_status_blocked"
-    if enabled and crawler_status == "operational":
-        return "supported", "enabled_and_operational"
+    canonical_source_id = canonicalize_source_id(source_id)
+    if enabled and crawler_status == "operational" and canonical_source_id in _SUPPORTED_BASELINE_SOURCES:
+        return "supported", "baseline_supported_slice"
     if enabled:
-        return "fallback", "enabled_but_unverified"
-    return "fallback", "disabled_or_unverified"
+        return "experimental", "enabled_but_unverified"
+    return "experimental", "disabled_or_unverified"
 
 
 def _repo_relative_path(path: Path) -> str:
@@ -169,8 +182,8 @@ class PipelineAPI:
         self.config = config or self.app_config.pipeline
         self._db_url = resolve_db_url(db_url=self.config.db_url, db_path=self.config.db_path)
         self._storage: Optional[StorageService] = None
-        self._valuation: Optional[ValuationService] = None
-        self._retriever: Optional[CompRetriever] = None
+        self._valuation: Optional["ValuationService"] = None
+        self._retriever: Optional[Any] = None
         if valuation_config is not None and app_config is not None:
             logger.warning("valuation_config_override", msg="ValuationConfig overrides AppConfig valuation settings.")
         self._valuation_config = valuation_config or self.app_config.valuation
@@ -186,8 +199,10 @@ class PipelineAPI:
         return self._storage
 
     @property
-    def valuation(self) -> ValuationService:
+    def valuation(self) -> "ValuationService":
         if self._valuation is None:
+            from src.valuation.services.valuation import ValuationService
+
             self._valuation = ValuationService(
                 self.storage,
                 config=self._valuation_config,
@@ -198,6 +213,8 @@ class PipelineAPI:
     @property
     def retriever(self) -> Any:
         if self._retriever is None:
+            from src.valuation.services.retrieval import build_retriever
+
             self._retriever = build_retriever(
                 backend=self._valuation_config.retriever_backend,
                 index_path=self.config.index_path,
@@ -227,7 +244,7 @@ class PipelineAPI:
         return get_container().pipeline.run_preflight(**payload)
 
     def source_support_summary(self, *, crawler_status_path: Optional[str] = None) -> Dict[str, Any]:
-        """Classify source runtime labels as supported/blocked/fallback."""
+        """Classify source runtime labels as supported/blocked/experimental."""
         doc_path = Path(crawler_status_path) if crawler_status_path else _CRAWLER_STATUS_DOC_PATH
         status_by_name = _parse_crawler_status_doc(doc_path)
         latest_contract_runs: Dict[str, Dict[str, Any]] = {}
@@ -265,18 +282,27 @@ class PipelineAPI:
         except Exception:
             latest_contract_runs = {}
 
-        summary = {"supported": 0, "blocked": 0, "fallback": 0}
+        summary = {"supported": 0, "blocked": 0, "experimental": 0}
         sources: List[Dict[str, Any]] = []
 
         for source in self.app_config.sources.sources:
             canonical_source_id = canonicalize_source_id(source.id)
+            resolved_browser_config = resolve_browser_runtime_config(source.id, getattr(source, "browser_config", {}))
+            proxy_required = browser_proxy_required(resolved_browser_config)
+            proxy_configured = browser_proxy_configured(resolved_browser_config)
             latest_contract = latest_contract_runs.get(canonical_source_id)
             if latest_contract is not None:
                 crawler_status = str(latest_contract.get("status") or "unknown")
                 runtime_label, reason = _runtime_label_from_contract_status(crawler_status)
             else:
                 crawler_status = _resolve_crawler_status(source.id, source.name, status_by_name)
-                runtime_label, reason = _classify_runtime_label(bool(source.enabled), crawler_status)
+                runtime_label, reason = _classify_runtime_label(
+                    source.id,
+                    bool(source.enabled),
+                    crawler_status,
+                    proxy_required=proxy_required,
+                    proxy_configured=proxy_configured,
+                )
             summary[runtime_label] += 1
             sources.append(
                 {
@@ -288,6 +314,8 @@ class PipelineAPI:
                     "crawler_status": crawler_status,
                     "runtime_label": runtime_label,
                     "reason": reason,
+                    "proxy_required": proxy_required,
+                    "proxy_configured": proxy_configured,
                     "source_aliases": sorted(source_aliases(source.id)),
                     "latest_contract_run": latest_contract,
                 }
@@ -307,19 +335,19 @@ class PipelineAPI:
 
         supported = int(summary.get("supported", 0) or 0)
         blocked = int(summary.get("blocked", 0) or 0)
-        fallback = int(summary.get("fallback", 0) or 0)
+        experimental = int(summary.get("experimental", 0) or 0)
         source_doc = str(source_support.get("doc_path") or "docs/crawler_status.md")
 
-        if blocked > 0 or fallback > 0:
+        if blocked > 0 or experimental > 0:
             source_status = "caution"
             source_summary = (
-                f"{supported} supported, {blocked} blocked, {fallback} fallback sources; "
+                f"{supported} supported, {blocked} blocked, {experimental} experimental sources; "
                 "review crawler caveats before relying on aggregate outputs."
             )
         else:
             source_status = "ok"
             source_summary = (
-                f"{supported} supported sources with no blocked/fallback entries in runtime status."
+                f"{supported} supported sources with no blocked/experimental entries in runtime status."
             )
 
         return [
@@ -391,6 +419,8 @@ class PipelineAPI:
         crawler_config: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Crawl listings via the unified crawler backfill."""
+        from src.listings.workflows.unified_crawl import run_backfill
+
         return run_backfill(
             source_ids=source_ids,
             search_urls=search_urls,
@@ -422,6 +452,8 @@ class PipelineAPI:
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Ingest sold/transaction data and map onto listings."""
+        from src.market.services.transactions import TransactionsIngestService
+
         service = TransactionsIngestService(db_path=self.config.db_path, db_url=self.config.db_url)
         return service.ingest_file(
             path,
@@ -441,6 +473,8 @@ class PipelineAPI:
 
     def train_model(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """Train the fusion model."""
+        from src.ml.training.train import train_model as train_model_workflow
+
         db_path = kwargs.pop("db_path", self.config.db_path)
         return train_model_workflow(db_path=db_path, app_config=self.app_config, **kwargs)
 
@@ -473,6 +507,8 @@ class PipelineAPI:
         analysis = self.valuation.evaluate_deal(target, comps=comps)
 
         if persist:
+            from src.valuation.services.valuation_persister import ValuationPersister
+
             session = self.storage.get_session()
             try:
                 persister = ValuationPersister(session)

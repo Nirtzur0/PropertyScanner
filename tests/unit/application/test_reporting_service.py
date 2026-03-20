@@ -184,3 +184,40 @@ def test_reporting_service__lists_operational_artifacts(tmp_path: Path) -> None:
     assert reporting.list_coverage_reports(limit=10)[0]["id"] == "coverage-1"
     assert reporting.list_data_quality_events(limit=10)[0]["id"] == "dq-1"
     assert reporting.list_source_contract_runs(limit=10)[0]["id"] == "source-run-1"
+
+
+def test_reporting_service__records_ui_events_and_builds_pipeline_trust_summary(tmp_path: Path) -> None:
+    runtime_config = _runtime_config(tmp_path)
+    storage = StorageService(db_url=f"sqlite:///{runtime_config.paths.db_path}")
+    reporting = ReportingService(storage=storage)
+
+    event_id = reporting.record_ui_event(
+        event_name="workbench_listing_opened",
+        route="/workbench",
+        subject_type="listing",
+        subject_id="target",
+        context={"source": "rail"},
+        occurred_at=utcnow(),
+    )
+    ui_events = reporting.list_ui_events(limit=10)
+    assert ui_events[0]["id"] == event_id
+
+    summary = reporting.pipeline_trust_summary(
+        pipeline_state={"needs_refresh": True, "reasons": ["market data stale"]},
+        source_audit={
+            "summary": {"supported": 1, "blocked": 2},
+            "sources": [
+                {
+                    "source_id": "pisos",
+                    "name": "Pisos",
+                    "status": "degraded",
+                    "reasons": ["area corruption high"],
+                }
+            ],
+        },
+    )
+
+    assert summary["freshness"]["needs_refresh"] is True
+    assert summary["source_summary"]["counts"]["blocked"] == 2
+    assert summary["source_summary"]["top_sources"][0]["source_id"] == "pisos"
+    assert summary["top_blockers"][0]["kind"] == "freshness"

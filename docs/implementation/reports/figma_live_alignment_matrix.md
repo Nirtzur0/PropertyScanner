@@ -1,80 +1,85 @@
 # Figma-to-Live Alignment Matrix
 
-Date: 2026-03-10
+Date: 2026-03-11
 
 Figma source of truth:
+
 - File key: `In3GpOiXHDFAwGWIUkC9lP`
-- Workbench: `6:2`
-- Listing Detail: `7:2`
-- Comp Workbench: `8:2`
-- Memo + Watchlists: `9:2`
-- Pipeline + Source Health: `10:2`
-- Command Center: `11:2`
+- Existing preserved legacy nodes:
+  - Workbench: `6:2`
+  - Listing Detail: `7:2`
+  - Comp Workbench: `8:2`
+  - Memo + Watchlists: `9:2`
+  - Pipeline + Source Health: `10:2`
+  - Command Center: `11:2`
+- Synced V2 nodes:
+  - Foundations: `26:2`
+  - Workbench: `27:2`
+  - Listing Dossier: `28:2`
+  - Comp Workbench: `29:2`
+  - Decision Hub: `30:2`
+  - Pipeline Trust Surface: `31:2`
+  - Command Center: `34:2`
+- V3 sync progress:
+  - Workbench V3: `35:2`
+  - Remaining V3 pages: blocked pending a Figma MCP seat/tool-call reset
+- Repo-owned V3 design source:
+  - `design/figma_redesign/index.html`
+  - `design/figma_redesign/workbench.html`
+  - `design/figma_redesign/listing-detail.html`
+  - `design/figma_redesign/comp-workbench.html`
+  - `design/figma_redesign/memo-watchlists.html`
+  - `design/figma_redesign/pipeline-health.html`
+  - `design/figma_redesign/command-center.html`
+
+Figma sync note:
+
+- On 2026-03-11 the repo-owned V2 prototypes were synced into the existing file via Figma MCP `existingFile` capture.
+- The sync preserved legacy nodes `6:2` through `11:2`.
+- MCP imported the V2 designs as top-level nodes in the file rather than a distinct page set.
+- `34:2` is the canonical command-center capture after the copy-alignment recapture; `32:2` and `33:2` remain as superseded imports.
+- A follow-up V3 sync started on 2026-03-11 and successfully imported the new workbench as `35:2`.
+- The next attempted V3 listing-dossier capture (`e64f3b34-5370-4f10-a959-b9a951a8743a`) was blocked when Figma MCP returned the same seat/tool-call-limit error again, so the remaining V3 pages are still pending sync.
 
 Runtime evidence used:
-- live API on `http://127.0.0.1:8001`
-- live dashboard on `http://127.0.0.1:8501`
-- repo UI verification loop: `tests/e2e/ui/test_dashboard_ui_verification_loop.py`
+
+- FastAPI + React workbench on local runtime
+- API contract verification in `tests/unit/adapters/http/test_fastapi_local_api.py`
+- React route smoke in `tests/e2e/ui/test_react_dashboard_routes.py`
 
 Status vocabulary:
-- `implemented`: backed by live API/runtime and no placeholder dependency
-- `partial`: some live contract exists, but route/UI parity or full behavior is missing
-- `blocked-by-data`: surface exists but truthful population is limited by current runtime data
-- `missing`: no live surface or contract
 
-| Figma screen | Feature | Live surface | Real data source | Status | Fix owner | Blocking dependency |
+- `implemented`: live route and backing contract exist
+- `partial`: route exists, but part of the intended Figma behavior is still deferred
+- `blocked-by-data`: route exists, but truthful population depends on runtime data not always present
+- `deferred`: intentionally not in current scope
+
+| Figma screen | V3 target | React route | Real data source | Status | V3 target closure | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `6:2` Workbench | listing corpus and ranking inputs | `GET /listings`, Streamlit deal flow | `listings` table | implemented | UI | none |
-| `6:2` Workbench | map and table sync | Streamlit map + table | listing `location.lat/lon` | partial | UI | multi-route redesign not implemented |
-| `6:2` Workbench | explainable ranking | Streamlit reasons/intel summary | persisted valuations + listing signals | partial | UI | ranking logic not yet surfaced like Figma |
-| `6:2` Workbench | saved views | `GET/POST /saved-searches` | `saved_searches` table | partial | UI | no live route in dashboard |
-| `6:2` Workbench | watchlist actions | `GET/POST /watchlists` | `watchlists` table | partial | UI | no live route in dashboard |
-| `6:2` Workbench | persistent job tray | `GET /job-runs` | `job_runs` table | partial | UI | no visible tray in dashboard |
-| `6:2` Workbench | notification center | pipeline/source badges only | `pipeline-status`, `sources` | partial | UI | dedicated notification surface missing |
-| `7:2` Listing Detail | canonical dossier | `GET /listings/{id}` | `listings` table | implemented | UI | no dedicated route yet |
-| `7:2` Listing Detail | fair value summary | `POST /valuations` | comparable baseline valuation | implemented | UI | no dedicated route yet |
-| `7:2` Listing Detail | insufficiency handling | `POST /valuations` returns `422` structured detail | valuation service errors | implemented | Backend/UI | none |
-| `7:2` Listing Detail | evidence ladder | valuation evidence payload | baseline comps/evidence | partial | UI | Figma-grade evidence layout missing |
-| `7:2` Listing Detail | source provenance and activity | `GET /source-contract-runs`, `GET /data-quality-events` | `source_contract_runs`, `data_quality_events` | partial | UI | listing-scoped provenance timeline missing |
-| `7:2` Listing Detail | memo hooks | `GET/POST /memos`, `POST /memos/{id}/export` | `memos` table | partial | UI | no listing detail route |
-| `8:2` Comp Workbench | comp review persistence | `GET/POST /comp-reviews` | `comp_reviews` table | implemented | UI | dedicated workbench route missing |
-| `8:2` Comp Workbench | pin/reject/override actions | `POST /comp-reviews` | selected/rejected/override fields | implemented | UI | no live review interface |
-| `8:2` Comp Workbench | valuation impact visibility | valuation + comp review can coexist | `valuations`, `comp_reviews` | partial | Backend/UI | no derived adjusted-value view yet |
-| `9:2` Memo + Watchlists | memo list/detail | `GET/POST /memos`, `GET /memos/{id}` | `memos` table | implemented | UI | no route in dashboard |
-| `9:2` Memo + Watchlists | memo export | `POST /memos/{id}/export` | memo sections/assumptions/risks | implemented | UI | export is API-only today |
-| `9:2` Memo + Watchlists | watchlist board | `GET/POST /watchlists` | `watchlists` table | implemented | UI | live route missing |
-| `9:2` Memo + Watchlists | saved searches | `GET/POST /saved-searches` | `saved_searches` table | implemented | UI | live route missing |
-| `10:2` Pipeline + Source Health | source capability board | `GET /sources`, `GET /source-contract-runs` | source audits | implemented | UI | none |
-| `10:2` Pipeline + Source Health | data quality event stream | `GET /data-quality-events` | `data_quality_events` | implemented | UI | none |
-| `10:2` Pipeline + Source Health | recent jobs | `GET /job-runs` | `job_runs` | implemented | UI | none |
-| `10:2` Pipeline + Source Health | benchmark gate report | `GET /benchmarks` | `benchmark_runs` | blocked-by-data | Ops/Backend | live DB has `0` benchmark runs |
-| `10:2` Pipeline + Source Health | coverage report | `GET /coverage-reports` | `coverage_reports` | implemented | UI | none |
-| `10:2` Pipeline + Source Health | truthful support labels | `GET /sources`, `GET /pipeline-status` | source/model readiness | implemented | UI | none |
-| `11:2` Command Center | advisory run history | `GET /command-center/runs` | `agent_runs` | implemented | UI | none |
-| `11:2` Command Center | explicit action confirmation | existing Streamlit approval loop | agent plan review | partial | UI | dedicated route missing |
-| `11:2` Command Center | message history | run summary only | `agent_runs.summary`, `agent_runs.plan` | partial | Backend/UI | message-level persistence absent |
+| `35:2` Workbench | truth strip, compact default lens, shortlist, basket, slim dossier rail | `/workbench` | `GET /api/v1/workbench/explore`, `GET /api/v1/workbench/layers`, `GET /api/v1/workbench/listings/{id}/context`, `POST /api/v1/ui-events` | implemented | closed | V3 workbench is the only fully re-synced Figma page from this pass |
+| `28:2` Listing Dossier | trust-first dossier with merged trust/provenance and lighter market context | `/listings/:listingId` | `GET /api/v1/workbench/listings/{id}/context`, `POST /api/v1/ui-events` | implemented | open in Figma | live route matches V3 behavior, but the shared Figma file still points at the older V2 capture until MCP sync resumes |
+| `29:2` Comp Workbench | candidate pool, top summary impact, disclosed override history | `/comp-reviews/:listingId` | `GET /api/v1/comp-reviews/{id}/workspace`, `POST /api/v1/comp-reviews`, `POST /api/v1/memos`, `POST /api/v1/ui-events` | implemented | open in Figma | live route reflects V3 simplification; Figma still needs the refreshed import |
+| `30:2` Decision Hub | watchlists + memos only | `/watchlists` | `GET /api/v1/watchlists`, `GET /api/v1/memos` | implemented | open in Figma | `/memos` redirects to the memo tab; saved searches stay near the workbench lens instead of this route |
+| `31:2` Pipeline Trust Surface | freshness, top blockers, source summary, benchmark gate, lower-level ops behind disclosure | `/pipeline` | `GET /api/v1/pipeline/trust-summary`, `GET /api/v1/coverage-reports`, `GET /api/v1/source-contract-runs`, `POST /api/v1/ui-events` | implemented | open in Figma | live page now uses the aggregate trust-summary contract and tracks blocker openings |
+| `34:2` Command Center V2 | superseded legacy V2 advisory surface | `/command-center` | redirect -> `/pipeline`, `POST /api/v1/ui-events` | deferred | superseded | V3 removes this destination; repo-owned `design/figma_redesign/command-center.html` is now a deprecation frame but the refreshed capture is blocked by MCP limits |
 
-## Observed runtime constraints
+## Route closure summary
 
-- Live API now returns structured valuation insufficiency instead of `500`:
-  - `target_surface_area_required`
-  - `insufficient_comps`
-- Live DB-backed operational data exists:
-  - `coverage_reports=4`
-  - `source_contract_runs=40`
-  - `data_quality_events=94`
-- Live DB still lacks some truth surfaces expected by the design:
-  - `job_runs=1`
-  - `benchmark_runs=0`
-- Source trust remains weak in the real DB:
-  - `supported=0`
-  - `degraded=1`
-  - `blocked=11`
-  - `experimental=8`
+- Closed:
+  - workbench hierarchy
+  - dossier parity
+  - comp-review workspace
+  - decision-hub simplification
+  - pipeline trust surface + aggregate API
+  - command-center route removal with compatibility redirect
+- Partial:
+  - V3 Figma re-sync beyond workbench
+- Deferred:
+  - full mobile parity for map and comp-review desktop workflows
+  - physical cleanup of superseded imported Figma nodes
 
-## Immediate follow-up defects
+## Remaining gaps
 
-1. Build actual routes/views for watchlists, saved searches, memos, comp workbench, and pipeline surfaces instead of leaving the new contracts API-only.
-2. Add listing-scoped provenance aggregation so Listing Detail can render the Figma activity rail truthfully.
-3. Persist command-center messages if the Figma conversation/history panel stays in scope.
-4. Generate at least one benchmark run in the live DB before claiming the benchmark gate panel is populated.
+1. Resume the V3 Figma sync for listing dossier, comp workbench, decisions, pipeline, and the command-center removal frame once the Figma seat/tool-call limit resets.
+2. Add richer benchmark population in the live DB if the benchmark gate needs example-filled states in demos.
+3. Optionally clean up or regroup superseded imports (`32:2`, `33:2`, older V2 captures) inside Figma if file hygiene matters.

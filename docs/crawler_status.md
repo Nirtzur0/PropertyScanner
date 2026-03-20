@@ -7,6 +7,11 @@
   - `pisos`, `imovirtual_pt`, and `rightmove_uk` passed live smoke with canonical source IDs and persisted crawl metrics.
   - `zoopla_uk` remains block-prone and should be treated as success-or-explicit-block.
   - `idealista`, `immobiliare_it`, and `onthemarket_uk` currently surface explicit `policy_blocked:*` outcomes under conservative compliance semantics instead of pretending to be crawler regressions.
+- First-wave proxy-backed sources now have deterministic detail normalizers but require configured proxy or remote-browser settings before live crawl attempts:
+  - `realtor_us`
+  - `redfin_us`
+  - `seloger_fr`
+  - `immowelt_de`
 - The matrix below remains useful as operator guidance, but it is no longer the primary runtime source of truth.
 
 **Date:** 2026-01-19
@@ -35,14 +40,14 @@ Tests were conducted using:
 | **Imovirtual** | Portugal | ✅ **Operational** | Passing | - Successfully migrated to `ScrapeClient`.<br>- Normalizer handles JSON-LD (fixed `@graph` parsing) and DOM fallback.<br>- Integration tests passing with real network calls. |
 | **OnTheMarket** | UK | ✅ **Operational** | Passing | - Migrated to `ScrapeClient`.<br>- Normalizer extracts structured data from `dataLayer`.<br>- Validated with live integration tests handling rate limits. |
 | **Pisos.com** | Spain | ✅ **Operational** | Passing | - Reference implementation. Working correctly. |
-| **Realtor** | USA | ❌ **Blocked** | Failing | - **FATAL**: Blocked (likely DataDome/Cloudflare). |
-| **Redfin** | USA | ❌ **Blocked** | Failing | - **FATAL**: Blocked (Fingerprinting). |
+| **Realtor** | USA | ⚠️ **Proxy-required** | Conditional | - Deterministic detail normalizer is implemented.<br>- Live crawl now exits explicitly with `proxy_required` unless a proxy or remote browser is configured.<br>- With proxy support, still treat success-or-explicit-block as the acceptance standard. |
+| **Redfin** | USA | ⚠️ **Proxy-required** | Conditional | - Deterministic detail normalizer is implemented.<br>- Live crawl now exits explicitly with `proxy_required` unless a proxy or remote browser is configured.<br>- With proxy support, still expect aggressive fingerprinting and possible block outcomes. |
 | **Homes.com** | USA | ❌ **Blocked** | Failing | - **FATAL**: Blocked (Rate Limit/Access Denied). |
 | **Casa.it** | Italy | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Listing content hidden behind challenge page. |
 | **Immobiliare** | Italy | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
 | **Idealista** | Spain | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
-| **SeLoger** | France | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
-| **Immowelt** | Germany | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **DataDome**.<br>- Integration test failed. |
+| **SeLoger** | France | ⚠️ **Proxy-required** | Conditional | - Deterministic detail normalizer is implemented.<br>- Live crawl now exits explicitly with `proxy_required` unless a proxy or remote browser is configured.<br>- With proxy support, still expect DataDome-class blocking to remain possible. |
+| **Immowelt** | Germany | ⚠️ **Proxy-required** | Conditional | - Deterministic detail normalizer is implemented.<br>- Live crawl now exits explicitly with `proxy_required` unless a proxy or remote browser is configured.<br>- With proxy support, still expect challenge pages to remain possible. |
 | **Funda** | Netherlands | ❌ **Blocked** | Failing | - **FATAL**: Blocked by **Akamai/reCAPTCHA**.<br>- Browser execution intercepted. |
 | **Rightmove** | UK | ✅ **Operational** | Passing | - Successfully fetched valid content.<br>- Stealth bypass effective. |
 | **Zoopla** | UK | ✅ **Operational** | Passing | - Successfully fetched valid content.<br>- Stealth bypass effective. |
@@ -55,12 +60,12 @@ Tests were conducted using:
 
 `src/interfaces/api/pipeline.py` and `src/interfaces/dashboard/app.py` now expose runtime source labels based on `config/sources.yaml` plus this status matrix:
 
-- `supported`: source is enabled and mapped to `Operational` in this report.
+- `supported`: source is the current supported baseline (`pisos`) or has fresh explicit runtime support evidence.
 - `blocked`: source is mapped to `Blocked` in this report.
-- `fallback`: source is disabled, unverified, or missing explicit operational evidence.
+- `experimental`: source is enabled or present in config but lacks current support evidence, including sources that are proxy-required but not currently configured.
 
 Runtime payload shape:
-- `source_support.summary`: counts for `supported`, `blocked`, `fallback`.
+- `source_support.summary`: counts for `supported`, `blocked`, `experimental`.
 - `source_support.sources[*].runtime_label`: per-source label surfaced in dashboard status panels.
 - `assumption_badges[*]`: artifact-backed runtime caveat badges (`status`, `artifact_ids`, `summary`, `guide_path`) consumed by API/dashboard trust views.
 
@@ -84,8 +89,8 @@ These sites share the same protection mechanism.
 
 ## Conclusion & Next Steps
 
-The code migration is complete for all targets that are technically feasible with the current infrastructure. The logic for the blocked crawlers (Normalizers, Integration Tests) has been prepared or stubbed, but they cannot operate until the underlying blocking issue is addressed via infrastructure upgrades.
+The code migration is complete for the current first-wave proxy-backed sources and for the directly supported local slice. The previously fake-success normalizers for `realtor_us`, `redfin_us`, `seloger_fr`, and `immowelt_de` are now real deterministic parsers, but live operation for those sources still depends on proxy-backed browser infrastructure.
 
 **Recommendation:**
-1.  **Infrastructure Upgrade**: Procure residential proxy access if these markets are critical.
-2.  **Focus**: Rely on Imovirtual, OnTheMarket, and Pisos.com for current data streams.
+1.  **Infrastructure Upgrade**: Configure proxy or remote-browser access for the first-wave proxy-required sources if those markets are critical.
+2.  **Focus**: treat `pisos` as the supported no-proxy local baseline and keep other portals experimental unless fresh runtime evidence proves otherwise.

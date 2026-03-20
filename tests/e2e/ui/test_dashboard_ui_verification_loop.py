@@ -193,14 +193,14 @@ _DASHBOARD_WRAPPER_SCRIPT = dedent(
         "listings_last_seen": "2026-02-09T12:00:00Z",
         "source_support": {
             "doc_path": "docs/crawler_status.md",
-            "summary": {"supported": 3, "blocked": 2, "fallback": 1},
+            "summary": {"supported": 3, "blocked": 2, "experimental": 1},
             "sources": [
                 {"id": "pisos", "name": "Pisos.com", "runtime_label": "supported"},
                 {"id": "onthemarket_uk", "name": "OnTheMarket", "runtime_label": "supported"},
                 {"id": "rightmove_uk", "name": "Rightmove UK", "runtime_label": "supported"},
                 {"id": "realtor_us", "name": "Realtor.com", "runtime_label": "blocked"},
                 {"id": "redfin_us", "name": "Redfin", "runtime_label": "blocked"},
-                {"id": "idealista", "name": "Idealista", "runtime_label": "fallback"},
+                {"id": "idealista", "name": "Idealista", "runtime_label": "experimental"},
             ],
         },
         "assumption_badges": [
@@ -209,7 +209,7 @@ _DASHBOARD_WRAPPER_SCRIPT = dedent(
                 "label": "Source coverage caveat",
                 "status": "CAUTION",
                 "artifact_ids": ["lit-case-shiller-1988"],
-                "summary": "3 supported, 2 blocked, 1 fallback sources; review crawler caveats.",
+                "summary": "3 supported, 2 blocked, 1 experimental sources; review crawler caveats.",
                 "guide_path": "docs/crawler_status.md",
             },
             {
@@ -355,7 +355,7 @@ def test_dashboard_ui_pipeline_status__shows_source_support_labels(tmp_path: Pat
 
     _assert_no_exceptions(app)
     caption_values = [str(caption.value) for caption in app.caption]
-    assert any("Source labels: supported / blocked / fallback" in value for value in caption_values)
+    assert any("Source labels: supported / blocked / experimental" in value for value in caption_values)
     assert any("Blocked examples: Realtor.com" in value for value in caption_values)
     assert any("Assumption badges:" in value for value in caption_values)
     assert any("lit-case-shiller-1988" in value for value in caption_values)

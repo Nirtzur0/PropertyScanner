@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from src.listings.crawl_contract import classify_crawl_status, primary_block_reason
+from src.listings.crawl_contract import classify_crawl_status, detect_block_reason_from_html, primary_block_reason
 from src.listings.scraping.client import ScrapeClient, LinkExtractorSpec
 from src.listings.source_ids import canonicalize_source_id
 
@@ -30,9 +30,7 @@ class IdealistaCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 6)
-        )
+        browser_max_concurrency = int(config.get("browser_max_concurrency") or 6)
         self.scrape_client = ScrapeClient(
             source_id=self.source_id,
             base_url=self.base_url,
@@ -93,6 +91,23 @@ class IdealistaCrawlerAgent(BaseAgent):
             if not html:
                 errors.append("fetch_failed:search")
             else:
+                block_reason = detect_block_reason_from_html(html)
+                if block_reason:
+                    errors.append(f"blocked:{block_reason}:{start_url}")
+                    return AgentResponse(
+                        status=classify_crawl_status(listing_count=0, errors=errors),
+                        data=[],
+                        errors=errors,
+                        metadata={
+                            "search_fetch_ok": False,
+                            "search_block_reason": primary_block_reason(errors),
+                            "search_pages_attempted": search_pages_attempted,
+                            "search_pages_succeeded": 0,
+                            "listing_urls_discovered": 0,
+                            "listing_urls_fetched": 0,
+                            "detail_fetch_success_ratio": 0.0,
+                        },
+                    )
                 search_pages_succeeded = 1
                 # DEBUG: Save search page snapshot
                 try:

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <title>Immowelt Fixture</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Apartment",
+        "name": "Altbauwohnung in Berlin-Mitte",
+        "description": "Sanierte Altbauwohnung mit Balkon und hoher Decke.",
+        "image": ["https://cdn.example.com/immowelt/front.jpg"],
+        "numberOfRooms": 3,
+        "numberOfBathroomsTotal": 1,
+        "floorSize": {"@type": "QuantitativeValue", "value": 84, "unitCode": "MTK"},
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Linienstrasse 42",
+          "addressLocality": "Berlin",
+          "postalCode": "10119",
+          "addressCountry": "DE"
+        },
+        "geo": {"@type": "GeoCoordinates", "latitude": 52.5292, "longitude": 13.4011},
+        "offers": {"@type": "Offer", "price": 640000, "priceCurrency": "EUR"}
+      }
+    </script>
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "pageProps": {
+            "classified": {
+              "title": "Altbauwohnung in Berlin-Mitte",
+              "description": "Sanierte Altbauwohnung mit Balkon und hoher Decke.",
+              "price": 640000,
+              "rooms": 3,
+              "bathrooms": 1,
+              "livingArea": 84,
+              "propertyType": "Wohnung",
+              "address": {
+                "street": "Linienstrasse 42",
+                "city": "Berlin",
+                "zip": "10119",
+                "country": "DE"
+              },
+              "geo": {"lat": 52.5292, "lon": 13.4011},
+              "images": ["https://cdn.example.com/immowelt/front.jpg"]
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1 data-testid="object-address">Linienstrasse 42, 10119 Berlin</h1>
+    <div data-testid="object-description">Sanierte Altbauwohnung mit Balkon und hoher Decke.</div>
+  </body>
+</html>

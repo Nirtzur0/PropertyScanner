@@ -82,6 +82,9 @@ class BrowserEngineConfig:
         max_concurrency: int,
     ) -> "BrowserEngineConfig":
         payload = data or {}
+        if payload.get("stealth") is not None and "maximize_stealth" not in payload:
+            payload = dict(payload)
+            payload["maximize_stealth"] = bool(payload.get("stealth"))
         network_payload = payload.get("network", {}) if isinstance(payload.get("network"), dict) else {}
         resolved_max_concurrency = int(payload.get("max_concurrency", max_concurrency))
         if resolved_max_concurrency < 1:

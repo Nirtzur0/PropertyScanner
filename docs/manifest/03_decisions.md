@@ -2,6 +2,55 @@
 
 This file records durable engineering decisions.
 
+## 2026-03-11: V3 Prune Removes Command Center From The Product IA
+
+- Decision: simplify the React product to three primary destinations, remove Command Center as a product surface, keep `/command-center` only as a compatibility redirect to `/pipeline`, and reduce `Decisions` to watchlists plus memos.
+- Context:
+  - the V2 redesign improved route parity, but the live product still spent too much attention on secondary surfaces and low-confidence advisory framing.
+  - the follow-up audit found that `Command Center` imposed conceptual weight without enough differentiated value, and that `saved searches` and `alerts` did not deserve equal footing with watchlists and memos inside `Decisions`.
+  - the new backend additions (`GET /api/v1/pipeline/trust-summary`, `POST /api/v1/ui-events`) support a slimmer trust-first pipeline and future validation without keeping the extra destination.
+- Mechanism:
+  - primary nav is now:
+    - `Workbench`
+    - `Decisions`
+    - `Pipeline`
+  - `/watchlists` remains the canonical decision-memory route and `/memos` still redirects to its memo tab.
+  - `/command-center` now records a `command_center_redirected` UI event and redirects to `/pipeline`.
+  - saved-search creation stays near the Workbench lens rather than as a `Decisions` tab.
+  - pipeline trust is now served by the aggregate `GET /api/v1/pipeline/trust-summary` contract and lower-level operational detail moves behind disclosure.
+- Alternatives considered:
+  - keep Command Center as a read-mostly page.
+  - rejected because the workflow had not earned a full product destination and weakened first-use clarity.
+  - keep saved searches and alerts as `Decisions` tabs.
+  - rejected because they are supporting mechanics, not primary analyst outcomes.
+
+Rationale: the product should feel calmer and more obviously useful. Three destinations are enough for the current analyst workflow, and trust should be folded into Pipeline rather than implied through a weak assistant surface.
+
+## 2026-03-11: React Workbench Is Canonical and Decision Memory Is Merged
+
+- Decision: treat the FastAPI-served React workbench as the canonical product surface, and merge watchlists, saved searches, memos, and alerts into one `Decisions` destination.
+- Context:
+  - the repo had already moved onboarding toward the React workbench, but the live route structure still preserved fragmented product memory (`Watchlists` and `Memos` as separate primary destinations).
+  - the redesign audit found that the split nav obscured the actual workflow boundary between exploration, investigation, decision memory, operations, and guarded advisory context.
+  - the old React listing and comp-review routes were too skeletal to behave like real dossier/workbench surfaces, which made the primary journey look less coherent than the underlying backend actually was.
+- Mechanism:
+  - primary nav is now:
+    - `Workbench`
+    - `Decisions`
+    - `Pipeline`
+    - `Command Center`
+  - `/watchlists` is the canonical merged decision-memory route and `/memos` redirects to its memo tab.
+  - listing detail now consumes a dossier-grade workbench context contract.
+  - comp review now consumes a dedicated workspace aggregation contract instead of a raw persistence list.
+  - pipeline and command-center routes remain separate because they serve trust and advisory functions, not listing exploration or decision memory.
+- Alternatives considered:
+  - keep watchlists and memos as separate primary-nav items.
+  - rejected because it duplicated decision-memory surfaces and weakened information scent.
+  - keep Streamlit as a parallel first-class dashboard surface.
+  - rejected because the canonical implementation path, design system, and verification packet are now centered on the React product.
+
+Rationale: the product should read like one coherent analyst system. Exploration, dossier review, decision memory, operational trust, and guarded advisory context are distinct jobs, but watchlists and memos are not distinct top-level products.
+
 ## 2026-03-10: Weak-Regime Interval Fallback Uses Explicit Bootstrap Policy
 
 - Decision: keep segmented conformal calibration as the primary uncertainty path, but switch to explicit bootstrap fallback intervals for weak-regime segments.

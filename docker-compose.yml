@@ -1,38 +1,16 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  worker:
+  api:
     build: .
-    volumes:
-      - .:/app
     environment:
-      - PYTHONUNBUFFERED=1
-    command: python -m src.interfaces.agent
-    depends_on:
-      - db
-
-  dashboard:
-    build: .
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-    command: streamlit run src/interfaces/dashboard/app.py --server.port=8505 --server.address=0.0.0.0
+      PYTHONUNBUFFERED: "1"
+      PROPERTY_SCANNER_DB_PATH: /app/data/listings.db
     ports:
-      - "8505:8505"
-    depends_on:
-      - db
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: scanner
-      POSTGRES_PASSWORD: scanner_password
-      POSTGRES_DB: property_db
-    ports:
-      - "5432:5432"
+      - "8001:8001"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - property_scanner_data:/app/data
+    command: python -m src.interfaces.cli api --host 0.0.0.0 --port 8001
 
 volumes:
-  postgres_data:
+  property_scanner_data:

@@ -29,12 +29,17 @@ def test_live_crawl__rightmove__returns_listings_or_skips_when_blocked():
     
     response = crawler.run(payload)
     
-    if response.status == "failure":
+    if response.status in {"blocked", "policy_blocked", "fetch_failed", "no_listings_found", "failure"}:
         error_msg = str(response.errors)
-        # Rightmove blocks often result in empty listings or fetch errors
-        if "no_listings_found" in error_msg or "fetch_failed" in error_msg:
+        # Rightmove can still return challenge pages on detail fetches.
+        if (
+            "no_listings_found" in error_msg
+            or "fetch_failed" in error_msg
+            or "blocked:" in error_msg
+            or "policy_blocked:" in error_msg
+        ):
              logging.warning(f"Rightmove blocked/failed as expected: {error_msg}")
-             pytest.skip("Rightmove blocked/empty (likely 403 or captcha)")
+             pytest.skip("Rightmove blocked/empty (likely challenge or captcha)")
         else:
              pytest.fail(f"Rightmove failed with unexpected errors: {response.errors}")
 

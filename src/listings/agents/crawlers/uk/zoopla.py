@@ -34,9 +34,7 @@ class ZooplaCrawlerAgent(BaseAgent):
             "user_agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        browser_max_concurrency = int(
-            config.get("browser_max_concurrency", 6)
-        )
+        browser_max_concurrency = int(config.get("browser_max_concurrency") or 6)
         self.scrape_client = ScrapeClient(
             source_id=self.source_id,
             base_url=self.base_url,
@@ -149,6 +147,14 @@ class ZooplaCrawlerAgent(BaseAgent):
         else:
             for search_url in start_urls:
                 search_pages_attempted += 1
+                if hasattr(self.compliance_manager, "assess_url"):
+                    decision = self.compliance_manager.assess_url(
+                        search_url,
+                        rate_limit_seconds=self.rate_limit_seconds,
+                    )
+                    if not decision.allowed:
+                        errors.append(f"policy_blocked:{decision.reason}:{search_url}")
+                        continue
                 html = self._fetch_url(search_url)
                 if not html:
                     errors.append(f"fetch_failed:{search_url}")

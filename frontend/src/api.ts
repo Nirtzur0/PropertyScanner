@@ -1,7 +1,22 @@
 import type {
+  AgentRun,
+  BenchmarkRun,
   CollectionResponse,
+  CompReview,
+  CompReviewWorkspaceResponse,
+  CoverageReport,
+  DataQualityEvent,
+  JobRun,
   LayersResponse,
   ListingContextResponse,
+  Memo,
+  PipelineStatusResponse,
+  PipelineTrustSummaryResponse,
+  SavedSearch,
+  SourceAuditResponse,
+  SourceContractRun,
+  UIEventPayload,
+  Watchlist,
   WorkbenchFilters,
   WorkbenchResponse,
 } from "./types";
@@ -37,7 +52,7 @@ function queryString(params: Record<string, string | number | undefined>) {
 }
 
 export const api = {
-  health: () => request<Record<string, unknown>>(`${API_PREFIX}/health`),
+  health: () => request<{ status: string; app: string; db_path: string }>(`${API_PREFIX}/health`),
   explore: (filters: WorkbenchFilters) =>
     request<WorkbenchResponse>(
       `${API_PREFIX}/workbench/explore${queryString({
@@ -61,45 +76,83 @@ export const api = {
   listingContext: (listingId: string) =>
     request<ListingContextResponse>(`${API_PREFIX}/workbench/listings/${listingId}/context`),
   layers: () => request<LayersResponse>(`${API_PREFIX}/workbench/layers`),
-  pipeline: () => request<Record<string, unknown>>(`${API_PREFIX}/pipeline-status`),
-  sources: () => request<Record<string, unknown>>(`${API_PREFIX}/sources`),
-  jobs: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/job-runs`),
-  benchmarks: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/benchmarks`),
-  coverage: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/coverage-reports`),
-  quality: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/data-quality-events`),
-  watchlists: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/watchlists`),
-  createWatchlist: (payload: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/watchlists`, {
+  compReviewWorkspace: (listingId: string) =>
+    request<CompReviewWorkspaceResponse>(`${API_PREFIX}/comp-reviews/${listingId}/workspace`),
+  pipeline: () => request<PipelineStatusResponse>(`${API_PREFIX}/pipeline-status`),
+  pipelineTrustSummary: () => request<PipelineTrustSummaryResponse>(`${API_PREFIX}/pipeline/trust-summary`),
+  sources: () => request<SourceAuditResponse>(`${API_PREFIX}/sources`),
+  jobs: () => request<CollectionResponse<JobRun>>(`${API_PREFIX}/job-runs`),
+  benchmarks: () => request<CollectionResponse<BenchmarkRun>>(`${API_PREFIX}/benchmarks`),
+  coverage: () => request<CollectionResponse<CoverageReport>>(`${API_PREFIX}/coverage-reports`),
+  quality: () => request<CollectionResponse<DataQualityEvent>>(`${API_PREFIX}/data-quality-events`),
+  sourceContracts: () => request<CollectionResponse<SourceContractRun>>(`${API_PREFIX}/source-contract-runs`),
+  watchlists: () => request<CollectionResponse<Watchlist>>(`${API_PREFIX}/watchlists`),
+  createWatchlist: (payload: {
+    name: string;
+    description?: string | null;
+    status?: string;
+    listing_ids: string[];
+    filters: Record<string, string | number | boolean | null | undefined>;
+    notes?: string | null;
+  }) =>
+    request<Watchlist>(`${API_PREFIX}/watchlists`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  savedSearches: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/saved-searches`),
-  createSavedSearch: (payload: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/saved-searches`, {
+  savedSearches: () => request<CollectionResponse<SavedSearch>>(`${API_PREFIX}/saved-searches`),
+  createSavedSearch: (payload: {
+    name: string;
+    query?: string | null;
+    filters: Record<string, string | number | boolean | null | undefined>;
+    sort: Record<string, string | number | boolean | null | undefined>;
+    notes?: string | null;
+  }) =>
+    request<SavedSearch>(`${API_PREFIX}/saved-searches`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  memos: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/memos`),
-  createMemo: (payload: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/memos`, {
+  memos: () => request<CollectionResponse<Memo>>(`${API_PREFIX}/memos`),
+  createMemo: (payload: {
+    title: string;
+    listing_id?: string | null;
+    watchlist_id?: string | null;
+    status?: string;
+    assumptions?: string[];
+    risks?: string[];
+    sections?: Array<{ heading: string; body: string }>;
+    export_format?: string;
+  }) =>
+    request<Memo>(`${API_PREFIX}/memos`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
   exportMemo: (memoId: string) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/memos/${memoId}/export`, { method: "POST" }),
-  createValuation: (payload: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/valuations`, {
+    request<{ memo_id: string; format: string; content: string }>(`${API_PREFIX}/memos/${memoId}/export`, { method: "POST" }),
+  createValuation: (payload: { listing_id: string; persist: boolean }) =>
+    request<{ listing_id: string; market_signals: Record<string, number> }>(`${API_PREFIX}/valuations`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
   compReviews: (listingId?: string) =>
-    request<CollectionResponse<Record<string, unknown>>>(
+    request<CollectionResponse<CompReview>>(
       `${API_PREFIX}/comp-reviews${queryString({ listing_id: listingId })}`,
     ),
-  createCompReview: (payload: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`${API_PREFIX}/comp-reviews`, {
+  createCompReview: (payload: {
+    listing_id: string;
+    status?: string;
+    selected_comp_ids: string[];
+    rejected_comp_ids: string[];
+    overrides: Record<string, string | number | boolean | null>;
+    notes?: string;
+  }) =>
+    request<CompReview>(`${API_PREFIX}/comp-reviews`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  commandRuns: () => request<CollectionResponse<Record<string, unknown>>>(`${API_PREFIX}/command-center/runs`),
+  commandRuns: () => request<CollectionResponse<AgentRun>>(`${API_PREFIX}/command-center/runs`),
+  track: (payload: UIEventPayload) =>
+    request<{ id: string; status: string }>(`${API_PREFIX}/ui-events`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };

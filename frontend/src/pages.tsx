@@ -1,16 +1,20 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
 
 import { api } from "./api";
 import { WorkbenchMap } from "./components/WorkbenchMap";
-import type { ListingContextResponse, MarkerPoint, WorkbenchFilters } from "./types";
+import { track } from "./track";
+import type {
+  CompCandidate,
+  CompReviewWorkspaceResponse,
+  DataGap,
+  MarkerPoint,
+  Memo,
+  WorkbenchFilters,
+  WorkbenchResponse,
+  WorkbenchTableRow,
+} from "./types";
 
 function fmtMoney(value?: number | null) {
   if (value === undefined || value === null) return "N/A";
@@ -21,16 +25,37 @@ function fmtMoney(value?: number | null) {
   }).format(value);
 }
 
-function fmtPct(value?: number | null) {
+function fmtPct(value?: number | null, digits = 1) {
   if (value === undefined || value === null) return "N/A";
-  return `${(value * 100).toFixed(1)}%`;
+  return `${(value * 100).toFixed(digits)}%`;
 }
 
-function formatMaybeString(value: unknown, fallback = "N/A") {
-  return typeof value === "string" && value.trim() ? value : fallback;
+function fmtDateTime(value?: string | null) {
+  if (!value) return "No timestamp";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
-function formatValuationReason(value: unknown) {
+function formatMaybeString(value?: string | null, fallback = "N/A") {
+  return value && value.trim() ? value : fallback;
+}
+
+function formatMetricValue(value: string | number | boolean | null | undefined) {
+  if (value === null || value === undefined) return "N/A";
+  if (typeof value === "number") {
+    if (Math.abs(value) <= 1) {
+      return fmtPct(value);
+    }
+    return value.toLocaleString();
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  return String(value);
+}
+
+function formatValuationReason(value?: string | null) {
   const code = String(value ?? "").trim();
   if (!code) return "";
   const lookup: Record<string, string> = {
@@ -46,18 +71,12 @@ function formatValuationReason(value: unknown) {
     bedrooms_out_of_range: "Bedroom count is outside the trusted serving range.",
     bathrooms_out_of_range: "Bathroom count is outside the trusted serving range.",
     invalid_coordinates: "Listing coordinates are missing or invalid.",
+    missing_required_fields: "Required listing fields are still missing.",
+    images_missing: "The listing has no imagery yet.",
+    description_missing: "The listing has no long description yet.",
+    coordinates_missing: "Coordinates are missing, so map and comp quality are limited.",
   };
   return lookup[code] ?? code.replace(/_/g, " ");
-}
-
-function sectionTitle(label: string, value: string, note?: string) {
-  return (
-    <div className="metric-card">
-      <span className="eyebrow">{label}</span>
-      <strong>{value}</strong>
-      {note ? <p>{note}</p> : null}
-    </div>
-  );
 }
 
 function buildFilters(
@@ -84,21 +103,59 @@ function buildFilters(
   };
 }
 
-function getStatusClass(value: unknown) {
+function statusClass(value?: string | null) {
   const slug = String(value ?? "neutral").toLowerCase().replace(/\s+/g, "-");
   return `status-pill status-${slug}`;
 }
 
-function median(values: number[]) {
-  if (values.length === 0) return undefined;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
+function sectionTitle(label: string, value: string, note?: string) {
+  return (
+    <div className="metric-card">
+      <span className="eyebrow">{label}</span>
+      <strong>{value}</strong>
+      {note ? <p>{note}</p> : null}
+    </div>
+  );
 }
 
-type TableRow = Record<string, unknown>;
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </div>
+  );
+}
+
+function DataGapCards({ gaps }: { gaps: DataGap[] }) {
+  if (gaps.length === 0) return null;
+  return (
+    <div className="list-stack">
+      {gaps.map((gap) => (
+        <div key={gap.code} className={`warning-card warning-${gap.severity}`}>
+          <strong>{gap.label}</strong>
+          <p>{gap.detail || formatValuationReason(gap.code)}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OverviewStrip({ data }: { data: WorkbenchResponse }) {
+  const nextItem = data.overview.review_queue[0];
+  return (
+    <div className="truth-grid">
+      {sectionTitle("Actionable", String(data.overview.actionable_count), "Supported listings with usable confidence")}
+      {sectionTitle("Degraded", String(data.overview.degraded_count), "Listings blocked by source trust or staleness")}
+      {sectionTitle("Needs data", String(data.overview.needs_data_count), "Listings missing fields or comps")}
+      {sectionTitle(
+        "Next drill-down",
+        nextItem ? nextItem.next_action : "No queue",
+        nextItem ? `${nextItem.title} in ${formatMaybeString(nextItem.city, "unassigned area")}` : "No listing currently needs immediate review",
+      )}
+    </div>
+  );
+}
 
 export function WorkbenchPage() {
   const navigate = useNavigate();
@@ -119,9 +176,11 @@ export function WorkbenchPage() {
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [hovered, setHovered] = useState<MarkerPoint>();
-  const [watchlistName, setWatchlistName] = useState("Workbench picks");
-  const [savedSearchName, setSavedSearchName] = useState("Map lens");
-  const [memoTitle, setMemoTitle] = useState("Map workbench memo");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [watchlistName, setWatchlistName] = useState("Decision hub basket");
+  const [savedSearchName, setSavedSearchName] = useState("Truth-first lens");
+  const [memoTitle, setMemoTitle] = useState("Listing memo draft");
+  const trackedFiltersRef = useRef(false);
 
   const deferredSearch = useDeferredValue(search);
   const filters = useMemo(
@@ -158,12 +217,7 @@ export function WorkbenchPage() {
       return true;
     });
     const visibleIds = new Set(markers.map((marker) => marker.id));
-    const tableRows = base.table_rows.filter((row) => visibleIds.has(String(row.id)));
-    const supportMedian = median(
-      markers
-        .map((marker) => marker.support)
-        .filter((value): value is number => value !== null && value !== undefined),
-    );
+    const tableRows = base.table_rows.filter((row) => visibleIds.has(row.id));
     return {
       ...base,
       markers,
@@ -172,22 +226,46 @@ export function WorkbenchPage() {
         ...base.stats,
         visible: markers.length,
         watchlist_hits: markers.filter((marker) => marker.watchlisted).length,
-        support_median: supportMedian,
         unavailable_count: markers.filter((marker) => marker.valuation_status !== "available").length,
         degraded_source_count: markers.filter((marker) => marker.source_status === "degraded").length,
+      },
+      overview: {
+        ...base.overview,
+        review_queue: base.overview.review_queue.filter((item) => visibleIds.has(item.listing_id)),
       },
     };
   }, [exploreQuery.data, onlyCompReady, onlyMemoReady, onlyWatchlisted]);
 
-  useEffect(() => {
+  const visibleSelectedIds = useMemo(() => {
     const visibleIds = new Set((visibleData?.markers ?? []).map((marker) => marker.id));
-    setSelectedIds((current) => current.filter((id) => visibleIds.has(id)));
-    setSelectedId((current) => (current && visibleIds.has(current) ? current : visibleData?.markers[0]?.id));
-  }, [visibleData?.markers]);
+    return selectedIds.filter((id) => visibleIds.has(id));
+  }, [selectedIds, visibleData?.markers]);
+
+  useEffect(() => {
+    if (!trackedFiltersRef.current) {
+      trackedFiltersRef.current = true;
+      return;
+    }
+    track({
+      event_name: "workbench_filter_applied",
+      route: "/workbench",
+      subject_type: "lens",
+      subject_id: "active",
+      context: {
+        has_search: Boolean(deferredSearch),
+        has_country: Boolean(country),
+        has_city: Boolean(city),
+        has_listing_type: Boolean(listingType),
+        has_source_state: Boolean(sourceStatus),
+        advanced_open: advancedOpen,
+      },
+    });
+  }, [advancedOpen, city, country, deferredSearch, listingType, sourceStatus]);
 
   const activeMarker = useMemo(() => {
     const markers = visibleData?.markers ?? [];
-    return markers.find((marker) => marker.id === selectedId) ?? hovered ?? markers[0];
+    const currentSelected = selectedId ? markers.find((marker) => marker.id === selectedId) : undefined;
+    return currentSelected ?? hovered ?? markers[0];
   }, [hovered, selectedId, visibleData?.markers]);
 
   const contextQuery = useQuery({
@@ -200,7 +278,7 @@ export function WorkbenchPage() {
     mutationFn: (listingIds: string[]) =>
       api.createWatchlist({
         name: `${watchlistName} ${new Date().toISOString().slice(11, 19)}`,
-        description: "Created from the map-centric workbench",
+        description: "Created from the truth-first workbench",
         listing_ids: listingIds,
         filters: {
           ...filters,
@@ -210,8 +288,16 @@ export function WorkbenchPage() {
         },
       }),
     onSuccess: () => {
+      track({
+        event_name: "workbench_watchlist_created",
+        route: "/workbench",
+        subject_type: "watchlist",
+        subject_id: watchlistName,
+        context: { listing_count: selectedBasket.length },
+      });
       void queryClient.invalidateQueries({ queryKey: ["workbench"] });
       void queryClient.invalidateQueries({ queryKey: ["listing-context", activeMarker?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["watchlists"] });
     },
   });
   const createSavedSearch = useMutation({
@@ -227,23 +313,43 @@ export function WorkbenchPage() {
         },
         sort: { field: "deal_score", direction: "desc" },
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["workbench"] }),
+    onSuccess: () => {
+      track({
+        event_name: "workbench_saved_lens",
+        route: "/workbench",
+        subject_type: "saved_search",
+        subject_id: savedSearchName,
+        context: { search: deferredSearch || null },
+      });
+      void queryClient.invalidateQueries({ queryKey: ["workbench"] });
+      void queryClient.invalidateQueries({ queryKey: ["saved-searches"] });
+    },
   });
   const createMemo = useMutation({
     mutationFn: (listingId: string) =>
       api.createMemo({
         title: `${memoTitle} ${new Date().toISOString().slice(11, 19)}`,
         listing_id: listingId,
-        assumptions: ["Created from the map workbench selection"],
-        risks: ["Source and support state should be reviewed before export"],
+        assumptions: ["Created from the workbench selection basket."],
+        risks: ["Source health and data gaps should be reviewed before export."],
         sections: [
           {
-            heading: "Workbench selection",
-            body: "This memo started from a map-driven exploration flow.",
+            heading: "Recommendation framing",
+            body: "Started from the truth-first workbench and should be finalized after dossier review.",
           },
         ],
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listing-context", activeMarker?.id] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["listing-context", activeMarker?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["memos"] });
+      track({
+        event_name: "memo_published",
+        route: "/workbench",
+        subject_type: "listing",
+        subject_id: activeMarker?.id ?? null,
+        context: { source: "workbench" },
+      });
+    },
   });
   const createCompReview = useMutation({
     mutationFn: (listingId: string) =>
@@ -254,58 +360,37 @@ export function WorkbenchPage() {
         rejected_comp_ids: [],
         overrides: {},
       }),
-    onSuccess: (_, listingId) => navigate(`/comp-reviews/${listingId}`),
+    onSuccess: (_, listingId) => {
+      track({
+        event_name: "comp_review_saved",
+        route: `/comp-reviews/${listingId}`,
+        subject_type: "listing",
+        subject_id: listingId,
+        context: { source: "workbench_start" },
+      });
+      navigate(`/comp-reviews/${listingId}`);
+    },
   });
   const runValuation = useMutation({
     mutationFn: (listingId: string) => api.createValuation({ listing_id: listingId, persist: true }),
     onSuccess: async () => {
+      track({
+        event_name: "listing_valuation_run",
+        route: `/listings/${activeMarker?.id ?? ""}`,
+        subject_type: "listing",
+        subject_id: activeMarker?.id ?? null,
+        context: { source: "workbench" },
+      });
       await queryClient.invalidateQueries({ queryKey: ["workbench"] });
       await queryClient.invalidateQueries({ queryKey: ["listing-context", activeMarker?.id] });
     },
   });
 
-  const columnHelper = createColumnHelper<TableRow>();
-  const columns = useMemo(
-    () => [
-      columnHelper.accessor("title", {
-        header: "Listing",
-        cell: (info) => String(info.getValue() ?? ""),
-      }),
-      columnHelper.accessor("ask_price", {
-        header: "Ask",
-        cell: (info) => fmtMoney(info.getValue() as number | null),
-      }),
-      columnHelper.accessor("fair_value", {
-        header: "Fair value",
-        cell: (info) => fmtMoney(info.getValue() as number | null),
-      }),
-      columnHelper.accessor("support", {
-        header: "Support",
-        cell: (info) => fmtPct(info.getValue() as number | null),
-      }),
-      columnHelper.accessor("source_status", {
-        header: "Source",
-        cell: (info) => String(info.getValue() ?? ""),
-      }),
-      columnHelper.accessor("next_action", {
-        header: "Next action",
-        cell: (info) => String(info.getValue() ?? ""),
-      }),
-    ],
-    [columnHelper],
-  );
-
-  const table = useReactTable({
-    data: visibleData?.table_rows ?? [],
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  const selectedContext = contextQuery.data as ListingContextResponse | undefined;
   const layerItems = layersQuery.data?.overlays ?? [];
   const loading = exploreQuery.isLoading || layersQuery.isLoading;
   const error = exploreQuery.error || layersQuery.error;
-  const selectedBasket = selectedIds.length > 0 ? selectedIds : activeMarker ? [activeMarker.id] : [];
+  const selectedBasket = visibleSelectedIds.length > 0 ? visibleSelectedIds : activeMarker ? [activeMarker.id] : [];
+  const context = contextQuery.data;
 
   const handleSelect = (listingId: string, options: { multi: boolean }) => {
     setSelectedId(listingId);
@@ -320,7 +405,7 @@ export function WorkbenchPage() {
   };
 
   if (loading) {
-    return <div className="page-card">Loading map-centric workbench…</div>;
+    return <div className="page-card">Loading truth-first workbench…</div>;
   }
 
   if (error || !visibleData) {
@@ -335,22 +420,21 @@ export function WorkbenchPage() {
     <div className="workbench-layout">
       <aside className="left-rail">
         <div className="brand-panel">
-          <p className="eyebrow">Analyst dense mode</p>
-          <h2>Spatial triage first</h2>
+          <p className="eyebrow">Truth-first workbench</p>
+          <h2>Lead with readiness, not more surface area</h2>
           <p>
-            The map is the primary exploration surface. Filters, saved lenses, and source states now
-            orbit around location rather than the old table-first workflow.
+            Keep the first decision simple: what is actionable now, what is degraded, and which listing deserves the next review.
           </p>
         </div>
 
         <div className="rail-section">
-          <span className="eyebrow">Search lens</span>
+          <span className="eyebrow">Lens builder</span>
           <label>
             Search
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="City, title, source, memo…"
+              placeholder="City, listing, memo, source…"
             />
           </label>
           <label>
@@ -393,84 +477,99 @@ export function WorkbenchPage() {
               <option value="blocked">Blocked</option>
             </select>
           </label>
-          <div className="form-stack">
-            <label><input type="checkbox" checked={onlyWatchlisted} onChange={() => setOnlyWatchlisted((value) => !value)} /> Only watchlisted</label>
-            <label><input type="checkbox" checked={onlyMemoReady} onChange={() => setOnlyMemoReady((value) => !value)} /> Memo-linked only</label>
-            <label><input type="checkbox" checked={onlyCompReady} onChange={() => setOnlyCompReady((value) => !value)} /> Comp-review only</label>
-          </div>
-          <div className="toggle-row">
-            <label><input type="checkbox" checked={showHeat} onChange={() => setShowHeat((value) => !value)} /> Density heat</label>
-            <label><input type="checkbox" checked={showLabels} onChange={() => setShowLabels((value) => !value)} /> Delta labels</label>
-          </div>
-        </div>
-
-        <div className="rail-section">
-          <span className="eyebrow">Save current lens</span>
-          <label>
-            Saved search name
-            <input value={savedSearchName} onChange={(event) => setSavedSearchName(event.target.value)} />
-          </label>
-          <button className="ghost-button" onClick={() => createSavedSearch.mutate()} disabled={createSavedSearch.isPending}>
-            Save lens
-          </button>
-        </div>
-
-        <div className="rail-section">
-          <span className="eyebrow">Layer semantics</span>
-          <div className="legend-list">
-            {layerItems.map((layer) => (
-              <div key={layer.id} className={`legend-item ${layer.blocked ? "is-blocked" : ""}`}>
-                <strong>{layer.label}</strong>
-                <p>{layer.description}</p>
-                {layer.blocked ? <span>Blocked: {layer.blocked_reason}</span> : null}
-              </div>
-            ))}
-          </div>
+          <details className="disclosure-card" open={advancedOpen} onToggle={(event) => setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}>
+            <summary>Advanced filters and map options</summary>
+            <div className="form-stack">
+              <label><input type="checkbox" checked={onlyWatchlisted} onChange={() => setOnlyWatchlisted((value) => !value)} /> Only watchlisted</label>
+              <label><input type="checkbox" checked={onlyMemoReady} onChange={() => setOnlyMemoReady((value) => !value)} /> Memo-linked only</label>
+              <label><input type="checkbox" checked={onlyCompReady} onChange={() => setOnlyCompReady((value) => !value)} /> Comp-review only</label>
+            </div>
+            <div className="toggle-row">
+              <label><input type="checkbox" checked={showHeat} onChange={() => setShowHeat((value) => !value)} /> Density heat</label>
+              <label><input type="checkbox" checked={showLabels} onChange={() => setShowLabels((value) => !value)} /> Delta labels</label>
+            </div>
+            <div className="legend-list">
+              {layerItems.map((layer) => (
+                <div key={layer.id} className={`legend-item ${layer.blocked ? "is-blocked" : ""}`}>
+                  <strong>{layer.label}</strong>
+                  <p>{layer.description}</p>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
       </aside>
 
       <main className="center-stage">
         <div className="topbar-card">
           <div>
-            <span className="eyebrow">Map-centric workbench</span>
-            <h2>Spatial exploration drives the workflow</h2>
+            <span className="eyebrow">Workbench</span>
+            <h2>Overview first, decision next</h2>
             <p>
-              Marker size shows value opportunity, color shows source/support state, and the dock stays
-              synchronized with selection instead of competing with it.
+              Keep the map. Lose the noise. The screen should move you from readiness to shortlist to dossier without competing rails.
             </p>
           </div>
           <div className="topbar-actions">
+            <div className="compact-field">
+              <label>
+                Lens name
+                <input value={savedSearchName} onChange={(event) => setSavedSearchName(event.target.value)} />
+              </label>
+            </div>
+            <button className="ghost-button" onClick={() => createSavedSearch.mutate()} disabled={createSavedSearch.isPending}>
+              Save lens
+            </button>
+            <Link className="nav-chip" to="/watchlists">Decisions</Link>
             <Link className="nav-chip" to="/pipeline">Pipeline</Link>
-            <Link className="nav-chip" to="/watchlists">Watchlists</Link>
-            <Link className="nav-chip" to="/memos">Memos</Link>
           </div>
         </div>
 
-        <div className="stats-grid">
-          {sectionTitle("Tracked", String(visibleData.stats.tracked), "Listings in the current local corpus")}
-          {sectionTitle("Visible", String(visibleData.stats.visible), "Assets matching the active map lens")}
-          {sectionTitle("Valuation-ready", String(visibleData.stats.valuation_ready_count), "Listings with enough fields to run valuation")}
-          {sectionTitle("Valued", String(visibleData.stats.available_count), "Listings with cached valuation support in view")}
-        </div>
+        <OverviewStrip data={visibleData} />
 
-        {visibleData.stats.visible > 0 && visibleData.stats.available_count === 0 ? (
+        {visibleData.overview.actionable_count === 0 ? (
           <div className="warning-card">
-            No cached valuations are available in the current lens. Broaden the map filters or run valuation on a ready
-            listing from the dossier rail.
+            Nothing in the current lens is fully decision-ready. Use the review queue below to resolve
+            degraded sources or missing valuation data instead of treating the list as a deal board.
           </div>
         ) : null}
 
-        {selectedIds.length > 1 ? (
-          <div className="selection-banner">
-            <strong>{selectedIds.length} listings selected</strong>
-            <p>Use shift-click on the map or table to build a review basket for watchlists and triage.</p>
+        <div className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Shortlist</span>
+              <h3>Next review candidates</h3>
+            </div>
+            <span className="chip">{visibleData.overview.review_queue.length} surfaced</span>
           </div>
-        ) : null}
+          <div className="list-stack compact-list">
+            {visibleData.overview.review_queue.length ? (
+              visibleData.overview.review_queue.slice(0, 4).map((item) => (
+                <button
+                  key={item.listing_id}
+                  className="list-card shortlist-row"
+                  onClick={() => handleSelect(item.listing_id, { multi: false })}
+                  type="button"
+                >
+                  <div className="panel-line">
+                    <strong>{item.title}</strong>
+                    <span className={statusClass(item.source_status)}>{item.source_status}</span>
+                  </div>
+                  <p>{item.next_action} · {formatMaybeString(item.city, "location pending")}</p>
+                </button>
+              ))
+            ) : (
+              <EmptyState
+                title="No shortlisted reviews"
+                body="The active lens has no visible listings after the current watchlist, memo, and comp-review filters."
+              />
+            )}
+          </div>
+        </div>
 
         <WorkbenchMap
           markers={visibleData.markers}
           selectedId={activeMarker?.id}
-          selectedIds={selectedIds}
+          selectedIds={visibleSelectedIds}
           showHeat={showHeat}
           showLabels={showLabels}
           onSelect={handleSelect}
@@ -480,11 +579,11 @@ export function WorkbenchPage() {
         <div className="selection-dock">
           <div className="dock-header">
             <div>
-              <h3>Listings dock</h3>
-              <p>Shift-click to build a basket. Single click to pin the active dossier.</p>
+              <h3>Selection basket</h3>
+              <p>Pin rows from the map or table, then route them into watchlists, memos, or comp review.</p>
             </div>
             <div className="chip-row">
-              <span className="chip">{selectedIds.length} pinned</span>
+              <span className="chip">{visibleSelectedIds.length || 1} in basket</span>
               <span className="chip">{visibleData.stats.unavailable_count} unavailable</span>
               <span className="chip">{visibleData.stats.degraded_source_count} degraded</span>
             </div>
@@ -492,36 +591,37 @@ export function WorkbenchPage() {
           <div className="table-shell">
             <table>
               <thead>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <tr key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <th key={header.id}>
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
+                <tr>
+                  <th>Listing</th>
+                  <th>Ask</th>
+                  <th>Fair value</th>
+                  <th>Support</th>
+                  <th>Source</th>
+                  <th>Next action</th>
+                </tr>
               </thead>
               <tbody>
-                {table.getRowModel().rows.map((row) => {
-                  const rowId = String(row.original.id);
-                  return (
-                    <tr
-                      key={row.id}
-                      className={[
-                        rowId === activeMarker?.id ? "is-selected" : "",
-                        selectedIds.includes(rowId) ? "is-basketed" : "",
-                      ].filter(Boolean).join(" ")}
-                      onClick={(event) => handleSelect(rowId, { multi: event.shiftKey || event.metaKey || event.ctrlKey })}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                      ))}
-                    </tr>
-                  );
-                })}
+                {visibleData.table_rows.map((row: WorkbenchTableRow) => (
+                  <tr
+                    key={row.id}
+                    className={[
+                      row.id === activeMarker?.id ? "is-selected" : "",
+                      visibleSelectedIds.includes(row.id) ? "is-basketed" : "",
+                    ].filter(Boolean).join(" ")}
+                    onClick={(event) =>
+                      handleSelect(row.id, {
+                        multi: event.shiftKey || event.metaKey || event.ctrlKey,
+                      })
+                    }
+                  >
+                    <td>{row.title}</td>
+                    <td>{fmtMoney(row.ask_price)}</td>
+                    <td>{fmtMoney(row.fair_value)}</td>
+                    <td>{fmtPct(row.support)}</td>
+                    <td>{row.source_status}</td>
+                    <td>{row.next_action}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -530,17 +630,16 @@ export function WorkbenchPage() {
 
       <aside className="right-rail">
         <div className="rail-section">
-          <span className="eyebrow">Selected listing</span>
+          <span className="eyebrow">Active dossier rail</span>
           {activeMarker ? (
             <>
               <h3>{activeMarker.title}</h3>
               <p>
-                {activeMarker.city}, {activeMarker.country}
+                {formatMaybeString(activeMarker.city, "City pending")}, {formatMaybeString(activeMarker.country, "Country pending")}
               </p>
               <div className="support-row">
-                <span className={getStatusClass(activeMarker.source_status)}>{activeMarker.source_status}</span>
-                <span className={getStatusClass(activeMarker.valuation_status)}>{activeMarker.valuation_status}</span>
-                {activeMarker.watchlisted ? <span className="status-pill status-draft">watchlisted</span> : null}
+                <span className={statusClass(activeMarker.source_status)}>{activeMarker.source_status}</span>
+                <span className={statusClass(activeMarker.valuation_status)}>{activeMarker.valuation_status}</span>
               </div>
               <div className="metric-grid">
                 {sectionTitle("Ask", fmtMoney(activeMarker.ask_price))}
@@ -548,8 +647,14 @@ export function WorkbenchPage() {
                 {sectionTitle("Support", fmtPct(activeMarker.support))}
                 {sectionTitle("Value delta", fmtPct(activeMarker.value_delta_pct))}
               </div>
-              {activeMarker.valuation_reason ? (
-                <div className="warning-card">{formatValuationReason(activeMarker.valuation_reason)}</div>
+              {context ? (
+                <>
+                  <div className="list-card">
+                    <strong>Trust</strong>
+                    <p>{formatMaybeString(context.source_health.status)} · {context.source_health.reasons[0] || "No active source warning."}</p>
+                  </div>
+                  <DataGapCards gaps={context.data_gaps.slice(0, 2)} />
+                </>
               ) : null}
               <div className="form-stack">
                 <label>
@@ -561,7 +666,7 @@ export function WorkbenchPage() {
                   onClick={() => createWatchlist.mutate(selectedBasket)}
                   disabled={createWatchlist.isPending}
                 >
-                  Save selection to watchlist
+                  Save basket to Decisions
                 </button>
                 <label>
                   Memo title
@@ -582,7 +687,19 @@ export function WorkbenchPage() {
                 <button className="ghost-button" onClick={() => createCompReview.mutate(activeMarker.id)} disabled={createCompReview.isPending}>
                   Start comp review
                 </button>
-                <Link className="ghost-button link-button" to={`/listings/${activeMarker.id}`}>
+                <Link
+                  className="ghost-button link-button"
+                  to={`/listings/${activeMarker.id}`}
+                  onClick={() =>
+                    track({
+                      event_name: "workbench_listing_opened",
+                      route: "/workbench",
+                      subject_type: "listing",
+                      subject_id: activeMarker.id,
+                      context: { source: "active_dossier_rail" },
+                    })
+                  }
+                >
                   Open dossier
                 </Link>
               </div>
@@ -591,51 +708,6 @@ export function WorkbenchPage() {
             <p>Select a marker to open the dossier rail.</p>
           )}
         </div>
-
-        <div className="rail-section">
-          <span className="eyebrow">Alerts + jobs</span>
-          <div className="timeline">
-            {(visibleData.alerts ?? []).slice(0, 5).map((alert) => (
-              <div key={String(alert.id)} className="timeline-item">
-                <strong>{formatMaybeString(alert.code, "alert")}</strong>
-                <p>{formatMaybeString(alert.source_id, "unknown source")}</p>
-              </div>
-            ))}
-            {(visibleData.jobs ?? []).slice(0, 3).map((job) => (
-              <div key={String(job.id)} className="timeline-item">
-                <strong>{formatMaybeString(job.job_type, "job")}</strong>
-                <p>{formatMaybeString(job.status, "queued")}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rail-section">
-          <span className="eyebrow">Saved lenses</span>
-          <div className="list-stack">
-            {(visibleData.saved_searches ?? []).slice(0, 5).map((item) => (
-              <div key={String(item.id)} className="list-card">
-                <strong>{formatMaybeString(item.name, "Saved lens")}</strong>
-                <p>{formatMaybeString(item.query, "Local map lens")}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {selectedContext ? (
-          <div className="rail-section">
-            <span className="eyebrow">Listing context</span>
-            <p>Next action: {selectedContext.next_action}</p>
-            <div className="timeline">
-              {(selectedContext.quality_events ?? []).slice(0, 4).map((event) => (
-                <div key={String(event.id)} className="timeline-item">
-                  <strong>{formatMaybeString(event.code, "event")}</strong>
-                  <p>{formatMaybeString(event.severity, "status")}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </aside>
     </div>
   );
@@ -655,65 +727,566 @@ export function ListingPage() {
       await queryClient.invalidateQueries({ queryKey: ["workbench"] });
     },
   });
+
   const context = contextQuery.data;
-  if (contextQuery.isLoading) return <div className="page-card">Loading listing context…</div>;
+  if (contextQuery.isLoading) return <div className="page-card">Loading property dossier…</div>;
   if (!context) return <div className="page-card error-state">Listing context unavailable.</div>;
-  const listing = context.listing as Record<string, unknown>;
-  const valuation = context.valuation as Record<string, unknown>;
-  const location = (listing.location as Record<string, unknown> | undefined) ?? {};
+
+  const listing = context.listing;
+  const location = listing.location;
+  const compSignals = Object.entries(context.evidence_summary.signals).slice(0, 2);
+  const confidenceBreakdown = Object.entries(context.evidence_summary.confidence_components).slice(0, 3);
+  const marketSignals = Object.entries(context.market_context.signals).slice(0, 3);
+
   return (
-    <div className="page-card">
-      <span className="eyebrow">Listing detail</span>
-      <h2>{formatMaybeString(listing.title, listingId)}</h2>
-      <p>
-        {formatMaybeString(location.city, "")} {formatMaybeString(location.country, "")}
-      </p>
-      <div className="metric-grid">
-        {sectionTitle("Ask", fmtMoney((listing.price as number | undefined) ?? null))}
-        {sectionTitle("Fair value", fmtMoney((valuation.fair_value as number | undefined) ?? null))}
-        {sectionTitle("Support", fmtPct((valuation.support as number | undefined) ?? null))}
-        {sectionTitle("Status", String(valuation.valuation_status ?? "unknown"))}
-      </div>
-      {context.serving_reason ? <div className="warning-card">{formatValuationReason(context.serving_reason)}</div> : null}
-      {valuation.reason ? <div className="warning-card">{formatValuationReason(valuation.reason)}</div> : null}
-      <div className="section-split">
-        <div className="list-stack">
-          <div className="list-card">
-            <strong>Next action</strong>
-            <p>{context.next_action}</p>
-          </div>
-          <div className="list-card">
-            <strong>Source status</strong>
-            <p>{formatMaybeString(context.source_status.status)}</p>
-          </div>
-          <div className="list-card">
-            <strong>Serving state</strong>
-            <p>{context.serving_eligible ? "Eligible" : formatValuationReason(context.serving_reason)}</p>
-          </div>
-          <div className="list-card">
-            <strong>Valuation readiness</strong>
-            <p>{context.valuation_ready ? "Ready" : "Missing required fields"}</p>
-          </div>
+    <div className="page-stack">
+      <div className="page-card detail-hero">
+        <div>
+          <span className="eyebrow">Listing dossier</span>
+          <h2>{listing.title}</h2>
+          <p>
+            {formatMaybeString(location?.city, "")} {formatMaybeString(location?.country, "")} · {formatMaybeString(listing.property_type)} · {formatMaybeString(context.source_health.status)}
+          </p>
+        </div>
+        <div className="chip-row">
+          <Link className="nav-chip" to={`/comp-reviews/${listingId}`}>Open comp workbench</Link>
+          <Link className="nav-chip" to="/watchlists?tab=memos">Open Decisions</Link>
           {context.can_run_valuation ? (
-            <button className="primary-button" onClick={() => runValuation.mutate()} disabled={runValuation.isPending}>
+            <button
+              className="primary-button"
+              onClick={() => {
+                track({
+                  event_name: "listing_valuation_run",
+                  route: `/listings/${listingId}`,
+                  subject_type: "listing",
+                  subject_id: listingId,
+                  context: { source: "dossier" },
+                });
+                runValuation.mutate();
+              }}
+              disabled={runValuation.isPending}
+            >
               Run valuation now
             </button>
           ) : null}
         </div>
-        <div className="list-stack">
-          {(context.memos ?? []).map((memo) => (
-            <div key={String(memo.id)} className="list-card">
-              <strong>{formatMaybeString(memo.title, "Memo")}</strong>
-              <p>{formatMaybeString(memo.status, "draft")}</p>
+      </div>
+
+      <div className="truth-grid">
+        {sectionTitle("Ask", fmtMoney(listing.price))}
+        {sectionTitle("Fair value", fmtMoney(context.valuation.fair_value))}
+        {sectionTitle("Support", fmtPct(context.valuation.support))}
+        {sectionTitle("Next action", context.next_action, context.valuation.reason ? formatValuationReason(context.valuation.reason) : undefined)}
+      </div>
+
+      <DataGapCards gaps={context.data_gaps} />
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Value moment</span>
+              <h3>Decision summary</h3>
             </div>
-          ))}
-          {(context.comp_reviews ?? []).map((review) => (
-            <div key={String(review.id)} className="list-card">
-              <strong>Comp review</strong>
-              <p>{formatMaybeString(review.status, "draft")}</p>
+            <span className={statusClass(context.source_health.status)}>{context.source_health.status}</span>
+          </div>
+          <div className="metric-grid">
+            {sectionTitle("Value delta", fmtPct(context.valuation.value_delta_pct))}
+            {sectionTitle("Projected 12m", fmtMoney(context.valuation.projected_value_12m))}
+            {sectionTitle("Range low", fmtMoney(context.valuation.price_range_low))}
+            {sectionTitle("Range high", fmtMoney(context.valuation.price_range_high))}
+          </div>
+          <p>
+            {context.evidence_summary.thesis ||
+              "No persisted valuation thesis exists yet. This dossier still shows source health, data gaps, and memo hooks so missing evidence is explicit."}
+          </p>
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Trust</span>
+              <h3>Health, freshness, and provenance</h3>
             </div>
-          ))}
+            <span className={statusClass(context.source_health.latest_contract_status || context.source_health.status)}>
+              {formatMaybeString(context.source_health.latest_contract_status, context.source_health.status)}
+            </span>
+          </div>
+            <div className="list-stack">
+              <div className="list-card">
+                <strong>Reasons</strong>
+                <p>{context.source_health.reasons.length ? context.source_health.reasons.join(", ") : "No active source warnings."}</p>
+              </div>
+            <div className="list-card">
+              <strong>Last contract</strong>
+              <p>{fmtDateTime(context.source_health.last_contract_at)}</p>
+            </div>
+              <div className="list-card">
+                <strong>Last quality event</strong>
+                <p>{fmtDateTime(context.source_health.last_quality_event_at)}</p>
+              </div>
+              <div className="timeline">
+                {context.provenance_timeline.slice(0, 4).map((event) => (
+                  <div key={event.id} className="timeline-item">
+                    <strong>{event.title}</strong>
+                    <p>{event.detail}</p>
+                    <p>{fmtDateTime(event.at)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+        </section>
+      </div>
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Media ribbon</span>
+              <h3>{context.media_summary.count} assets</h3>
+            </div>
+          </div>
+          {context.media_summary.image_urls.length ? (
+            <div className="media-grid">
+              {context.media_summary.image_urls.slice(0, 6).map((imageUrl) => (
+                <div key={imageUrl} className="media-card">
+                  <img alt={listing.title} src={imageUrl} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No imagery yet"
+              body="The dossier calls out missing listing images instead of leaving the media section blank."
+            />
+          )}
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Evidence ladder</span>
+              <h3>Why the value view looks the way it does</h3>
+            </div>
+            <span className="chip">{context.evidence_summary.comp_count} comps</span>
+          </div>
+          <div className="list-stack">
+            {context.evidence_summary.top_comps.length ? (
+              context.evidence_summary.top_comps.map((comp) => (
+                <div key={comp.id} className="list-card">
+                  <strong>{comp.id}</strong>
+                  <p>
+                    {fmtMoney(comp.adj_price)} adjusted · similarity {fmtPct(comp.similarity_score)} · {comp.is_sold ? "sold anchor" : "active comp"}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No persisted comp ladder"
+                body="This listing has no persisted valuation evidence yet, so the dossier stays explicit about the missing support."
+              />
+            )}
+            {confidenceBreakdown.length ? (
+              <div className="key-value-grid">
+                {confidenceBreakdown.map(([key, value]) => (
+                  <div key={key} className="list-card compact-card">
+                    <strong>{key.replace(/_/g, " ")}</strong>
+                    <p>{formatMetricValue(value)}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </div>
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Market context</span>
+              <h3>Only the signals that change the call</h3>
+            </div>
+          </div>
+          <div className="key-value-grid">
+            {marketSignals.length ? (
+              marketSignals.map(([key, value]) => (
+                <div key={key} className="list-card compact-card">
+                  <strong>{key.replace(/_/g, " ")}</strong>
+                  <p>{formatMetricValue(value)}</p>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No structured market signals"
+                body="The listing still shows raw sentiment, tags, and activity timing, but no structured signal block has been persisted."
+              />
+            )}
+            {compSignals.map(([key, value]) => (
+              <div key={key} className="list-card compact-card">
+                <strong>{key.replace(/_/g, " ")}</strong>
+                <p>{formatMetricValue(value)}</p>
+              </div>
+            ))}
+          </div>
+          <div className="chip-row">
+            {(context.market_context.tags || []).slice(0, 6).map((tag) => (
+              <span key={tag} className="chip">{tag}</span>
+            ))}
+          </div>
+          <details className="disclosure-card">
+            <summary>Show all persisted market details</summary>
+            <div className="key-value-grid">
+              {Object.entries(context.market_context.analysis_meta).slice(0, 6).map(([key, value]) => (
+                <div key={key} className="list-card compact-card">
+                  <strong>{key.replace(/_/g, " ")}</strong>
+                  <p>{formatMetricValue(value)}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Decision hooks</span>
+              <h3>Memos, reviews, watchlists</h3>
+            </div>
+          </div>
+          <div className="list-stack">
+            <div className="list-card">
+              <strong>{context.watchlists.length} watchlists</strong>
+              <p>{context.watchlists.length ? context.watchlists.map((item) => item.name).join(", ") : "No watchlists yet."}</p>
+            </div>
+            <div className="list-card">
+              <strong>{context.memos.length} memos</strong>
+              <p>{context.memos.length ? context.memos.map((item) => item.title).join(", ") : "No memo drafts yet."}</p>
+            </div>
+            <div className="list-card">
+              <strong>{context.comp_reviews.length} comp reviews</strong>
+              <p>{context.comp_reviews.length ? context.comp_reviews.map((item) => item.status).join(", ") : "No comp review saved yet."}</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </div>
+  );
+}
+
+function toggleSelection(
+  current: string[],
+  candidateId: string,
+  {
+    mode,
+    opposing,
+  }: {
+    mode: "select" | "reject" | "clear";
+    opposing: string[];
+  },
+) {
+  if (mode === "clear") {
+    return current.filter((id) => id !== candidateId);
+  }
+  if (mode === "select" && current.includes(candidateId)) {
+    return current.filter((id) => id !== candidateId);
+  }
+  if (mode === "reject" && current.includes(candidateId)) {
+    return current.filter((id) => id !== candidateId);
+  }
+  return [...current.filter((id) => !opposing.includes(id)), candidateId];
+}
+
+function candidateActionLabel(candidate: CompCandidate, selectedIds: string[], rejectedIds: string[]) {
+  if (selectedIds.includes(candidate.id)) return "Pinned";
+  if (rejectedIds.includes(candidate.id)) return "Rejected";
+  if (candidate.state === "suggested") return "Suggested";
+  return "Candidate";
+}
+
+function buildCompReviewDraft(data: CompReviewWorkspaceResponse) {
+  return {
+    selectedIds: data.latest_review?.selected_comp_ids ?? data.pinned_comps.map((item) => item.id),
+    rejectedIds: data.latest_review?.rejected_comp_ids ?? data.rejected_comps.map((item) => item.id),
+    notes: data.latest_review?.notes ?? "",
+    conditionAdjustment: String(data.latest_review?.overrides.condition_adjustment_pct ?? ""),
+    locationAdjustment: String(data.latest_review?.overrides.location_adjustment_pct ?? ""),
+    renovationAdjustment: String(data.latest_review?.overrides.renovation_adjustment_pct ?? ""),
+  };
+}
+
+function CompReviewWorkspaceEditor({
+  listingId,
+  data,
+}: {
+  listingId: string;
+  data: CompReviewWorkspaceResponse;
+}) {
+  const queryClient = useQueryClient();
+  const initialDraft = buildCompReviewDraft(data);
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialDraft.selectedIds);
+  const [rejectedIds, setRejectedIds] = useState<string[]>(initialDraft.rejectedIds);
+  const [notes, setNotes] = useState(initialDraft.notes);
+  const [conditionAdjustment, setConditionAdjustment] = useState(initialDraft.conditionAdjustment);
+  const [locationAdjustment, setLocationAdjustment] = useState(initialDraft.locationAdjustment);
+  const [renovationAdjustment, setRenovationAdjustment] = useState(initialDraft.renovationAdjustment);
+
+  const saveReview = useMutation({
+    mutationFn: () =>
+      api.createCompReview({
+        listing_id: listingId,
+        status: "draft",
+        selected_comp_ids: selectedIds,
+        rejected_comp_ids: rejectedIds,
+        overrides: {
+          ...(conditionAdjustment ? { condition_adjustment_pct: Number(conditionAdjustment) } : {}),
+          ...(locationAdjustment ? { location_adjustment_pct: Number(locationAdjustment) } : {}),
+          ...(renovationAdjustment ? { renovation_adjustment_pct: Number(renovationAdjustment) } : {}),
+        },
+        notes,
+      }),
+    onSuccess: async () => {
+      track({
+        event_name: "comp_review_saved",
+        route: `/comp-reviews/${listingId}`,
+        subject_type: "listing",
+        subject_id: listingId,
+        context: { retained_count: selectedIds.length },
+      });
+      await queryClient.invalidateQueries({ queryKey: ["comp-review-workspace", listingId] });
+      await queryClient.invalidateQueries({ queryKey: ["comp-reviews", listingId] });
+      await queryClient.invalidateQueries({ queryKey: ["listing-context", listingId] });
+    },
+  });
+  const publishMemo = useMutation({
+    mutationFn: () =>
+      api.createMemo({
+        title: `Comp-reviewed memo ${new Date().toISOString().slice(0, 10)}`,
+        listing_id: listingId,
+        assumptions: ["Comp selection was curated in the comp workbench."],
+        risks: ["Manual adjustments should be reviewed before committee circulation."],
+        sections: [
+          {
+            heading: "Comp workbench summary",
+            body: `Retained ${selectedIds.length || data.delta_preview.retained_count || 0} comps with analyst overrides recorded in the review log.`,
+          },
+        ],
+      }),
+    onSuccess: () => {
+      track({
+        event_name: "memo_published",
+        route: `/comp-reviews/${listingId}`,
+        subject_type: "listing",
+        subject_id: listingId,
+        context: { source: "comp_review" },
+      });
+      void queryClient.invalidateQueries({ queryKey: ["memos"] });
+      void queryClient.invalidateQueries({ queryKey: ["listing-context", listingId] });
+    },
+  });
+
+  return (
+    <div className="page-stack">
+      <div className="page-card detail-hero">
+        <div>
+          <span className="eyebrow">Comp workbench</span>
+          <h2>{data.target.title}</h2>
+          <p>
+            Candidate pool, retained comps, adjustment matrix, and publish-to-memo path live in one
+            analyst surface instead of three disconnected screens.
+          </p>
         </div>
+        <div className="chip-row">
+          <span className="chip">{data.candidate_pool.length} candidates</span>
+          <span className="chip">{selectedIds.length || data.delta_preview.retained_count} retained</span>
+          <button
+            className="primary-button"
+            onClick={() => saveReview.mutate()}
+            disabled={saveReview.isPending || !data.save_review.ready}
+          >
+            Save review
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => publishMemo.mutate()}
+            disabled={publishMemo.isPending || !data.publish_to_memo.ready}
+          >
+            Publish to memo
+          </button>
+        </div>
+        {!data.save_review.ready && data.save_review.reason ? (
+          <p>{formatValuationReason(data.save_review.reason)}</p>
+        ) : null}
+      </div>
+
+      <DataGapCards gaps={data.data_gaps} />
+
+      <div className="truth-grid">
+        {sectionTitle("Ask", fmtMoney(data.target.ask_price))}
+        {sectionTitle("Baseline fair value", fmtMoney(data.baseline_valuation.fair_value))}
+        {sectionTitle("Retained median", fmtMoney(data.delta_preview.retained_median))}
+        {sectionTitle(
+          "Shift vs baseline",
+          fmtPct(data.delta_preview.baseline_shift_pct),
+          data.publish_to_memo.ready
+            ? "Ready for memo publication."
+            : (data.publish_to_memo.reason ?? undefined),
+        )}
+      </div>
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Candidate pool</span>
+              <h3>Pin, reject, or leave under consideration</h3>
+            </div>
+          </div>
+          <div className="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>Comp</th>
+                  <th>Distance</th>
+                  <th>Size delta</th>
+                  <th>Implied value</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.candidate_pool.map((candidate) => (
+                  <tr key={candidate.id}>
+                    <td>{candidate.title}</td>
+                    <td>{candidate.distance_km.toFixed(1)} km</td>
+                    <td>{fmtPct(candidate.size_delta_pct)}</td>
+                    <td>{fmtMoney(candidate.implied_value)}</td>
+                    <td>{candidateActionLabel(candidate, selectedIds, rejectedIds)}</td>
+                    <td>
+                      <div className="chip-row">
+                        <button
+                          className="ghost-button compact-button"
+                          onClick={() =>
+                            setSelectedIds((current) =>
+                              toggleSelection(current, candidate.id, { mode: "select", opposing: rejectedIds }),
+                            )
+                          }
+                        >
+                          {selectedIds.includes(candidate.id) ? "Unpin" : "Pin"}
+                        </button>
+                        <button
+                          className="ghost-button compact-button"
+                          onClick={() =>
+                            setRejectedIds((current) =>
+                              toggleSelection(current, candidate.id, { mode: "reject", opposing: selectedIds }),
+                            )
+                          }
+                        >
+                          {rejectedIds.includes(candidate.id) ? "Undo reject" : "Reject"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Adjustment matrix</span>
+              <h3>Analyst overrides</h3>
+            </div>
+          </div>
+          <div className="list-stack">
+            <label>
+              Condition adjustment %
+              <input value={conditionAdjustment} onChange={(event) => setConditionAdjustment(event.target.value)} placeholder="0.02" />
+            </label>
+            <label>
+              Location adjustment %
+              <input value={locationAdjustment} onChange={(event) => setLocationAdjustment(event.target.value)} placeholder="0.01" />
+            </label>
+            <label>
+              Renovation adjustment %
+              <input value={renovationAdjustment} onChange={(event) => setRenovationAdjustment(event.target.value)} placeholder="0.03" />
+            </label>
+            <label>
+              Override note
+              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={5} />
+            </label>
+          </div>
+          <div className="key-value-grid">
+            {data.adjustment_cards.length ? (
+              data.adjustment_cards.map((card) => (
+                <div key={card.id} className="list-card compact-card">
+                  <strong>{card.label}</strong>
+                  <p>{formatMetricValue(card.value)}</p>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No saved adjustments"
+                body="The workbench still shows the matrix explicitly so analysts can see that no overrides have been applied yet."
+              />
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Memo gate</span>
+              <h3>Keep the decision simple</h3>
+            </div>
+          </div>
+          <div className="metric-grid">
+            {sectionTitle("Candidate pool median", fmtMoney(data.delta_preview.candidate_pool_median))}
+            {sectionTitle("Retained median", fmtMoney(data.delta_preview.retained_median))}
+            {sectionTitle("Pinned delta", fmtPct(data.delta_preview.pinned_delta_pct))}
+            {sectionTitle("Retained count", String(data.delta_preview.retained_count))}
+          </div>
+            <div className="list-card">
+              <strong>Memo readiness</strong>
+              <p>{data.publish_to_memo.ready ? "Ready to publish with current retained set." : data.publish_to_memo.reason}</p>
+            </div>
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Override log</span>
+              <h3>Audit trail</h3>
+            </div>
+          </div>
+          <details className="disclosure-card">
+            <summary>Show review history and guardrails</summary>
+            <div className="timeline">
+              {data.override_log.length ? (
+                data.override_log.map((item) => (
+                  <div key={item.id} className="timeline-item">
+                    <strong>{item.title}</strong>
+                    <p>{item.detail}</p>
+                    <p>{fmtDateTime(item.at)}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No saved review history" body="Save the current comp selection to persist the audit trail." />
+              )}
+              {data.guardrails.map((rule) => (
+                <div key={rule} className="timeline-item">
+                  <strong>Guardrail</strong>
+                  <p>{rule}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        </section>
       </div>
     </div>
   );
@@ -721,191 +1294,407 @@ export function ListingPage() {
 
 export function CompReviewPage() {
   const { listingId = "" } = useParams();
-  const [notes, setNotes] = useState("Manual comp adjustment requested from the map workbench.");
-  const reviewsQuery = useQuery({
-    queryKey: ["comp-reviews", listingId],
-    queryFn: () => api.compReviews(listingId),
+  const workspaceQuery = useQuery({
+    queryKey: ["comp-review-workspace", listingId],
+    queryFn: () => api.compReviewWorkspace(listingId),
   });
-  const createReview = useMutation({
-    mutationFn: () =>
-      api.createCompReview({
-        listing_id: listingId,
-        status: "draft",
-        selected_comp_ids: [],
-        rejected_comp_ids: [],
-        overrides: { analyst_note: notes },
-        notes,
-      }),
+
+  if (workspaceQuery.isLoading) return <div className="page-card">Loading comp workbench…</div>;
+  if (!workspaceQuery.data) return <div className="page-card error-state">Comp workbench unavailable.</div>;
+
+  const reviewKey = [
+    listingId,
+    workspaceQuery.data.latest_review?.id ?? "new",
+    workspaceQuery.data.latest_review?.updated_at ?? "unset",
+  ].join(":");
+
+  return <CompReviewWorkspaceEditor key={reviewKey} listingId={listingId} data={workspaceQuery.data} />;
+}
+
+type DecisionTab = "watchlists" | "saved-searches" | "memos";
+
+function tabButton(active: boolean) {
+  return `global-nav-link${active ? " is-active" : ""}`;
+}
+
+function MemoExport({ memo }: { memo: Memo }) {
+  const exportMutation = useMutation({
+    mutationFn: () => api.exportMemo(memo.id),
   });
+
   return (
-    <div className="page-card">
-      <span className="eyebrow">Comp workbench</span>
-      <h2>Comp review for {listingId}</h2>
-      <label>
-        Override note
-        <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={5} />
-      </label>
-      <button className="primary-button" onClick={() => createReview.mutate()} disabled={createReview.isPending}>
-        Create new comp review
-      </button>
-      <div className="list-stack">
-        {(reviewsQuery.data?.items ?? []).map((review) => (
-          <div key={String(review.id)} className="list-card">
-            <strong>{formatMaybeString(review.status, "draft")}</strong>
-            <p>{JSON.stringify(review.overrides ?? {})}</p>
-          </div>
-        ))}
+    <div className="list-card">
+      <div className="panel-line">
+        <strong>{memo.title}</strong>
+        <span className={statusClass(memo.status)}>{memo.status}</span>
       </div>
+      <p>{memo.sections[0]?.body || "No memo body yet."}</p>
+      <button className="ghost-button compact-button" onClick={() => exportMutation.mutate()}>
+        Export memo
+      </button>
+      {exportMutation.data ? <pre className="export-card">{exportMutation.data.content}</pre> : null}
     </div>
   );
 }
 
-export function MemosPage() {
+export function DecisionsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab: DecisionTab =
+    requestedTab === "memos"
+      ? "memos"
+      : requestedTab === "saved-searches"
+        ? "saved-searches"
+        : "watchlists";
+  const watchlistsQuery = useQuery({ queryKey: ["watchlists"], queryFn: api.watchlists });
+  const savedSearchesQuery = useQuery({ queryKey: ["saved-searches"], queryFn: api.savedSearches });
   const memosQuery = useQuery({ queryKey: ["memos"], queryFn: api.memos });
-  const exportMutation = useMutation({
-    mutationFn: (memoId: string) => api.exportMemo(memoId),
-  });
+
   return (
-    <div className="page-card">
-      <span className="eyebrow">Memos</span>
-      <h2>Memo queue</h2>
-      <div className="list-stack">
-        {(memosQuery.data?.items ?? []).map((memo) => (
-          <div key={String(memo.id)} className="list-card">
-            <strong>{formatMaybeString(memo.title, "Memo")}</strong>
-            <p>{formatMaybeString(memo.status, "draft")}</p>
-            <button className="ghost-button" onClick={() => exportMutation.mutate(String(memo.id))}>
-              Export memo
-            </button>
-          </div>
-        ))}
+    <div className="page-stack">
+      <div className="page-card detail-hero">
+        <div>
+          <span className="eyebrow">Decision hub</span>
+          <h2>Watchlists and memos stay together as one decision surface</h2>
+          <p>
+            This replaces the split watchlist and memo navigation so the product has one calm
+            destination for saved conviction and published output.
+          </p>
+        </div>
+        <div className="chip-row">
+          <span className="chip">{watchlistsQuery.data?.total ?? 0} watchlists</span>
+          <span className="chip">{savedSearchesQuery.data?.total ?? 0} saved searches</span>
+          <span className="chip">{memosQuery.data?.total ?? 0} memos</span>
+          <Link className="nav-chip" to="/workbench">Back to Workbench</Link>
+        </div>
       </div>
-      {exportMutation.data ? (
-        <pre className="export-card">{formatMaybeString(exportMutation.data.content, "")}</pre>
+
+      <div className="global-nav decision-tabs">
+        <button className={tabButton(activeTab === "watchlists")} onClick={() => setSearchParams({ tab: "watchlists" })}>Watchlists</button>
+        <button className={tabButton(activeTab === "saved-searches")} onClick={() => setSearchParams({ tab: "saved-searches" })}>Saved searches</button>
+        <button className={tabButton(activeTab === "memos")} onClick={() => setSearchParams({ tab: "memos" })}>Memos</button>
+      </div>
+
+      {activeTab === "watchlists" ? (
+        <div className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Watchlist board</span>
+              <h3>Grouped by analyst intent</h3>
+            </div>
+          </div>
+          <div className="queue-grid">
+            {(watchlistsQuery.data?.items ?? []).length ? (
+              watchlistsQuery.data!.items.map((watchlist) => (
+                <div key={watchlist.id} className="list-card">
+                  <strong>{watchlist.name}</strong>
+                  <p>{formatMaybeString(watchlist.description, "No watchlist description yet.")}</p>
+                  <div className="chip-row">
+                    <span className="chip">{watchlist.listing_ids.length} listings</span>
+                    <span className={statusClass(watchlist.status)}>{watchlist.status}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="No watchlists yet" body="Save a basket from the workbench to start tracking decisions here." />
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "saved-searches" ? (
+        <div className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Reusable lens library</span>
+              <h3>Saved search presets from the workbench</h3>
+            </div>
+          </div>
+          <div className="queue-grid">
+            {(savedSearchesQuery.data?.items ?? []).length ? (
+              savedSearchesQuery.data!.items.map((savedSearch) => (
+                <div key={savedSearch.id} className="list-card">
+                  <strong>{savedSearch.name}</strong>
+                  <p>{formatMaybeString(savedSearch.query, "No free-text query saved.")}</p>
+                  <div className="chip-row">
+                    <span className="chip">{Object.keys(savedSearch.filters ?? {}).length} filters</span>
+                    <span className="chip">
+                      {formatMaybeString(String(savedSearch.sort?.field ?? ""), "No sort field")}
+                    </span>
+                  </div>
+                  <p>{formatMaybeString(savedSearch.notes, "Saved from the workbench filter state.")}</p>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="No saved searches yet" body="Save a lens from the workbench to reuse the exact search state here." />
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "memos" ? (
+        <div className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Memo queue</span>
+              <h3>Decision output and export</h3>
+            </div>
+          </div>
+          <div className="list-stack">
+            {(memosQuery.data?.items ?? []).length ? (
+              memosQuery.data!.items.map((memo) => <MemoExport key={memo.id} memo={memo} />)
+            ) : (
+              <EmptyState title="No memo drafts yet" body="Draft a memo from the workbench or comp review to populate this queue." />
+            )}
+          </div>
+        </div>
       ) : null}
     </div>
   );
 }
 
-export function WatchlistsPage() {
-  const watchlistsQuery = useQuery({ queryKey: ["watchlists"], queryFn: api.watchlists });
-  const searchesQuery = useQuery({ queryKey: ["saved-searches"], queryFn: api.savedSearches });
-  return (
-    <div className="page-card two-column-page">
-      <section>
-        <span className="eyebrow">Watchlists</span>
-        <h2>Tracked property groups</h2>
-        <div className="list-stack">
-          {(watchlistsQuery.data?.items ?? []).map((watchlist) => (
-            <div key={String(watchlist.id)} className="list-card">
-              <strong>{formatMaybeString(watchlist.name, "Watchlist")}</strong>
-              <p>{formatMaybeString(watchlist.description, "")}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section>
-        <span className="eyebrow">Saved searches</span>
-        <h2>Reusable lenses</h2>
-        <div className="list-stack">
-          {(searchesQuery.data?.items ?? []).map((searchItem) => (
-            <div key={String(searchItem.id)} className="list-card">
-              <strong>{formatMaybeString(searchItem.name, "Lens")}</strong>
-              <p>{JSON.stringify(searchItem.filters ?? {})}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
 export function PipelinePage() {
-  const pipelineQuery = useQuery({ queryKey: ["pipeline"], queryFn: api.pipeline });
-  const sourcesQuery = useQuery({ queryKey: ["sources"], queryFn: api.sources });
+  const trustSummaryQuery = useQuery({ queryKey: ["pipeline-trust-summary"], queryFn: api.pipelineTrustSummary });
   const jobsQuery = useQuery({ queryKey: ["jobs"], queryFn: api.jobs });
   const coverageQuery = useQuery({ queryKey: ["coverage"], queryFn: api.coverage });
   const qualityQuery = useQuery({ queryKey: ["quality"], queryFn: api.quality });
   const benchmarkQuery = useQuery({ queryKey: ["benchmarks"], queryFn: api.benchmarks });
+  const contractQuery = useQuery({ queryKey: ["source-contract-runs"], queryFn: api.sourceContracts });
 
-  const sourceSummary = (sourcesQuery.data?.summary as Record<string, number> | undefined) ?? {};
+  const trustSummary = trustSummaryQuery.data;
+  const sourceSummary = trustSummary?.source_summary.counts ?? {};
+  const latestBenchmark = trustSummary?.benchmark_gate;
+
+  const openBlocker = (title: string) => {
+    track({
+      event_name: "pipeline_blocker_opened",
+      route: "/pipeline",
+      subject_type: "blocker",
+      subject_id: title,
+      context: { source: "trust_summary" },
+    });
+  };
 
   return (
-    <div className="page-card">
-      <span className="eyebrow">Pipeline + source health</span>
-      <h2>Operational trust surface</h2>
-      <div className="metric-grid">
-        {sectionTitle("Needs refresh", String(Boolean(pipelineQuery.data?.needs_refresh) ? "yes" : "no"))}
+    <div className="page-stack">
+      <div className="page-card detail-hero">
+        <div>
+          <span className="eyebrow">Pipeline trust surface</span>
+          <h2>Trust first. Operations second.</h2>
+          <p>
+            Analysts should be able to answer one question quickly: is the product trustworthy enough to act on right now?
+          </p>
+        </div>
+      </div>
+
+      <div className="truth-grid">
+        {sectionTitle("Freshness", trustSummary?.freshness.needs_refresh ? "Needs refresh" : "Fresh")}
         {sectionTitle("Supported", String(sourceSummary.supported ?? 0))}
         {sectionTitle("Blocked", String(sourceSummary.blocked ?? 0))}
-        {sectionTitle("Benchmark runs", String(benchmarkQuery.data?.total ?? 0))}
+        {sectionTitle("Benchmark gate", latestBenchmark ? formatMaybeString(latestBenchmark.status) : "No runs")}
       </div>
-      <div className="two-column-page">
-        <section>
-          <h3>Recent jobs</h3>
-          <div className="list-stack">
-            {(jobsQuery.data?.items ?? []).map((job) => (
-              <div key={String(job.id)} className="list-card">
-                <strong>{formatMaybeString(job.job_type, "job")}</strong>
-                <p>{formatMaybeString(job.status, "")}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section>
-          <h3>Coverage</h3>
-          <div className="list-stack">
-            {(coverageQuery.data?.items ?? []).map((item) => (
-              <div key={String(item.id)} className="list-card">
-                <strong>{formatMaybeString(item.segment_key, "segment")}</strong>
-                <p>{formatMaybeString(item.status, "")}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-      <h3>Data quality events</h3>
-      <div className="timeline">
-        {(qualityQuery.data?.items ?? []).slice(0, 8).map((item) => (
-          <div key={String(item.id)} className="timeline-item">
-            <strong>{formatMaybeString(item.code, "event")}</strong>
-            <p>{formatMaybeString(item.source_id, "")}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
-export function CommandCenterPage() {
-  const runsQuery = useQuery({ queryKey: ["command-runs"], queryFn: api.commandRuns });
-  const jobsQuery = useQuery({ queryKey: ["jobs"], queryFn: api.jobs });
-  return (
-    <div className="page-card two-column-page">
-      <section>
-        <span className="eyebrow">Command Center</span>
-        <h2>Advisory run history</h2>
-        <div className="list-stack">
-          {(runsQuery.data?.items ?? []).map((run) => (
-            <div key={String(run.id)} className="list-card">
-              <strong>{formatMaybeString(run.query, "Run")}</strong>
-              <p>{formatMaybeString(run.status, "")}</p>
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Top blockers</span>
+              <h3>Why analysts should pause or proceed</h3>
             </div>
-          ))}
-        </div>
-      </section>
-      <section>
-        <span className="eyebrow">Job handoff</span>
-        <h2>Recent execution</h2>
-        <div className="list-stack">
-          {(jobsQuery.data?.items ?? []).map((job) => (
-            <div key={String(job.id)} className="list-card">
-              <strong>{formatMaybeString(job.job_type, "job")}</strong>
-              <p>{formatMaybeString(job.status, "")}</p>
+          </div>
+          <div className="list-stack">
+            {(trustSummary?.top_blockers ?? []).length ? (
+              trustSummary!.top_blockers.map((blocker) => (
+                <button key={`${blocker.kind}-${blocker.title}`} className="list-card shortlist-row" onClick={() => openBlocker(blocker.title)} type="button">
+                  <div className="panel-line">
+                    <strong>{blocker.title}</strong>
+                    <span className={statusClass(blocker.kind)}>{blocker.kind}</span>
+                  </div>
+                  <p>{blocker.detail}</p>
+                </button>
+              ))
+            ) : (
+              <EmptyState title="No active blockers" body="The trust surface stays explicit when the latest known state does not show active analyst-facing blockers." />
+            )}
+          </div>
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Source summary</span>
+              <h3>Where confidence is strongest and weakest</h3>
             </div>
-          ))}
+          </div>
+          <div className="list-stack">
+            {(trustSummary?.source_summary.top_sources ?? []).length ? (
+              trustSummary!.source_summary.top_sources.map((source) => (
+                <div key={source.source_id} className="list-card">
+                  <div className="panel-line">
+                    <strong>{source.name}</strong>
+                    <span className={statusClass(source.status)}>{source.status}</span>
+                  </div>
+                  <p>{source.reasons.length ? source.reasons.join(", ") : "No active source warnings."}</p>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No source audit data"
+                body="The trust surface keeps missing source-capability audits explicit instead of showing an empty panel."
+              />
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="detail-main-grid">
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Benchmark gate</span>
+              <h3>Latest run</h3>
+            </div>
+          </div>
+          {benchmarkQuery.data?.items[0] ? (
+            <div className="list-stack">
+              <div className="list-card">
+                <strong>{benchmarkQuery.data!.items[0].status}</strong>
+                <p>{fmtDateTime(benchmarkQuery.data!.items[0].completed_at || benchmarkQuery.data!.items[0].created_at)}</p>
+              </div>
+              <div className="key-value-grid">
+                {Object.entries(benchmarkQuery.data!.items[0].metrics).slice(0, 4).map(([key, value]) => (
+                  <div key={key} className="list-card compact-card">
+                    <strong>{key.replace(/_/g, " ")}</strong>
+                    <p>{formatMetricValue(value)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState
+              title="No benchmark runs"
+              body="The screen keeps the benchmark gate explicit even when the underlying data has not been generated yet."
+            />
+          )}
+        </section>
+
+        <section className="page-card">
+          <div className="panel-line">
+            <div>
+              <span className="eyebrow">Recent quality signals</span>
+              <h3>Most recent incidents</h3>
+            </div>
+          </div>
+          <div className="timeline">
+            {(trustSummary?.latest_quality_events ?? []).length ? (
+              trustSummary!.latest_quality_events.map((item) => (
+                <div key={item.id} className="timeline-item">
+                  <strong>{item.code}</strong>
+                  <p>{formatMaybeString(item.source_id, "unknown source")} · {item.severity}</p>
+                  <p>{fmtDateTime(item.created_at)}</p>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="No quality events" body="The trust surface keeps a clean no-incident state explicit rather than leaving the stream blank." />
+            )}
+          </div>
+        </section>
+      </div>
+
+      <details className="page-card disclosure-card">
+        <summary>Show operational details</summary>
+        <div className="detail-main-grid">
+          <section className="page-card inset-card">
+            <div className="panel-line">
+              <div>
+                <span className="eyebrow">Jobs</span>
+                <h3>Recent execution</h3>
+              </div>
+            </div>
+            <div className="list-stack">
+              {(jobsQuery.data?.items ?? []).length ? (
+                jobsQuery.data!.items.slice(0, 6).map((job) => (
+                  <div key={job.id} className="list-card">
+                    <div className="panel-line">
+                      <strong>{job.job_type}</strong>
+                      <span className={statusClass(job.status)}>{job.status}</span>
+                    </div>
+                    <p>{fmtDateTime(job.created_at)}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No job history" body="The pipeline screen keeps empty operational history explicit instead of rendering blank space." />
+              )}
+            </div>
+          </section>
+
+          <section className="page-card inset-card">
+            <div className="panel-line">
+              <div>
+                <span className="eyebrow">Coverage</span>
+                <h3>Segment detail</h3>
+              </div>
+            </div>
+            <div className="list-stack">
+              {(coverageQuery.data?.items ?? []).length ? (
+                coverageQuery.data!.items.slice(0, 6).map((item) => (
+                  <div key={item.id} className="list-card">
+                    <strong>{item.segment_key} · {item.segment_value}</strong>
+                    <p>{item.status} · coverage {fmtPct(item.empirical_coverage)} · sample {item.sample_size}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No coverage report" body="Coverage gaps are first-class states, not silent omissions." />
+              )}
+            </div>
+          </section>
         </div>
-      </section>
+        <div className="detail-main-grid">
+          <section className="page-card inset-card">
+            <div className="panel-line">
+              <div>
+                <span className="eyebrow">Quality stream</span>
+                <h3>Expanded incident list</h3>
+              </div>
+            </div>
+            <div className="timeline">
+              {(qualityQuery.data?.items ?? []).length ? (
+                qualityQuery.data!.items.slice(0, 10).map((item) => (
+                  <div key={item.id} className="timeline-item">
+                    <strong>{item.code}</strong>
+                    <p>{formatMaybeString(item.source_id, "unknown source")} · {item.severity}</p>
+                    <p>{fmtDateTime(item.created_at)}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No quality events" body="The pipeline keeps a clean no-incident state explicit rather than leaving the stream blank." />
+              )}
+            </div>
+          </section>
+
+          <section className="page-card inset-card">
+            <div className="panel-line">
+              <div>
+                <span className="eyebrow">Contract history</span>
+                <h3>Latest checks</h3>
+              </div>
+            </div>
+            <div className="timeline">
+              {(contractQuery.data?.items ?? []).length ? (
+                contractQuery.data!.items.slice(0, 8).map((item) => (
+                  <div key={item.id} className="timeline-item">
+                    <strong>{item.source_id}</strong>
+                    <p>{item.status}</p>
+                    <p>{fmtDateTime(item.created_at)}</p>
+                  </div>
+                ))
+              ) : (
+                <EmptyState title="No contract history" body="If contract-backed checks have not run yet, the product says so explicitly." />
+              )}
+            </div>
+          </section>
+        </div>
+      </details>
     </div>
   );
 }

@@ -20,21 +20,20 @@
         <a class="active" href="./workbench.html">Workbench</a>
         <a href="./listing-detail.html">Listing Detail</a>
         <a href="./comp-workbench.html">Comp Workbench</a>
-        <a href="./memo-watchlists.html">Memo + Watchlists</a>
+        <a href="./memo-watchlists.html">Decision Hub</a>
         <a href="./pipeline-health.html">Pipeline</a>
-        <a href="./command-center.html">Command Center</a>
       </nav>
 
       <section class="artboard">
         <div class="artboard-header">
           <div>
-            <div class="eyebrow">10 Analyst Workbench</div>
-            <h2>Discovery, ranking, and spatial triage</h2>
+            <div class="eyebrow">10 Workbench V3</div>
+            <h2>Truth-first spatial triage with compact defaults</h2>
           </div>
           <div class="tool-row">
-            <div class="toolbar-pill">Dense filters</div>
-            <div class="toolbar-pill">Map and table sync</div>
-            <div class="toolbar-pill">Saved views</div>
+            <div class="toolbar-pill">Compact defaults</div>
+            <div class="toolbar-pill">Map and basket sync</div>
+            <div class="toolbar-pill">Shortlist first</div>
           </div>
         </div>
 
@@ -48,21 +47,20 @@
 
             <div class="nav-stack">
               <div class="nav-item active">Workbench</div>
-              <div class="nav-item">Watchlists</div>
+              <div class="nav-item">Decisions</div>
               <div class="nav-item">Pipeline</div>
-              <div class="nav-item">Command Center</div>
             </div>
 
             <div class="subnav-stack">
-              <div class="subnav-item active">Search lens</div>
-              <div class="subnav-item">Saved searches</div>
-              <div class="subnav-item">Market snapshots</div>
-              <div class="subnav-item">Memo queue</div>
+              <div class="subnav-item active">Lens builder</div>
+              <div class="subnav-item">Shortlist</div>
+              <div class="subnav-item">Selection basket</div>
+              <div class="subnav-item">Active dossier rail</div>
             </div>
 
             <div class="sidebar-footer">
-              <h4>Job tray</h4>
-              <p>2 active jobs, 1 degraded source, 3 unread benchmark alerts.</p>
+              <h4>Advanced only</h4>
+              <p>Trust and operational detail move to Pipeline instead of competing on the main workbench.</p>
             </div>
           </aside>
 
@@ -70,37 +68,42 @@
             <div class="topbar">
               <div>
                 <div class="eyebrow">Lens: Iberia value arbitrage</div>
-                <h3 style="margin-top: 10px">Find underwritten listings with support, not noise.</h3>
+                <h3 style="margin-top: 10px">Lead with decision readiness, not more surface area.</h3>
               </div>
-              <div class="searchbar">Search listing, area, source, memo, or job...</div>
-              <div class="toolbar-pill">Quick jump</div>
+              <div class="searchbar">Search listing, area, or source...</div>
+              <div class="toolbar-pill">Save lens</div>
             </div>
 
             <div class="stats-grid">
               <div class="stat">
-                <span class="mono">Tracked</span>
-                <strong>7,851</strong>
-                <p>Listings in current local corpus.</p>
-              </div>
-              <div class="stat">
-                <span class="mono">Watchlist hits</span>
+                <span class="mono">Actionable</span>
                 <strong>23</strong>
-                <p>Ranked assets matching the active search lens.</p>
+                <p>Supported listings with usable confidence.</p>
               </div>
               <div class="stat">
-                <span class="mono">Support</span>
-                <strong>91%</strong>
-                <p>Median calibrated support for visible segment.</p>
+                <span class="mono">Degraded</span>
+                <strong>91</strong>
+                <p>Listings blocked by source trust or freshness gaps.</p>
+              </div>
+              <div class="stat">
+                <span class="mono">Needs data</span>
+                <strong>48</strong>
+                <p>Listings missing fields or comparable support.</p>
+              </div>
+              <div class="stat">
+                <span class="mono">Next drill-down</span>
+                <strong>Comp review</strong>
+                <p>Calle de Embajadores 82 is first in the review queue.</p>
               </div>
             </div>
 
             <div class="main-grid">
               <section class="panel">
                 <div class="panel-title">
-                  <h4>Filter architecture</h4>
+                  <h4>Lens builder</h4>
                   <div class="chip-row">
-                    <div class="chip">Compact</div>
-                    <div class="chip">Saved as lens</div>
+                    <div class="chip">Defaults only</div>
+                    <div class="chip">Advanced hidden</div>
                   </div>
                 </div>
                 <div class="filter-stack">
@@ -108,26 +111,26 @@
                   <div class="metric-card">Cities: Madrid, Barcelona, Valencia, Milan</div>
                   <div class="metric-card">Price: 120k - 900k</div>
                   <div class="metric-card">Support floor: 0.82</div>
-                  <div class="metric-card">Source state: supported + degraded visible</div>
-                  <div class="metric-card">Only memo-ready and comp-ready listings</div>
+                  <div class="metric-card">Source state: supported + degraded</div>
+                  <div class="metric-card">Advanced filters and map toggles live behind disclosure.</div>
                 </div>
               </section>
 
               <section class="panel">
                 <div class="panel-title">
-                  <h4>Ranked deal flow</h4>
+                  <h4>Shortlist + selection basket</h4>
                   <div class="chip-row">
-                    <div class="chip">Grid</div>
-                    <div class="chip">Explain rank</div>
-                    <div class="chip">Save to watchlist</div>
+                    <div class="chip">Compact list</div>
+                    <div class="chip">Open dossier</div>
+                    <div class="chip">Save to decisions</div>
                   </div>
                 </div>
 
                 <div class="card-grid">
-                  <div class="list-card">
-                    <div class="panel-title">
-                      <h4>Rua da Boavista 114</h4>
-                      <div class="status-pill status-good">0.89 support</div>
+                    <div class="list-card">
+                      <div class="panel-title">
+                        <h4>Rua da Boavista 114</h4>
+                        <div class="status-pill status-good">0.89 support</div>
                     </div>
                     <p>Porto | 318,000 EUR | 12m upside +18.4%</p>
                     <div class="legend-row" style="margin-top: 10px">
@@ -136,16 +139,16 @@
                       <div class="legend-pill">8 comps</div>
                     </div>
                   </div>
-                  <div class="list-card">
-                    <div class="panel-title">
-                      <h4>Calle de Embajadores 82</h4>
-                      <div class="status-pill status-warn">0.74 support</div>
+                    <div class="list-card">
+                      <div class="panel-title">
+                        <h4>Calle de Embajadores 82</h4>
+                        <div class="status-pill status-warn">0.74 support</div>
                     </div>
                     <p>Madrid | 425,000 EUR | manual comp review recommended</p>
                     <div class="legend-row" style="margin-top: 10px">
                       <div class="legend-pill">Source degraded</div>
                       <div class="legend-pill">Coverage gap</div>
-                      <div class="legend-pill">Memo drafted</div>
+                    <div class="legend-pill">Decision note drafted</div>
                     </div>
                   </div>
                 </div>
@@ -159,21 +162,20 @@
                   </div>
                   <div class="chart-block">
                     <div class="panel-title">
-                      <h4>Ranking logic</h4>
-                      <div class="toolbar-pill">Explainable</div>
+                      <h4>Trust cues</h4>
+                      <div class="toolbar-pill">No chart by default</div>
                     </div>
-                    <div class="bar-chart">
-                      <div class="bar accent" style="height: 84%"><span>Value</span></div>
-                      <div class="bar" style="height: 61%"><span>Yield</span></div>
-                      <div class="bar gold" style="height: 72%"><span>Support</span></div>
-                      <div class="bar" style="height: 48%"><span>Momentum</span></div>
+                    <div class="list-stack">
+                      <div class="metric-card">Support explains whether a listing is safe to act on.</div>
+                      <div class="metric-card">Source state explains whether the data can be trusted.</div>
+                      <div class="metric-card">Value delta explains why a listing deserves review.</div>
                     </div>
                   </div>
                 </div>
 
                 <div class="panel" style="margin-top: 18px; box-shadow: none">
                   <div class="panel-title">
-                    <h4>Listings table</h4>
+                  <h4>Selection basket</h4>
                     <div class="chip-row">
                       <div class="chip">Pinned rows</div>
                       <div class="chip">Bulk actions</div>
@@ -225,7 +227,7 @@
           <aside class="rail">
             <div class="rail-card">
               <div class="panel-title">
-                <h4>Signal rail</h4>
+                <h4>Active dossier rail</h4>
                 <div class="status-pill status-good">Live</div>
               </div>
               <div class="rail-stack">
@@ -235,33 +237,22 @@
                   <p>Median fair value delta for pinned opportunities.</p>
                 </div>
                 <div class="stat">
-                  <span class="mono">Benchmark gate</span>
-                  <strong>Pass</strong>
-                  <p>Tree baseline outperforms fusion in two thin segments only.</p>
+                  <span class="mono">Trust snapshot</span>
+                  <strong>2 gaps</strong>
+                  <p>Keep source health and missing fields visible without opening a second monitoring surface.</p>
                 </div>
               </div>
             </div>
 
             <div class="rail-card">
               <div class="panel-title">
-                <h4>Notifications</h4>
-                <div class="toolbar-pill">Center</div>
+                <h4>Decision actions</h4>
+                <div class="toolbar-pill">Next steps</div>
               </div>
               <div class="timeline">
-                <div class="timeline-item">Coverage slipped below 0.80 for high-price rentals in Barcelona.</div>
-                <div class="timeline-item">Pisos source remains degraded on area corruption.</div>
-                <div class="timeline-item">Command Center suggested a benchmark rerun after new market ingest.</div>
-              </div>
-            </div>
-
-            <div class="rail-card">
-              <div class="panel-title">
-                <h4>Saved lenses</h4>
-              </div>
-              <div class="list-stack">
-                <div class="list-card">Iberia value arbitrage</div>
-                <div class="list-card">Paris family rental spread</div>
-                <div class="list-card">Milan compact-income shortlist</div>
+                <div class="timeline-item">Save basket to Decisions.</div>
+                <div class="timeline-item">Draft memo from the active listing.</div>
+                <div class="timeline-item">Open comp review only when the dossier says it is needed.</div>
               </div>
             </div>
           </aside>

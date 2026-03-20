@@ -10,6 +10,7 @@ Critical workflows:
 - market/index/training/backfill pipeline steps
 - calibration refresh + segmented coverage reporting
 - dashboard startup path
+- analyst UI interaction tracking
 - agent run execution
 
 ## Logging Schema (Required Fields)
@@ -61,18 +62,23 @@ Metric plan by workflow:
   - latency: run duration
   - errors: failed tool/run ratio
   - traffic: queries per day
+- `ui-events`:
+  - traffic: tracked analyst events per route (`workbench_filter_applied`, `workbench_listing_opened`, `workbench_saved_lens`, `workbench_watchlist_created`, `listing_valuation_run`, `comp_review_saved`, `memo_published`, `pipeline_blocker_opened`, `command_center_redirected`)
+  - quality: ratio of event writes accepted by `POST /api/v1/ui-events`
+  - funnel: time from first workbench interaction to dossier open, comp-review save, and memo publication
 - `llm/vlm enrichment`:
   - errors: ChatMock/OpenAI-compatible request failures by `provider`, `api_base`, and `model`
   - quality: explicit `vlm_backend_request_failed` / `fusion_vlm_failed` counts when vision is unsupported
   - drift: backend changes between configured text and vision routes
 - `dashboard status`:
-  - quality: `source_support.summary` counts for `supported`, `blocked`, `fallback`
-  - drift: sources moving from `supported` -> `fallback` or `blocked`
+  - quality: `source_support.summary` counts for `supported`, `blocked`, `experimental`
+  - drift: sources moving from `supported` -> `experimental` or `blocked`
   - guidance link integrity: `source_support.doc_path` points to `docs/crawler_status.md`
 
 Tracing plan:
 - use `run_id` as trace spine across CLI/API/workflow logs and DB run tables
 - add per-step correlation fields in persisted metadata where absent
+- use UI `occurred_at` timestamps plus route + subject metadata as the front-end funnel spine for later validation
 
 ## Golden Signals Dashboards
 
@@ -93,6 +99,8 @@ Required dashboard families:
 | Preflight->dashboard happy path works without DB manual fixes | successful preflight+dashboard launch ratio | >= 98% weekly | Sev-2 if < 98% |
 | Runtime source trust is explicit in dashboard/API status surfaces | ratio of status payloads containing `source_support.summary` and per-source `runtime_label` | 100% on protected branch | Sev-2 on first regression |
 | Runtime assumption caveats are explicit in dashboard/API status surfaces | ratio of status payloads containing non-empty `assumption_badges` with `artifact_ids` | 100% on protected branch | Sev-2 on first regression |
+| Analyst trust summary loads from one aggregated route | ratio of Pipeline page loads satisfied by `GET /api/v1/pipeline/trust-summary` without falling back to lower-level fan-out | >= 99% on protected branch | Sev-2 on first regression |
+| Analyst interaction events are persisted for later validation | ratio of tracked UI interactions accepted by `POST /api/v1/ui-events` | >= 99% weekly | Sev-3 if < 99% |
 | Valuation outputs persist with provenance | share of persisted valuations with run metadata/evidence | >= 99% | Sev-2 if < 99% |
 | Segmented conformal coverage remains within floor | share of evaluated segments meeting coverage floor (`region_id`, `listing_type`, `price_band`, `horizon`) | >= 90% of evaluated segments pass (`min_samples >= 20`, floor `0.80`) | Sev-2 if breached in two consecutive calibration runs |
 | Spatial residual drift/outlier warnings remain bounded | share of evaluated spatial segments in warning state (`warn_drift`, `warn_outlier`, `warn_drift_outlier`) | <= 20% warned segments (`min_samples >= 20`) | Sev-2 if breached in two consecutive diagnostics runs |

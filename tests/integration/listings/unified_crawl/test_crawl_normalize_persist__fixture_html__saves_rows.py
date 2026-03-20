@@ -8,6 +8,10 @@ from src.listings.agents.crawlers.spain.pisos import PisosCrawlerAgent
 from src.listings.agents.crawlers.uk.onthemarket import OnTheMarketCrawlerAgent
 from src.listings.agents.crawlers.czech_republic.sreality import SrealityCrawlerAgent
 from src.listings.agents.crawlers.portugal.imovirtual import ImovirtualCrawlerAgent
+from src.listings.agents.crawlers.usa.realtor import RealtorCrawlerAgent
+from src.listings.agents.crawlers.usa.redfin import RedfinCrawlerAgent
+from src.listings.agents.crawlers.france.seloger import SeLogerCrawlerAgent
+from src.listings.agents.crawlers.germany.immowelt import ImmoweltCrawlerAgent
 from src.listings.agents.processors.rightmove import RightmoveNormalizerAgent
 from src.listings.agents.processors.zoopla import ZooplaNormalizerAgent
 from src.listings.agents.processors.immobiliare import ImmobiliareNormalizerAgent
@@ -15,6 +19,10 @@ from src.listings.agents.processors.pisos import PisosNormalizerAgent
 from src.listings.agents.processors.onthemarket import OnTheMarketNormalizerAgent
 from src.listings.agents.processors.sreality import SrealityNormalizerAgent
 from src.listings.agents.processors.imovirtual import ImovirtualNormalizerAgent
+from src.listings.agents.processors.realtor import RealtorNormalizerAgent
+from src.listings.agents.processors.redfin import RedfinNormalizerAgent
+from src.listings.agents.processors.seloger import SeLogerNormalizerAgent
+from src.listings.agents.processors.immowelt import ImmoweltNormalizerAgent
 from src.listings.scraping.client import FetchResult
 from src.listings.repositories.listings import ListingsRepository
 from src.listings.services.listing_persistence import ListingPersistenceService
@@ -33,6 +41,17 @@ def _listing_store(tmp_path):
     listings_repo = ListingsRepository(db_url=db_url)
     persistence = ListingPersistenceService(listings_repo)
     return listings_repo, persistence
+
+
+def _fake_batch(detail_html: str, url_match: str):
+    def inner(urls, **_kwargs):
+        results = []
+        for url in urls:
+            html = detail_html if url_match in url else None
+            results.append(FetchResult(url=url, html=html))
+        return results
+
+    return inner
 
 
 def test_crawl_normalize_persist__rightmove_fixture_html__saves_listing_row(tmp_path):
@@ -216,6 +235,158 @@ def test_crawl_normalize_persist__immobiliare_fixture_html__saves_listing_row(tm
     saved = persistence.save_listings(normalized.data)
 
     # Assert
+    assert saved == 1
+    db_item = listings_repo.get_listing_by_id(canonical.id)
+    assert db_item is not None
+    assert db_item.price == canonical.price
+
+
+def test_crawl_normalize_persist__realtor_fixture_html__saves_listing_row(tmp_path):
+    detail_html = Path("tests/resources/html/realtor.html").read_text(encoding="utf-8")
+    listing_url = "https://www.realtor.com/realestateandhomes-detail/123-Market-St_San-Francisco_CA_94105"
+
+    crawler = RealtorCrawlerAgent(
+        config={
+            "id": "realtor_us",
+            "base_url": "https://www.realtor.com",
+            "rate_limit": {"period_seconds": 0},
+            "browser_config": {"proxy_required": False},
+        },
+        compliance=DummyCompliance(),
+    )
+    crawler.scrape_client.snapshot_service.save_snapshot = lambda **kwargs: None
+    crawler.scrape_client.fetch_html_batch = _fake_batch(detail_html, "/realestateandhomes-detail/")
+
+    result = crawler.run({"target_urls": [listing_url]})
+
+    assert result.status == "success"
+    assert len(result.data) == 1
+
+    normalized = RealtorNormalizerAgent().run({"raw_listings": result.data})
+
+    assert normalized.status == "success"
+    canonical = normalized.data[0]
+    assert canonical.price == 1250000.0
+    assert canonical.location is not None
+    assert canonical.location.city == "San Francisco"
+
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
+
+    assert saved == 1
+    db_item = listings_repo.get_listing_by_id(canonical.id)
+    assert db_item is not None
+    assert db_item.price == canonical.price
+
+
+def test_crawl_normalize_persist__redfin_fixture_html__saves_listing_row(tmp_path):
+    detail_html = Path("tests/resources/html/redfin.html").read_text(encoding="utf-8")
+    listing_url = "https://www.redfin.com/CA/San-Francisco/88-Dolores-St-94103/home/123456"
+
+    crawler = RedfinCrawlerAgent(
+        config={
+            "id": "redfin_us",
+            "base_url": "https://www.redfin.com",
+            "rate_limit": {"period_seconds": 0},
+            "browser_config": {"proxy_required": False},
+        },
+        compliance=DummyCompliance(),
+    )
+    crawler.scrape_client.snapshot_service.save_snapshot = lambda **kwargs: None
+    crawler.scrape_client.fetch_html_batch = _fake_batch(detail_html, "/home/")
+
+    result = crawler.run({"target_urls": [listing_url]})
+
+    assert result.status == "success"
+    assert len(result.data) == 1
+
+    normalized = RedfinNormalizerAgent().run({"raw_listings": result.data})
+
+    assert normalized.status == "success"
+    canonical = normalized.data[0]
+    assert canonical.price == 1495000.0
+    assert canonical.location is not None
+    assert canonical.location.city == "San Francisco"
+
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
+
+    assert saved == 1
+    db_item = listings_repo.get_listing_by_id(canonical.id)
+    assert db_item is not None
+    assert db_item.price == canonical.price
+
+
+def test_crawl_normalize_persist__seloger_fixture_html__saves_listing_row(tmp_path):
+    detail_html = Path("tests/resources/html/seloger.html").read_text(encoding="utf-8")
+    listing_url = "https://www.seloger.com/annonces/achat/appartement/paris-11eme-75/seloger-1.htm"
+
+    crawler = SeLogerCrawlerAgent(
+        config={
+            "id": "seloger_fr",
+            "base_url": "https://www.seloger.com",
+            "rate_limit": {"period_seconds": 0},
+            "browser_config": {"proxy_required": False},
+        },
+        compliance=DummyCompliance(),
+    )
+    crawler.scrape_client.snapshot_service.save_snapshot = lambda **kwargs: None
+    crawler.scrape_client.fetch_html_batch = _fake_batch(detail_html, "/annonces/")
+
+    result = crawler.run({"target_urls": [listing_url]})
+
+    assert result.status == "success"
+    assert len(result.data) == 1
+
+    normalized = SeLogerNormalizerAgent().run({"raw_listings": result.data})
+
+    assert normalized.status == "success"
+    canonical = normalized.data[0]
+    assert canonical.price == 890000.0
+    assert canonical.location is not None
+    assert canonical.location.city == "Paris"
+
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
+
+    assert saved == 1
+    db_item = listings_repo.get_listing_by_id(canonical.id)
+    assert db_item is not None
+    assert db_item.price == canonical.price
+
+
+def test_crawl_normalize_persist__immowelt_fixture_html__saves_listing_row(tmp_path):
+    detail_html = Path("tests/resources/html/immowelt.html").read_text(encoding="utf-8")
+    listing_url = "https://www.immowelt.de/expose/immowelt-1"
+
+    crawler = ImmoweltCrawlerAgent(
+        config={
+            "id": "immowelt_de",
+            "base_url": "https://www.immowelt.de",
+            "rate_limit": {"period_seconds": 0},
+            "browser_config": {"proxy_required": False},
+        },
+        compliance=DummyCompliance(),
+    )
+    crawler.scrape_client.snapshot_service.save_snapshot = lambda **kwargs: None
+    crawler.scrape_client.fetch_html_batch = _fake_batch(detail_html, "/expose/")
+
+    result = crawler.run({"target_urls": [listing_url]})
+
+    assert result.status == "success"
+    assert len(result.data) == 1
+
+    normalized = ImmoweltNormalizerAgent().run({"raw_listings": result.data})
+
+    assert normalized.status == "success"
+    canonical = normalized.data[0]
+    assert canonical.price == 640000.0
+    assert canonical.location is not None
+    assert canonical.location.city == "Berlin"
+
+    listings_repo, persistence = _listing_store(tmp_path)
+    saved = persistence.save_listings(normalized.data)
+
     assert saved == 1
     db_item = listings_repo.get_listing_by_id(canonical.id)
     assert db_item is not None

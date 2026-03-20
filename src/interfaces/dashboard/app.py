@@ -327,7 +327,7 @@ if not isinstance(pipeline_source_entries, list):
     pipeline_source_entries = []
 source_supported_count = int(pipeline_source_summary.get("supported", 0) or 0)
 source_blocked_count = int(pipeline_source_summary.get("blocked", 0) or 0)
-source_fallback_count = int(pipeline_source_summary.get("fallback", 0) or 0)
+source_experimental_count = int(pipeline_source_summary.get("experimental", 0) or 0)
 source_support_doc = str(pipeline_source_support.get("doc_path") or "docs/crawler_status.md")
 pipeline_assumption_badges = pipeline_status.get("assumption_badges", [])
 if not isinstance(pipeline_assumption_badges, list):
@@ -435,7 +435,7 @@ with left_col:
             st.text(f"Listings updated: {pipeline_listings_at}")
             st.caption(
                 f"Source support: {source_supported_count} supported | "
-                f"{source_blocked_count} blocked | {source_fallback_count} fallback"
+                f"{source_blocked_count} blocked | {source_experimental_count} experimental"
             )
             st.caption(f"Guide: {source_support_doc}")
             assumption_lines = _assumption_badge_lines(limit=3)
@@ -942,11 +942,11 @@ with left_panel:
         support_cols = st.columns(3)
         support_cols[0].metric("Supported", source_supported_count)
         support_cols[1].metric("Blocked", source_blocked_count)
-        support_cols[2].metric("Fallback", source_fallback_count)
-        st.caption(f"Source labels: supported / blocked / fallback (see {source_support_doc}).")
+        support_cols[2].metric("Experimental", source_experimental_count)
+        st.caption(f"Source labels: supported / blocked / experimental (see {source_support_doc}).")
         st.caption(f"Supported examples: {_source_examples('supported')}")
         st.caption(f"Blocked examples: {_source_examples('blocked')}")
-        st.caption(f"Fallback examples: {_source_examples('fallback')}")
+        st.caption(f"Experimental examples: {_source_examples('experimental')}")
         assumption_lines = _assumption_badge_lines()
         if assumption_lines:
             st.caption("Assumption badges:")
