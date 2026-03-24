@@ -1,5 +1,34 @@
 # Worklog
 
+## 2026-03-22 (brand logo packet)
+
+- Created a new shared logo for Property Scanner so the repo and app entrypoints present a more deliberate product identity instead of a generic utility icon.
+- Root-cause changes:
+  - attempted to use the `imagegen` workflow for concept exploration, but `OPENAI_API_KEY` was not available in the environment
+  - replaced `docs/assets/property-scanner-icon.svg` with a hand-built colorful squircle using:
+    - a cyan-to-blue-to-coral gradient surface
+    - soft translucent highlight layers
+    - a white ribbon-like monogram instead of a literal house badge
+    - a vertical inner light beam to keep the mark feeling product-like instead of typographic-only
+  - regenerated synchronized PNG derivatives for the existing consumers at:
+    - `docs/assets/property-scanner-icon.png`
+    - `docs/assets/property-scanner-icon-256.png`
+    - `src/interfaces/dashboard/assets/property-scanner-icon-256.png`
+  - added the logo to `README.md` so the repo surface now exposes the identity immediately
+  - added `frontend/public/property-scanner-icon.svg` and linked it from `frontend/index.html` so the React app now has a proper favicon instead of the default empty tab icon
+- Verification evidence:
+  - `PROMPT_PACK_DIR=prompts python3 prompts/scripts/prompts_manifest.py --check` (`status: ok`)
+  - `PROMPT_PACK_DIR=prompts python3 prompts/scripts/system_integrity.py --mode prompt_pack` (`System integrity checks passed.`)
+  - `sips -g pixelWidth -g pixelHeight docs/assets/property-scanner-icon.png docs/assets/property-scanner-icon-256.png src/interfaces/dashboard/assets/property-scanner-icon-256.png` confirmed:
+    - `1024x1024` for the full-size PNG
+    - `256x256` for both icon derivatives
+  - visual inspection of the rendered `docs/assets/property-scanner-icon.png` confirmed the revised SVG exported cleanly and the colorful mark remained legible at icon scale
+  - `cd frontend && npm run build` (`✓ built`)
+    - existing Vite warnings about `@loaders.gl` browser externals and large chunks remain, but this packet did not introduce them
+- Residual limits:
+  - favicon behavior was verified through build output and rendered assets rather than a live browser walkthrough
+  - the wider UI still relies mostly on text branding; this packet only establishes the shared logo assets and the main entrypoints
+
 ## 2026-03-20 (README production refresh packet)
 
 - Reworked the repository landing page in `README.md` so it reads like a production system instead of a long-form internal explainer.

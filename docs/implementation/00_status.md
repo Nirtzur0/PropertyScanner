@@ -1,5 +1,55 @@
 # Implementation Status
 
+## Brand Logo Packet (2026-03-22)
+
+- Objective: create a cleaner repo/app logo in a restrained Apple-like visual language and wire it into the visible product entrypoints that already exist.
+- This step advances objective by:
+  - replacing the older saturated icon with a more polished colorful identity mark that reads like a modern app icon instead of a generic utility badge
+  - keeping the canonical vector and both PNG derivatives aligned so the repo, React app, and legacy Streamlit dashboard do not drift
+  - making the logo visible at the repo surface immediately through the README and favicon
+- Risks of misalignment:
+  - if the repo keeps a generic or inconsistent icon set, the public product surface reads as unfinished even when the core workflow is stronger
+  - if the SVG and PNG variants drift, the legacy dashboard and repo/docs surface will present different branding
+- Cycle stage: `polish`
+- Appetite: `small`
+- Packet state: `downhill`
+
+### Now
+
+- Completed:
+  - replaced `docs/assets/property-scanner-icon.svg` with a colorful abstract gradient squircle logo using a white ribbon-like monogram and a vertical light beam
+  - regenerated aligned raster outputs at:
+    - `docs/assets/property-scanner-icon.png`
+    - `docs/assets/property-scanner-icon-256.png`
+    - `src/interfaces/dashboard/assets/property-scanner-icon-256.png`
+  - added the logo to the top of `README.md`
+  - added a React favicon path through:
+    - `frontend/public/property-scanner-icon.svg`
+    - `frontend/index.html`
+
+### Next
+
+- Decide whether the same monogram-based identity should be extended into broader app chrome such as social-preview assets, loading states, and the React shell header.
+
+### Not now
+
+- No route, API, schema, or crawler behavior changed in this packet.
+- No broader visual redesign was attempted beyond the shared logo assets and immediate entrypoints.
+
+### Blocked
+
+- `imagegen` concept generation could not be used in this environment because `OPENAI_API_KEY` was not set, so the final mark was produced as a hand-built SVG fallback.
+
+### Verification commands run
+
+- `PROMPT_PACK_DIR=prompts python3 prompts/scripts/prompts_manifest.py --check`
+- `PROMPT_PACK_DIR=prompts python3 prompts/scripts/system_integrity.py --mode prompt_pack`
+- `sips -s format png docs/assets/property-scanner-icon.svg --out docs/assets/property-scanner-icon.png`
+- `sips -s format png -z 256 256 docs/assets/property-scanner-icon.svg --out docs/assets/property-scanner-icon-256.png`
+- `sips -s format png -z 256 256 docs/assets/property-scanner-icon.svg --out src/interfaces/dashboard/assets/property-scanner-icon-256.png`
+- `sips -g pixelWidth -g pixelHeight docs/assets/property-scanner-icon.png docs/assets/property-scanner-icon-256.png src/interfaces/dashboard/assets/property-scanner-icon-256.png`
+- `cd frontend && npm run build`
+
 ## README Production Refresh Packet (2026-03-20)
 
 - Objective: replace the long-form repository README with a shorter production-style landing page that reflects the real shipped product surface and uses fresh screenshots from the live app.

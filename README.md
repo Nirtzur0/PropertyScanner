@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Property Scanner logo" src="docs/assets/property-scanner-icon.svg" width="160" />
+</p>
+
 # Property Scanner
 
 Local-first property intelligence for teams that want valuations backed by
@@ -129,4 +133,3 @@ python3 -m src.interfaces.cli legacy-dashboard --skip-preflight
 ```
 
 - There is no top-level license file in this repository.
-
