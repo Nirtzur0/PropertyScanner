@@ -530,16 +530,20 @@ def train_model(
             tabular_dim=tabular_dim,
             text_dim=text_dim,
             image_dim=image_dim,
-            hidden_dim=64,
-            num_heads=2
+            hidden_dim=128,
+            num_heads=4,
+            num_attention_layers=2,
+            dropout=0.15,
         )
 
         config = {
             "tabular_dim": tabular_dim,
             "text_dim": text_dim,
             "image_dim": image_dim,
-            "hidden_dim": 64,
-            "num_heads": 2,
+            "hidden_dim": 128,
+            "num_heads": 4,
+            "num_attention_layers": 2,
+            "dropout": 0.15,
             "target_mode": "log_residual",
             "normalize_to": normalize_to,
             "listing_type": listing_type,

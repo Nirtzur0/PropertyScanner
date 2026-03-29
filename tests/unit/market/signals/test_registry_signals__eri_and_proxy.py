@@ -8,10 +8,11 @@ from src.market.services.eri_signals import ERISignalsService
 def _create_market_indices(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
-        CREATE TABLE market_indices (
+        CREATE TABLE market_fundamentals (
             id TEXT PRIMARY KEY,
-            region_id TEXT,
-            month_date DATE,
+            region_id TEXT NOT NULL,
+            month_date DATE NOT NULL,
+            source TEXT NOT NULL,
             price_index_sqm FLOAT,
             rent_index_sqm FLOAT,
             inventory_count INT,
@@ -21,11 +22,17 @@ def _create_market_indices(conn: sqlite3.Connection) -> None:
             median_dom INT,
             price_cut_share FLOAT,
             volatility_3m FLOAT,
+            hedonic_index_sqm FLOAT,
+            raw_median_sqm FLOAT,
+            r_squared FLOAT,
+            n_observations INT,
+            n_neighborhoods INT,
+            coefficients TEXT,
             updated_at DATETIME
         )
         """
     )
-    conn.execute("CREATE INDEX ix_market_indices_region_date ON market_indices (region_id, month_date)")
+    conn.execute("CREATE INDEX ix_mf_region_date ON market_fundamentals (region_id, month_date)")
 
 
 def _seed_market_indices(conn: sqlite3.Connection, region_id: str) -> None:
@@ -37,10 +44,17 @@ def _seed_market_indices(conn: sqlite3.Connection, region_id: str) -> None:
                 f"{region_id}-{month}",
                 region_id,
                 month,
+                "market",
                 base_price + idx * 50,
                 base_price * 0.5,
                 100 + idx * 2,
                 80 + idx * 3,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -51,11 +65,13 @@ def _seed_market_indices(conn: sqlite3.Connection, region_id: str) -> None:
         )
     conn.executemany(
         """
-        INSERT OR REPLACE INTO market_indices (
-            id, region_id, month_date, price_index_sqm, rent_index_sqm, inventory_count,
-            new_listings_count, sold_count, absorption_rate, median_dom, price_cut_share,
-            volatility_3m, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO market_fundamentals (
+            id, region_id, month_date, source, price_index_sqm, rent_index_sqm,
+            inventory_count, new_listings_count, sold_count, absorption_rate,
+            median_dom, price_cut_share, volatility_3m, hedonic_index_sqm,
+            raw_median_sqm, r_squared, n_observations, n_neighborhoods,
+            coefficients, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )

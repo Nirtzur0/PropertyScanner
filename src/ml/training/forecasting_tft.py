@@ -1,21 +1,31 @@
 """
-Temporal Fusion Transformer (TFT) Forecaster
+Temporal Fusion Transformer (TFT) Forecaster — v2
 
-SOTA panel probabilistic forecaster for multi-region, multi-horizon property value prediction.
+Proper implementation of the TFT architecture (Lim et al., 2021) for
+multi-region, multi-horizon property value prediction.
 
-Architecture:
-- Entity embeddings for regions (partial pooling)
-- Multi-horizon: 3, 6, 12, 36, 60 months
-- Quantile outputs: q10, q50, q90
-- Interpretable attention weights
+Architecture (matching the paper):
+1. Static covariate encoder (region embedding → enrichment vectors)
+2. Variable Selection Networks for temporal inputs
+3. GRN-based feature processing throughout
+4. Self-attention temporal encoder (replaces v1's LSTM)
+5. Multi-horizon quantile outputs with interpretable attention
+
+Key improvements over v1:
+- GRN used for all feature processing (was unused in v1)
+- Variable Selection Network for learned feature importance
+- Self-attention replaces LSTM for temporal encoding
+- Proper static enrichment (region context conditions temporal processing)
+- Batched training (sequences collected then trained in mini-batches)
 
 References:
-- Lim et al. "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting" (2021)
-- PyTorch Forecasting library
+- Lim et al. "Temporal Fusion Transformers for Interpretable
+  Multi-horizon Time Series Forecasting" (2021)
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -23,180 +33,327 @@ import structlog
 from src.platform.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
 from src.platform.settings import TFTConfig
 from src.platform.settings import AppConfig
-from src.market.repositories.market_data import MarketDataRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 
 logger = structlog.get_logger(__name__)
 
 
 class GatedResidualNetwork(nn.Module):
-    """Gated Residual Network block used in TFT"""
-    
-    def __init__(self, input_size: int, hidden_size: int, output_size: int, dropout: float = 0.1):
+    """
+    Gated Residual Network — the core building block of TFT.
+
+    Applies non-linear processing with a gated skip connection and
+    optional static context injection.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        output_size: int,
+        dropout: float = 0.1,
+        context_size: Optional[int] = None,
+    ):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
+        self.context_proj = (
+            nn.Linear(context_size, hidden_size, bias=False)
+            if context_size
+            else None
+        )
         self.fc2 = nn.Linear(hidden_size, output_size)
-        self.gate = nn.Linear(hidden_size, output_size)
+        self.gate = nn.Sequential(
+            nn.Linear(hidden_size, output_size),
+            nn.Sigmoid(),
+        )
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(output_size)
-        
-        # Skip connection
-        self.skip = nn.Linear(input_size, output_size) if input_size != output_size else nn.Identity()
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        hidden = torch.relu(self.fc1(x))
+        self.skip = (
+            nn.Linear(input_size, output_size)
+            if input_size != output_size
+            else nn.Identity()
+        )
+
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        hidden = F.elu(self.fc1(x))
+        if self.context_proj is not None and context is not None:
+            hidden = hidden + self.context_proj(context)
         hidden = self.dropout(hidden)
-        
         output = self.fc2(hidden)
-        gate = torch.sigmoid(self.gate(hidden))
-        
-        gated_output = gate * output
-        skip = self.skip(x)
-        
-        return self.layer_norm(gated_output + skip)
+        gate = self.gate(hidden)
+        return self.layer_norm(gate * output + self.skip(x))
 
 
 class VariableSelectionNetwork(nn.Module):
-    """Variable selection for interpretability"""
-    
-    def __init__(self, input_sizes: Dict[str, int], hidden_size: int, dropout: float = 0.1):
+    """
+    Variable Selection Network — learns which input features matter most.
+
+    Each input variable is processed through its own GRN, then a softmax
+    gate (conditioned on all inputs + optional static context) produces
+    per-variable importance weights.  Returns the weighted sum and the
+    weights themselves for interpretability.
+    """
+
+    def __init__(
+        self,
+        num_inputs: int,
+        input_size: int,
+        hidden_size: int,
+        dropout: float = 0.1,
+        context_size: Optional[int] = None,
+    ):
         super().__init__()
-        self.input_sizes = input_sizes
-        
-        # GRN for each variable
-        self.grns = nn.ModuleDict({
-            name: GatedResidualNetwork(size, hidden_size, hidden_size, dropout)
-            for name, size in input_sizes.items()
-        })
-        
-        # Softmax for variable weights
-        total_size = sum(input_sizes.values())
-        self.weight_network = nn.Sequential(
-            nn.Linear(total_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, len(input_sizes)),
-            nn.Softmax(dim=-1)
+        self.num_inputs = num_inputs
+        self.hidden_size = hidden_size
+
+        # Per-variable GRNs
+        self.variable_grns = nn.ModuleList([
+            GatedResidualNetwork(input_size, hidden_size, hidden_size, dropout)
+            for _ in range(num_inputs)
+        ])
+
+        # Weight network: softmax gate over variables
+        gate_input_size = num_inputs * input_size
+        if context_size:
+            gate_input_size += context_size
+        self.weight_grn = GatedResidualNetwork(
+            gate_input_size, hidden_size, num_inputs, dropout
         )
-    
-    def forward(self, inputs: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        # Process each variable
-        processed = {}
-        for name, x in inputs.items():
-            processed[name] = self.grns[name](x)
-        
-        # Concatenate for weight computation
-        concat = torch.cat(list(inputs.values()), dim=-1)
-        weights = self.weight_network(concat)
-        
+
+    def forward(
+        self,
+        inputs: List[torch.Tensor],
+        context: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            inputs: list of (B, T, input_size) tensors, one per variable
+            context: optional (B, context_size) static context
+
+        Returns:
+            output: (B, T, hidden_size) — weighted combination
+            weights: (B, T, num_inputs) — variable importance
+        """
+        # Process each variable through its GRN
+        processed = [grn(inp) for grn, inp in zip(self.variable_grns, inputs)]
+
+        # Compute variable importance weights
+        concat = torch.cat(inputs, dim=-1)  # (B, T, num_inputs * input_size)
+        if context is not None:
+            # Expand static context across time
+            ctx = context.unsqueeze(1).expand(-1, concat.size(1), -1)
+            concat = torch.cat([concat, ctx], dim=-1)
+
+        raw_weights = self.weight_grn(concat)  # (B, T, num_inputs)
+        weights = F.softmax(raw_weights, dim=-1)
+
         # Weighted sum
-        stacked = torch.stack(list(processed.values()), dim=-1)
-        weighted_output = (stacked * weights.unsqueeze(-2)).sum(dim=-1)
-        
-        # Return attention weights for interpretability
-        weight_dict = {name: weights[..., i] for i, name in enumerate(inputs.keys())}
-        
-        return weighted_output, weight_dict
+        stacked = torch.stack(processed, dim=-1)  # (B, T, hidden_size, num_inputs)
+        output = (stacked * weights.unsqueeze(-2)).sum(dim=-1)  # (B, T, hidden_size)
+
+        return output, weights
+
+
+class StaticCovariateEncoder(nn.Module):
+    """
+    Encodes static covariates (region) into four context vectors used to
+    enrich different parts of the temporal processing pipeline.
+    """
+
+    def __init__(self, hidden_size: int, num_regions: int, dropout: float = 0.1):
+        super().__init__()
+        self.embedding = nn.Embedding(num_regions, hidden_size)
+        # Four context vectors (as in the paper):
+        # 1. Variable selection context
+        # 2. Temporal encoder enrichment
+        # 3. Temporal decoder enrichment (reused as pre-attention enrichment)
+        # 4. Output enrichment
+        self.context_grns = nn.ModuleList([
+            GatedResidualNetwork(hidden_size, hidden_size, hidden_size, dropout)
+            for _ in range(4)
+        ])
+
+    def forward(
+        self, region_ids: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        emb = self.embedding(region_ids)  # (B, H)
+        return tuple(grn(emb) for grn in self.context_grns)
+
+
+class InterpretableMultiHeadAttention(nn.Module):
+    """
+    Multi-head attention that averages attention weights across heads
+    for interpretability (as specified in the TFT paper, Section 4.5).
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, dropout: float = 0.1):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        assert hidden_size % num_heads == 0
+
+        self.q_proj = nn.Linear(hidden_size, hidden_size)
+        self.k_proj = nn.Linear(hidden_size, hidden_size)
+        self.v_proj = nn.Linear(hidden_size, hidden_size)
+        self.out_proj = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(
+        self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, T, _ = query.shape
+
+        # Multi-head projections
+        q = self.q_proj(query).reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(key).reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(value).reshape(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # Scaled dot-product attention
+        scale = self.head_dim ** 0.5
+        scores = torch.matmul(q, k.transpose(-2, -1)) / scale  # (B, H, T, T)
+
+        # Causal mask: prevent attending to future timesteps
+        mask = torch.triu(torch.ones(T, T, device=query.device), diagonal=1).bool()
+        scores = scores.masked_fill(mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        attn_output = torch.matmul(attn_weights, v)  # (B, H, T, head_dim)
+        attn_output = attn_output.transpose(1, 2).reshape(B, T, -1)
+        output = self.out_proj(attn_output)
+
+        # Average attention across heads for interpretability
+        avg_weights = attn_weights.mean(dim=1)  # (B, T, T)
+
+        return output, avg_weights
 
 
 class TFTForecaster(nn.Module):
     """
-    Simplified Temporal Fusion Transformer for property value forecasting.
-    
+    Temporal Fusion Transformer for property value forecasting.
+
+    Follows the architecture from Lim et al. (2021):
+    1. Static covariate encoder → context vectors
+    2. Variable selection (conditioned on static context)
+    3. GRN-based temporal processing
+    4. Interpretable multi-head self-attention
+    5. Position-wise feed-forward → quantile outputs
+
     Features:
-    - Static variables: region embedding
-    - Time-varying known: time index, macro scenarios
+    - Static: region embedding
     - Time-varying observed: price index, inventory
+    - Time-varying known: time index, macro (euribor, inflation)
     """
-    
+
     def __init__(self, config: TFTConfig, num_regions: int):
         super().__init__()
         self.config = config
-        
-        # Region embedding (entity embedding for partial pooling)
-        self.region_embedding = nn.Embedding(num_regions, config.hidden_size)
-        
-        # Feature projections
-        self.price_proj = nn.Linear(1, config.hidden_size)
-        self.inventory_proj = nn.Linear(1, config.hidden_size)
-        self.macro_proj = nn.Linear(2, config.hidden_size)  # euribor, inflation
-        self.time_proj = nn.Linear(1, config.hidden_size)
-        
-        # Encoder (simplified to LSTM for efficiency)
-        self.encoder = nn.LSTM(
-            input_size=config.hidden_size * 4,
-            hidden_size=config.hidden_size,
-            num_layers=config.num_encoder_layers,
+        h = config.hidden_size
+
+        # --- Static covariate encoder ---
+        self.static_encoder = StaticCovariateEncoder(h, max(num_regions, 1), config.dropout)
+
+        # --- Feature projections (each to hidden_size) ---
+        self.price_proj = GatedResidualNetwork(1, h, h, config.dropout)
+        self.inventory_proj = GatedResidualNetwork(1, h, h, config.dropout)
+        self.macro_proj = GatedResidualNetwork(2, h, h, config.dropout)
+        self.time_proj = GatedResidualNetwork(1, h, h, config.dropout)
+
+        # --- Variable selection ---
+        self.vsn = VariableSelectionNetwork(
+            num_inputs=4,
+            input_size=h,
+            hidden_size=h,
             dropout=config.dropout,
-            batch_first=True
+            context_size=h,
         )
-        
-        # Attention for interpretability
-        self.attention = nn.MultiheadAttention(
-            embed_dim=config.hidden_size,
-            num_heads=config.attention_heads,
-            dropout=config.dropout,
-            batch_first=True
+
+        # --- Temporal processing (GRN with static enrichment) ---
+        self.temporal_grn = GatedResidualNetwork(
+            h, h, h, config.dropout, context_size=h
         )
-        
-        # Quantile outputs
+
+        # --- Self-attention ---
+        self.attention = InterpretableMultiHeadAttention(
+            h, config.attention_heads, config.dropout
+        )
+        self.attn_gate = nn.Sequential(nn.Linear(h, h), nn.Sigmoid())
+        self.attn_norm = nn.LayerNorm(h)
+
+        # --- Position-wise feed-forward ---
+        self.output_grn = GatedResidualNetwork(h, h, h, config.dropout, context_size=h)
+
+        # --- Quantile prediction heads ---
         self.quantile_heads = nn.ModuleList([
-            nn.Linear(config.hidden_size, len(config.prediction_horizons))
+            nn.Sequential(
+                nn.Linear(h, h // 2),
+                nn.ELU(),
+                nn.Linear(h // 2, len(config.prediction_horizons)),
+            )
             for _ in config.quantiles
         ])
-    
+
     def forward(
         self,
         region_ids: torch.Tensor,
         price_seq: torch.Tensor,
         inventory_seq: torch.Tensor,
         macro_seq: torch.Tensor,
-        time_seq: torch.Tensor
+        time_seq: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass.
-        
         Args:
-            region_ids: (batch,) region indices
-            price_seq: (batch, seq_len, 1) historical price indices
-            inventory_seq: (batch, seq_len, 1) inventory counts
-            macro_seq: (batch, seq_len, 2) [euribor, inflation]
-            time_seq: (batch, seq_len, 1) time indices
-            
+            region_ids:    (B,) region indices
+            price_seq:     (B, T, 1) historical price indices
+            inventory_seq: (B, T, 1) inventory counts
+            macro_seq:     (B, T, 2) [euribor, inflation]
+            time_seq:      (B, T, 1) time indices
+
         Returns:
-            Dict with quantile predictions for each horizon
+            Dict with quantile predictions per horizon and attention weights
         """
-        batch_size = region_ids.size(0)
-        
-        # Project features
-        region_emb = self.region_embedding(region_ids).unsqueeze(1).expand(-1, price_seq.size(1), -1)
-        price_emb = self.price_proj(price_seq)
+        # --- Static encoding ---
+        cs_vsn, cs_enc, cs_dec, cs_out = self.static_encoder(region_ids)
+
+        # --- Feature projection ---
+        price_emb = self.price_proj(price_seq)        # (B, T, H)
         inventory_emb = self.inventory_proj(inventory_seq)
         macro_emb = self.macro_proj(macro_seq)
         time_emb = self.time_proj(time_seq)
-        
-        # Concatenate all features
-        x = torch.cat([price_emb, inventory_emb, macro_emb, time_emb], dim=-1)
-        
-        # Add region embedding via addition (static covariate)
-        # (Simplified - full TFT uses more sophisticated fusion)
-        region_context = region_emb.repeat(1, 1, 4)
-        x = x + region_context
-        
-        # Encode
-        encoded, _ = self.encoder(x)
-        
-        # Self-attention for interpretability
-        attended, attn_weights = self.attention(encoded, encoded, encoded)
-        
-        # Take last timestep
-        context = attended[:, -1, :]
-        
-        # Quantile predictions
+
+        # --- Variable selection (conditioned on static context) ---
+        selected, var_weights = self.vsn(
+            [price_emb, inventory_emb, macro_emb, time_emb],
+            context=cs_vsn,
+        )  # (B, T, H), (B, T, 4)
+
+        # --- Temporal processing with static enrichment ---
+        cs_enc_expanded = cs_enc.unsqueeze(1).expand_as(selected)
+        temporal = self.temporal_grn(selected, context=cs_enc_expanded)
+
+        # --- Self-attention with gated residual ---
+        attended, attn_weights = self.attention(temporal, temporal, temporal)
+        gated = self.attn_gate(attended) * attended
+        temporal = self.attn_norm(temporal + gated)
+
+        # --- Output processing with static enrichment ---
+        cs_out_expanded = cs_out.unsqueeze(1).expand_as(temporal)
+        output = self.output_grn(temporal, context=cs_out_expanded)
+
+        # --- Take last timestep for prediction ---
+        context = output[:, -1, :]  # (B, H)
+
+        # --- Quantile predictions ---
         outputs = {}
         for i, q in enumerate(self.config.quantiles):
-            outputs[f"q{int(q*100)}"] = self.quantile_heads[i](context)
-        
+            outputs[f"q{int(q * 100)}"] = self.quantile_heads[i](context)
+
         outputs["attention_weights"] = attn_weights
-        
+        outputs["variable_weights"] = var_weights  # (B, T, 4) — interpretability
+
         return outputs
 
 
@@ -204,7 +361,7 @@ class TFTForecastingService:
     """
     Service wrapper for TFT forecaster with training and inference.
     """
-    
+
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -232,7 +389,7 @@ class TFTForecastingService:
         self.model = None
         self.region_map = {}
         self.data_source = None
-        
+
     def _load_training_data(
         self,
         *,
@@ -240,7 +397,7 @@ class TFTForecastingService:
         allow_fallback: bool = False,
     ) -> Tuple[pd.DataFrame, str]:
         """Load and prepare training data from hedonic indices (fallback to official metrics)."""
-        repo = MarketDataRepository(db_path=self.db_path)
+        repo = MarketFundamentalsRepository(db_path=self.db_path)
         try:
             source = str(data_source).strip().lower() if data_source else None
             if source == "official":
@@ -269,80 +426,131 @@ class TFTForecastingService:
         except Exception as e:
             logger.warning("tft_training_data_load_failed", error=str(e))
             return pd.DataFrame(), "hedonic"
-    
-    def train(self, epochs: int = 100, lr: float = 0.001):
-        """Train the TFT model"""
+
+    def _build_sequences(
+        self, df: pd.DataFrame
+    ) -> List[Dict[str, torch.Tensor]]:
+        """Build all training sequences across regions, returned as a list of dicts."""
+        sequences = []
+        for region in df["region_id"].unique():
+            region_df = df[df["region_id"] == region].sort_values("month_date")
+            if len(region_df) < self.config.context_length + 1:
+                continue
+
+            region_idx = self.region_map[region]
+            price_vals = region_df["hedonic_index_sqm"].values.astype(np.float32)
+            inventory_vals = region_df["inventory_count"].fillna(0).values.astype(np.float32)
+            euribor_vals = region_df["euribor_12m"].fillna(3.0).values.astype(np.float32)
+            inflation_vals = region_df["inflation"].fillna(2.5).values.astype(np.float32)
+
+            for i in range(len(region_df) - self.config.context_length):
+                sl = slice(i, i + self.config.context_length)
+                sequences.append({
+                    "region_id": torch.tensor([region_idx]),
+                    "price_seq": torch.tensor(price_vals[sl]).unsqueeze(-1),
+                    "inventory_seq": torch.tensor(inventory_vals[sl]).unsqueeze(-1),
+                    "macro_seq": torch.tensor(
+                        np.stack([euribor_vals[sl], inflation_vals[sl]], axis=-1)
+                    ),
+                    "time_seq": torch.arange(self.config.context_length, dtype=torch.float32).unsqueeze(-1),
+                    "target": torch.tensor([price_vals[i + self.config.context_length]]),
+                })
+        return sequences
+
+    def train(self, epochs: int = 100, lr: float = 0.001, batch_size: int = 32):
+        """Train the TFT model with proper mini-batch training."""
         df, data_source = self._load_training_data(allow_fallback=True)
         self.data_source = data_source
-        
+
         if len(df) < 50:
             logger.warning("insufficient_data_for_tft", count=len(df), data_source=data_source)
             return
-        
+
         # Build region map
-        regions = df['region_id'].unique()
+        regions = df["region_id"].unique()
         self.region_map = {r: i for i, r in enumerate(regions)}
-        
+
         # Initialize model
         self.model = TFTForecaster(self.config, len(regions))
-        
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-        
-        # Quantile loss
-        def quantile_loss(pred, target, q):
-            errors = target - pred
-            return torch.max((q - 1) * errors, q * errors).mean()
-        
-        logger.info("tft_training_start", epochs=epochs, regions=len(regions))
-        
-        # Training loop (simplified - full implementation needs proper batching)
+
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.01)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+        # Build all sequences upfront
+        sequences = self._build_sequences(df)
+        if not sequences:
+            logger.warning("no_valid_sequences_for_tft")
+            return
+
+        logger.info(
+            "tft_training_start",
+            epochs=epochs,
+            regions=len(regions),
+            sequences=len(sequences),
+            params=sum(p.numel() for p in self.model.parameters()),
+        )
+
+        best_loss = float("inf")
+        patience_counter = 0
+        patience = 15
+
         for epoch in range(epochs):
-            total_loss = 0
-            
-            # For each region, create sequences
-            for region in regions:
-                region_df = df[df['region_id'] == region].sort_values('month_date')
-                
-                if len(region_df) < self.config.context_length + 1:
-                    continue
-                
-                # Create sequences
-                for i in range(len(region_df) - self.config.context_length):
-                    seq = region_df.iloc[i:i + self.config.context_length]
-                    target = region_df.iloc[i + self.config.context_length]['hedonic_index_sqm']
-                    
-                    # Prepare tensors
-                    region_id = torch.tensor([self.region_map[region]])
-                    price_seq = torch.tensor(seq['hedonic_index_sqm'].values, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-                    inventory_seq = torch.tensor(seq['inventory_count'].fillna(0).values, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-                    macro_seq = torch.tensor(
-                        np.stack([seq['euribor_12m'].fillna(3.0).values, seq['inflation'].fillna(2.5).values], axis=-1),
-                        dtype=torch.float32
-                    ).unsqueeze(0)
-                    time_seq = torch.arange(len(seq), dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-                    target_tensor = torch.tensor([target], dtype=torch.float32)
-                    
-                    # Forward
-                    outputs = self.model(region_id, price_seq, inventory_seq, macro_seq, time_seq)
-                    
-                    # Loss (for first horizon)
-                    loss = 0
-                    for q in self.config.quantiles:
-                        q_pred = outputs[f"q{int(q*100)}"][:, 0]
-                        loss += quantile_loss(q_pred, target_tensor, q)
-                    
-                    # Backward
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-                    
-                    total_loss += loss.item()
-            
+            self.model.train()
+            total_loss = 0.0
+
+            # Shuffle sequences
+            perm = np.random.permutation(len(sequences))
+
+            num_batches = 0
+            for batch_start in range(0, len(sequences), batch_size):
+                batch_indices = perm[batch_start : batch_start + batch_size]
+                batch = [sequences[i] for i in batch_indices]
+
+                # Collate batch
+                region_ids = torch.cat([s["region_id"] for s in batch])
+                price_seq = torch.stack([s["price_seq"] for s in batch])
+                inventory_seq = torch.stack([s["inventory_seq"] for s in batch])
+                macro_seq = torch.stack([s["macro_seq"] for s in batch])
+                time_seq = torch.stack([s["time_seq"] for s in batch])
+                targets = torch.cat([s["target"] for s in batch])
+
+                outputs = self.model(region_ids, price_seq, inventory_seq, macro_seq, time_seq)
+
+                loss = torch.tensor(0.0)
+                for q in self.config.quantiles:
+                    q_key = f"q{int(q * 100)}"
+                    q_pred = outputs[q_key][:, 0]  # first horizon
+                    errors = targets - q_pred
+                    loss = loss + torch.where(
+                        errors >= 0, q * errors, (q - 1) * errors
+                    ).mean()
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                optimizer.step()
+
+                total_loss += loss.item()
+                num_batches += 1
+
+            scheduler.step()
+            avg_loss = total_loss / max(num_batches, 1)
+
+            # Early stopping
+            if avg_loss < best_loss - 1e-4:
+                best_loss = avg_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+
             if epoch % 10 == 0:
-                logger.info("tft_training_progress", epoch=epoch, loss=total_loss)
-        
+                logger.info("tft_training_progress", epoch=epoch, loss=f"{avg_loss:.4f}")
+
+            if patience_counter >= patience:
+                logger.info("tft_early_stopping", epoch=epoch)
+                break
+
         # Save model
-        # IMPORTANT: avoid pickling custom classes in checkpoints (PyTorch 2.6+ safe loading).
         if hasattr(self.config, "model_dump"):
             config_payload = self.config.model_dump()
         elif hasattr(self.config, "__dict__"):
@@ -355,21 +563,21 @@ class TFTForecastingService:
             'config': config_payload,
             'data_source': self.data_source,
         }, self.model_path)
-        
+
         logger.info("tft_training_complete", model_path=self.model_path)
-    
+
     def predict(self, region_id: str, current_value: float) -> Dict[str, float]:
         """
         Generate predictions for a region.
-        
+
         Returns dict with quantile predictions for each horizon.
         """
         if self.model is None:
             self._load_model()
-        
+
         if self.model is None:
             return {}
-        
+
         # Get recent history
         data_source = self.data_source or "hedonic"
         df, _ = self._load_training_data(data_source=data_source, allow_fallback=False)
@@ -394,7 +602,7 @@ class TFTForecastingService:
                 region_key = fallback_key
             else:
                 return {}
-        
+
         # Prepare tensors
         region_idx = self.region_map.get(region_key)
         if region_idx is None:
@@ -404,7 +612,7 @@ class TFTForecastingService:
             else:
                 region_idx = 0
         region_tensor = torch.tensor([region_idx])
-        
+
         price_seq = torch.tensor(region_df['hedonic_index_sqm'].values, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
         inventory_seq = torch.tensor(region_df['inventory_count'].fillna(0).values, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
         macro_seq = torch.tensor(
@@ -412,45 +620,46 @@ class TFTForecastingService:
             dtype=torch.float32
         ).unsqueeze(0)
         time_seq = torch.arange(len(region_df), dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-        
+
         # Predict
         self.model.eval()
         with torch.no_grad():
             outputs = self.model(region_tensor, price_seq, inventory_seq, macro_seq, time_seq)
-        
+
         # Scale predictions to property value
         current_index = region_df['hedonic_index_sqm'].iloc[-1]
         results = {}
-        
+
         for q in self.config.quantiles:
             q_key = f"q{int(q*100)}"
             pred_indices = outputs[q_key].squeeze().numpy()
-            
+
             for i, h in enumerate(self.config.prediction_horizons):
                 growth_ratio = pred_indices[i] / current_index if current_index > 0 else 1.0
                 results[f"{q_key}_m{h}"] = current_value * growth_ratio
-        
+
         return results
-    
+
     def _load_model(self):
         """Load trained model from disk"""
         try:
             try:
                 checkpoint = torch.load(self.model_path, map_location="cpu")
             except Exception as e:
-                # PyTorch 2.6 defaults `weights_only=True` and may reject older checkpoints
-                # that contain custom Python objects. Fall back to full load for local files.
                 try:
-                    # Older checkpoints may have pickled config as `__main__.TFTConfig` when trained
-                    # by running this module as a script. Inject the class into __main__ so pickle
-                    # can resolve it.
                     try:
                         import __main__ as main_module
                         if not hasattr(main_module, "TFTConfig"):
                             setattr(main_module, "TFTConfig", TFTConfig)
                     except Exception:
                         pass
-                    checkpoint = torch.load(self.model_path, weights_only=False, map_location="cpu")
+                    checkpoint = torch.load(
+                        self.model_path,
+                        weights_only=False,
+                        map_location="cpu",
+                    )
+                    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
+                        raise ValueError("invalid_checkpoint_structure")
                 except TypeError:
                     raise e
 

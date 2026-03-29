@@ -59,10 +59,20 @@ def temp_db():
     """)
     
     cursor.execute("""
-        CREATE TABLE hedonic_indices (
+        CREATE TABLE market_fundamentals (
             id TEXT PRIMARY KEY,
-            region_id TEXT,
-            month_date DATE,
+            region_id TEXT NOT NULL,
+            month_date DATE NOT NULL,
+            source TEXT NOT NULL,
+            price_index_sqm FLOAT,
+            rent_index_sqm FLOAT,
+            inventory_count INT,
+            new_listings_count INT,
+            sold_count INT,
+            absorption_rate FLOAT,
+            median_dom INT,
+            price_cut_share FLOAT,
+            volatility_3m FLOAT,
             hedonic_index_sqm FLOAT,
             raw_median_sqm FLOAT,
             r_squared FLOAT,
@@ -102,16 +112,22 @@ def temp_db():
         INSERT INTO listings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, listings)
     
-    # Insert pre-computed hedonic indices
+    # Insert pre-computed hedonic indices into market_fundamentals with source='hedonic'
     indices = [
-        ("all|2024-01", "all", "2024-01", 3000.0, 2900.0, 0.85, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
-        ("all|2024-02", "all", "2024-02", 3100.0, 3000.0, 0.87, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
-        ("all|2024-03", "all", "2024-03", 3200.0, 3100.0, 0.86, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
-        ("all|2024-06", "all", "2024-06", 3300.0, 3200.0, 0.88, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("hedonic|all|2024-01", "all", "2024-01", "hedonic", None, None, None, None, None, None, None, None, None, 3000.0, 2900.0, 0.85, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("hedonic|all|2024-02", "all", "2024-02", "hedonic", None, None, None, None, None, None, None, None, None, 3100.0, 3000.0, 0.87, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("hedonic|all|2024-03", "all", "2024-03", "hedonic", None, None, None, None, None, None, None, None, None, 3200.0, 3100.0, 0.86, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
+        ("hedonic|all|2024-06", "all", "2024-06", "hedonic", None, None, None, None, None, None, None, None, None, 3300.0, 3200.0, 0.88, 20, 2, "{}", datetime(2024, 6, 1).isoformat()),
     ]
-    
+
     cursor.executemany("""
-        INSERT INTO hedonic_indices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO market_fundamentals (
+            id, region_id, month_date, source, price_index_sqm, rent_index_sqm,
+            inventory_count, new_listings_count, sold_count, absorption_rate,
+            median_dom, price_cut_share, volatility_3m, hedonic_index_sqm,
+            raw_median_sqm, r_squared, n_observations, n_neighborhoods,
+            coefficients, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, indices)
     
     conn.commit()

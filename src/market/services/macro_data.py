@@ -6,7 +6,7 @@ import re
 import unicodedata
 from src.platform.config import DEFAULT_DB_PATH
 from src.platform.db.base import resolve_db_url
-from src.market.repositories.macro_indicators import MacroIndicatorsRepository
+from src.market.repositories.macro_context import MacroContextRepository
 from src.platform.utils.stealth_requests import create_session, request_get
 
 logger = structlog.get_logger(__name__)
@@ -20,7 +20,7 @@ class MacroDataService:
     """
     def __init__(self, db_path: str = str(DEFAULT_DB_PATH), db_url: Optional[str] = None):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
-        self.repo = MacroIndicatorsRepository(db_url=self.db_url)
+        self.repo = MacroContextRepository(db_url=self.db_url)
         self.session = create_session(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
@@ -254,7 +254,7 @@ class MacroDataService:
             logger.warning("macro_data_empty_after_merge")
             return
 
-        self.repo.upsert_records(records)
+        self.repo.upsert_actuals(records)
         logger.info("macro_data_saved", months=len(records))
 
 if __name__ == "__main__":

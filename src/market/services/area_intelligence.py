@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from src.platform.config import DEFAULT_DB_PATH
-from src.market.repositories.area_intelligence import AreaIntelligenceRepository
+from src.market.repositories.area_signals import AreaSignalsRepository
 from src.platform.db.base import resolve_db_url
 from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.ine_ipv import IneIpvRepository
@@ -40,12 +40,11 @@ class AreaIntelligenceService:
     ):
         self.app_config = app_config or load_app_config_safe()
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
-        self.repo = AreaIntelligenceRepository(db_url=self.db_url)
+        self.repo = AreaSignalsRepository(db_url=self.db_url)
         self.eri_service = ERISignalsService(db_url=self.db_url, app_config=self.app_config)
         self.eri_repo = ERIMetricsRepository(db_url=self.db_url)
         self.ine_repo = IneIpvRepository(db_url=self.db_url)
         self.canonicalizer = RegistryCanonicalizer(app_config=self.app_config)
-        self.repo.ensure_table()
 
     def get_area_indicators(self, area_id: str, country_code: Optional[str] = None) -> Dict[str, Any]:
         """

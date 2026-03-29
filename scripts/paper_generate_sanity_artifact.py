@@ -24,10 +24,20 @@ def _make_temp_db(path: Path) -> None:
     cur = conn.cursor()
     cur.execute(
         """
-        CREATE TABLE hedonic_indices (
+        CREATE TABLE market_fundamentals (
             id TEXT PRIMARY KEY,
-            region_id TEXT,
-            month_date DATE,
+            region_id TEXT NOT NULL,
+            month_date DATE NOT NULL,
+            source TEXT NOT NULL,
+            price_index_sqm FLOAT,
+            rent_index_sqm FLOAT,
+            inventory_count INT,
+            new_listings_count INT,
+            sold_count INT,
+            absorption_rate FLOAT,
+            median_dom INT,
+            price_cut_share FLOAT,
+            volatility_3m FLOAT,
             hedonic_index_sqm FLOAT,
             raw_median_sqm FLOAT,
             r_squared FLOAT,
@@ -39,12 +49,12 @@ def _make_temp_db(path: Path) -> None:
         """
     )
     rows = [
-        ("all|2024-01", "all", "2024-01", 3000.0, 2900.0, 0.85, 20, 2, "{}", "2024-06-01"),
-        ("all|2024-06", "all", "2024-06", 3300.0, 3200.0, 0.88, 20, 2, "{}", "2024-06-01"),
+        ("hedonic|all|2024-01", "all", "2024-01", "hedonic", None, None, None, None, None, None, None, None, None, 3000.0, 2900.0, 0.85, 20, 2, "{}", "2024-06-01"),
+        ("hedonic|all|2024-06", "all", "2024-06", "hedonic", None, None, None, None, None, None, None, None, None, 3300.0, 3200.0, 0.88, 20, 2, "{}", "2024-06-01"),
     ]
     cur.executemany(
         """
-        INSERT INTO hedonic_indices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO market_fundamentals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )

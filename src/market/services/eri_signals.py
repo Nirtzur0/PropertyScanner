@@ -10,7 +10,7 @@ from src.market.repositories.eri_metrics import ERIMetricsRepository
 from src.market.repositories.it_registry_metrics import ItalyRegistryMetricsRepository
 from src.market.repositories.uk_registry_metrics import UKRegistryMetricsRepository
 from src.market.repositories.registry_metrics import RegistryMetricsRepository
-from src.market.repositories.market_indices import MarketIndicesRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 from src.market.services.registry_canonical import RegistryCanonicalizer
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
@@ -46,7 +46,7 @@ class ERISignalsService:
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.lag_days = int(lag_days)
         self.trailing_years = int(trailing_years)
-        self.market_repo = MarketIndicesRepository(db_url=self.db_url)
+        self.market_repo = MarketFundamentalsRepository(db_url=self.db_url)
         self.app_config = app_config or load_app_config_safe()
         self.canonicalizer = RegistryCanonicalizer(app_config=self.app_config)
         self.providers = self._build_providers()
@@ -110,7 +110,7 @@ class ERISignalsService:
             # Fallback to internal proxy
             try:
                 proxy_key = proxy_region_id or region_id
-                proxy = self.market_repo.fetch_series(proxy_key)
+                proxy = self.market_repo.fetch_market_series(proxy_key)
                 if not proxy.empty:
                     df = proxy.rename(
                         columns={

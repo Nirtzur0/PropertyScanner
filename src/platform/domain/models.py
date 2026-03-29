@@ -75,24 +75,35 @@ class PropertyValuation(Base):
     """
     Stores the result of the valuation pipeline.
     One listing can have multiple valuations over time (history).
+
+    Queryable evidence columns are denormalized from the full JSON ``evidence``
+    blob so that common analytical queries (e.g. "which valuations lost
+    coverage?") can run without JSON extraction.
     """
     __tablename__ = "valuations"
-    
-    id = Column(String, primary_key=True) # UUID
+
+    id = Column(String, primary_key=True)  # UUID
     listing_id = Column(String, ForeignKey("listings.id"), index=True)
     model_version = Column(String, default="v1.0")
     created_at = Column(DateTime, default=utcnow)
-    
+
     # Core Outputs
     fair_value = Column(Float)
-    price_range_low = Column(Float)  # p10
-    price_range_high = Column(Float) # p90
+    price_range_low = Column(Float)   # p10
+    price_range_high = Column(Float)  # p90
     confidence_score = Column(Float)
-    
-    # Structured Evidence (JSON)
-    # Stores: comps used, adjustments, thesis, signals
-    evidence = Column(JSON) 
-    
+
+    # --- Denormalized evidence fields (queryable) ---
+    model_used = Column(String, nullable=True, index=True)         # "fusion" / "heuristic" / "tabular_ml"
+    comp_count = Column(Integer, nullable=True)                     # len(top_comps)
+    calibration_status = Column(String, nullable=True, index=True)  # "calibrated" / "bootstrap" / "uncalibrated"
+    anchor_price = Column(Float, nullable=True)
+    hedonic_fallback = Column(Boolean, nullable=True, default=False)
+    index_disagreement = Column(Boolean, nullable=True, default=False)
+
+    # Full structured evidence archive (JSON)
+    evidence = Column(JSON)
+
     listing = relationship("DBListing", backref="valuations")
 
 

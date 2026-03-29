@@ -17,7 +17,7 @@ from src.platform.config import DEFAULT_DB_PATH, TFT_MODEL_PATH
 from src.platform.domain.schema import ValuationProjection
 from src.market.services.area_intelligence import AreaIntelligenceService
 from src.platform.db.base import resolve_db_url
-from src.market.repositories.market_data import MarketDataRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +45,7 @@ class ForecastingService:
     ):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.area_intelligence = AreaIntelligenceService(db_url=self.db_url)
-        self.market_repo = MarketDataRepository(db_url=self.db_url)
+        self.market_repo = MarketFundamentalsRepository(db_url=self.db_url)
         self.min_history_months = max(6, int(min_history_months))
         self.return_window_months = max(self.min_history_months, int(return_window_months))
         self.index_source = index_source.strip().lower()

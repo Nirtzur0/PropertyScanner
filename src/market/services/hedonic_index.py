@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from src.platform.config import DEFAULT_DB_PATH
 from src.platform.db.base import resolve_db_url
-from src.market.repositories.hedonic_indices import HedonicIndicesRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 from src.listings.repositories.listings import ListingsRepository
 from src.platform.storage import StorageService
 from src.platform.settings import AppConfig
@@ -73,7 +73,7 @@ class HedonicIndexService:
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.storage = storage or StorageService(db_url=self.db_url)
         self.listings_repo = ListingsRepository(storage=self.storage)
-        self.repo = HedonicIndicesRepository(storage=self.storage)
+        self.repo = MarketFundamentalsRepository(storage=self.storage)
         
         # Feature columns for hedonic model
         self.feature_cols = [
@@ -351,7 +351,7 @@ class HedonicIndexService:
         return n_obs >= int(self.config.min_monthly_obs) and r_squared >= float(self.config.min_monthly_r2)
 
     def _get_hedonic_index(self, region_id: str, month_date: str) -> Optional[IndexResult]:
-        row = self.repo.fetch_index(region_id, month_date)
+        row = self.repo.fetch_hedonic_index(region_id, month_date)
         if row:
             value, r_squared, n_observations = row
             quality_ok = self._index_quality_ok(r_squared, n_observations)
@@ -366,7 +366,7 @@ class HedonicIndexService:
             )
 
         if region_id != "all":
-            row = self.repo.fetch_index("all", month_date)
+            row = self.repo.fetch_hedonic_index("all", month_date)
             if row:
                 value, r_squared, n_observations = row
                 return IndexResult(
@@ -378,7 +378,7 @@ class HedonicIndexService:
                     source="hedonic",
                 )
 
-        latest = self.repo.fetch_latest_index(region_id)
+        latest = self.repo.fetch_latest_hedonic_index(region_id)
         if latest:
             value, r_squared, n_observations, latest_month = latest
             return IndexResult(
@@ -392,7 +392,7 @@ class HedonicIndexService:
             )
 
         if region_id != "all":
-            latest_global = self.repo.fetch_latest_index("all")
+            latest_global = self.repo.fetch_latest_hedonic_index("all")
             if latest_global:
                 value, r_squared, n_observations, latest_month = latest_global
                 return IndexResult(
@@ -600,7 +600,7 @@ class HedonicIndexService:
         Returns:
             pd.Series with month index and hedonic values
         """
-        df = self.repo.fetch_index_series(region_id, start_month, end_month)
+        df = self.repo.fetch_hedonic_series(region_id, start_month, end_month)
         
         if df.empty:
             return pd.Series(dtype=float)
@@ -715,47 +715,29 @@ class HedonicIndexService:
             return
 
         region_id = region_name.lower().strip() if region_name else "all"
-        has_nh = self.repo.has_column("hedonic_indices", "n_neighborhoods")
         updated_at = utcnow().isoformat()
 
         records = []
-        
         for _, row in df.iterrows():
             month_str = str(row['month'])
-            record_id = f"{region_id}|{month_str}"
+            record_id = f"hedonic|{region_id}|{month_str}"
             month_date = f"{month_str}-01"
-            n_neighborhoods = int(row.get('n_neighborhoods', 1))
-            if has_nh:
-                records.append(
-                    (
-                        record_id,
-                        region_id,
-                        month_date,
-                        float(row['hedonic_index']),
-                        float(row['raw_median']),
-                        float(row['r_squared']),
-                        int(row['n_obs']),
-                        n_neighborhoods,
-                        str(row['coefficients']),
-                        updated_at,
-                    )
+            records.append(
+                (
+                    record_id,
+                    region_id,
+                    month_date,
+                    float(row['hedonic_index']),
+                    float(row['raw_median']),
+                    float(row['r_squared']),
+                    int(row['n_obs']),
+                    int(row.get('n_neighborhoods', 1)),
+                    str(row['coefficients']),
+                    updated_at,
                 )
-            else:
-                records.append(
-                    (
-                        record_id,
-                        region_id,
-                        month_date,
-                        float(row['hedonic_index']),
-                        float(row['raw_median']),
-                        float(row['r_squared']),
-                        int(row['n_obs']),
-                        str(row['coefficients']),
-                        updated_at,
-                    )
-                )
+            )
 
-        self.repo.upsert_indices(records)
+        self.repo.upsert_hedonic_records(records)
         
         logger.info("hedonic_indices_saved", region=region_id, count=len(df))
 

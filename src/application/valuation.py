@@ -1,3 +1,21 @@
+"""
+Valuation services for Property Scanner.
+
+Architecture:
+    Two valuation tiers share the same interface (ValuationProtocol):
+
+    1. ComparableBaselineValuationService  (this module)
+       Lightweight heuristic: weighted-quantile of local comps, no ML.
+       Always available. Used by the explore grid for inline estimates
+       and as the default /api/v1/valuations endpoint.
+
+    2. ValuationService  (src.valuation.services.valuation)
+       SOTA V3: fusion model + time-adjusted comps + hedonic index +
+       conformal calibration. Requires trained model artifacts on disk.
+       Registered in the container as `full_valuation` when artifacts exist.
+
+    Both return DealAnalysis and accept the same core arguments.
+"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -7,7 +25,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from src.application.serving import MAX_PRICE, MAX_SURFACE_AREA, MIN_PRICE, MIN_SURFACE_AREA
+from src.platform.domain.constraints import DOMAIN
+from src.platform.domain.protocols import ValuationProtocol  # noqa: F401 — re-exported for backward compat
 from src.listings.source_ids import canonicalize_source_id
 from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.platform.domain.models import DBListing
@@ -154,11 +173,11 @@ class ComparableBaselineValuationService:
                 .filter(DBListing.city == target.location.city)
                 .filter(DBListing.listing_type == (target.listing_type or "sale"))
                 .filter(DBListing.price.isnot(None))
-                .filter(DBListing.price >= MIN_PRICE)
-                .filter(DBListing.price <= MAX_PRICE)
+                .filter(DBListing.price >= DOMAIN.min_price)
+                .filter(DBListing.price <= DOMAIN.max_price)
                 .filter(DBListing.surface_area_sqm.isnot(None))
-                .filter(DBListing.surface_area_sqm >= MIN_SURFACE_AREA)
-                .filter(DBListing.surface_area_sqm <= MAX_SURFACE_AREA)
+                .filter(DBListing.surface_area_sqm >= DOMAIN.min_surface_area)
+                .filter(DBListing.surface_area_sqm <= DOMAIN.max_surface_area)
             )
             if target.property_type:
                 query = query.filter(DBListing.property_type == str(getattr(target.property_type, "value", target.property_type)))
@@ -182,7 +201,7 @@ class ComparableBaselineValuationService:
             ratio = row_sqm / float(target.surface_area_sqm)
             if ratio < 0.7 or ratio > 1.3:
                 continue
-            if target.bedrooms is not None and row.bedrooms is not None and abs(int(row.bedrooms) - int(target.bedrooms)) > 1:
+            if target.bedrooms is not None and row.bedrooms is not None and abs(round(float(row.bedrooms)) - round(float(target.bedrooms))) > 1:
                 continue
             distance = self._distance_km(
                 target.location.lat if target.location else None,

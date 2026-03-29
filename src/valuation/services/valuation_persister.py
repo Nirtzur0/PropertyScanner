@@ -132,16 +132,24 @@ class ValuationPersister:
         confidence, confidence_components = self._derive_confidence(analysis)
         evidence_dict["confidence_components"] = confidence_components
         
+        # Denormalized evidence fields for queryable analytics
+        ev = analysis.evidence
         val = PropertyValuation(
             id=str(uuid.uuid4()),
             listing_id=listing_id,
             model_version=model_version,
             created_at=utcnow(),
             fair_value=analysis.fair_value_estimate,
-            price_range_low=analysis.fair_value_estimate * 0.9, # precise range is in evidence projections if needed
+            price_range_low=analysis.fair_value_estimate * 0.9,
             price_range_high=analysis.fair_value_estimate * 1.1,
             confidence_score=confidence,
-            evidence=evidence_dict
+            model_used=ev.model_used if ev else None,
+            comp_count=len(ev.top_comps) if ev and ev.top_comps else None,
+            calibration_status=ev.calibration_status if ev else None,
+            anchor_price=ev.anchor_price if ev else None,
+            hedonic_fallback=ev.hedonic_fallback if ev else False,
+            index_disagreement=ev.index_disagreement if ev else False,
+            evidence=evidence_dict,
         )
         
         self.session.add(val)

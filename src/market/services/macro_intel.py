@@ -22,7 +22,7 @@ import structlog
 from src.platform.config import DEFAULT_DB_PATH
 from bs4 import BeautifulSoup
 from src.platform.agents.base import BaseAgent, AgentResponse
-from src.market.repositories.macro_scenarios import MacroScenariosRepository
+from src.market.repositories.macro_context import MacroContextRepository
 from src.platform.utils.stealth_requests import create_session, request_get
 from src.platform.utils.time import utcnow
 
@@ -106,7 +106,7 @@ class MacroEvidenceAgent(BaseAgent):
         super().__init__(name="MacroEvidence")
         self.db_path = db_path
         self.session = create_session("PropertyScanner/1.0 (Research; contact@example.com)")
-        self.scenario_repo = MacroScenariosRepository(db_path=db_path)
+        self.scenario_repo = MacroContextRepository(db_path=db_path)
     
     def run(self, input_payload: dict) -> AgentResponse:
         """
@@ -269,7 +269,7 @@ class MacroEvidenceAgent(BaseAgent):
                 }
             )
 
-        saved = self.scenario_repo.upsert_records(payloads)
+        saved = self.scenario_repo.upsert_forecasts(payloads)
         logger.info("macro_scenarios_saved", count=saved)
 
 

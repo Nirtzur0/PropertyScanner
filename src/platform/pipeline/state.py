@@ -4,10 +4,9 @@ from typing import Any, Dict, List, Optional
 import os
 
 from src.platform.settings import AppConfig, PathsConfig
-from src.market.repositories.hedonic_indices import HedonicIndicesRepository
 from src.listings.repositories.listings import ListingsRepository
-from src.market.repositories.macro_indicators import MacroIndicatorsRepository
-from src.market.repositories.market_indices import MarketIndicesRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
+from src.market.repositories.macro_context import MacroContextRepository
 from src.platform.db.base import resolve_db_url
 from src.platform.utils.time import utcfromtimestamp, utcnow
 
@@ -71,9 +70,8 @@ class PipelineStateService:
             db_path = str(self.paths.default_db_path)
         resolved = resolve_db_url(db_url=db_url, db_path=db_path)
         self.listings_repo = ListingsRepository(db_url=resolved)
-        self.market_indices_repo = MarketIndicesRepository(db_url=resolved)
-        self.hedonic_repo = HedonicIndicesRepository(db_url=resolved)
-        self.macro_repo = MacroIndicatorsRepository(db_url=resolved)
+        self.market_repo = MarketFundamentalsRepository(db_url=resolved)
+        self.macro_repo = MacroContextRepository(db_url=resolved)
         self.policy = policy or PipelinePolicy()
 
     def snapshot(self) -> PipelineState:
@@ -147,9 +145,9 @@ class PipelineStateService:
 
     def _market_data_timestamp(self) -> Optional[datetime]:
         timestamps = [
-            self.market_indices_repo.get_last_updated_at(),
-            self.hedonic_repo.get_last_updated_at(),
-            self.macro_repo.get_last_updated_at(),
+            self.market_repo.get_market_last_updated_at(),
+            self.market_repo.get_hedonic_last_updated_at(),
+            self.macro_repo.get_actuals_last_updated_at(),
         ]
         timestamps = [t for t in timestamps if t is not None]
         if not timestamps:

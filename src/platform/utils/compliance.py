@@ -145,20 +145,31 @@ class RateLimiter:
             
             self._last_request_time[domain] = time.time()
 
+def _load_whitelist_domains() -> list[str]:
+    """Load whitelist from config, falling back to built-in defaults."""
+    try:
+        from src.platform.utils.config import load_app_config_safe
+
+        app_config = load_app_config_safe()
+        return list(app_config.compliance.whitelist_domains)
+    except Exception:
+        return [
+            "photon.komoot.io",
+            "nominatim.openstreetmap.org",
+            "www.pisos.com",
+            "pisos.com",
+        ]
+
+
 class RobotsTxtValidator:
     """
     Validates URLs against robots.txt. Caches parsers per domain.
     """
-    def __init__(self, user_agent: str = "*"):
+    def __init__(self, user_agent: str = "*", whitelist: list[str] | None = None):
         self.user_agent = user_agent
         self._parsers: Dict[str, urllib.robotparser.RobotFileParser] = {}
         self._lock = Lock()
-        self._whitelist = [
-            "photon.komoot.io",
-            "nominatim.openstreetmap.org",
-            "www.pisos.com", 
-            "pisos.com" 
-        ]
+        self._whitelist = whitelist if whitelist is not None else _load_whitelist_domains()
 
     def _path_policy_decision(self, path: str, policy: CompliancePolicy) -> Optional[ComplianceDecision]:
         if policy.disallowed_paths and _path_matches(path, policy.disallowed_paths):
@@ -185,11 +196,10 @@ class RobotsTxtValidator:
             rp = urllib.robotparser.RobotFileParser()
             rp.set_url(robots_url)
             try:
-                # SSL context to ignore certificate errors (e.g. self-signed or missing intermediate)
+                # Use default SSL context with certificate verification enabled.
+                # Falls back gracefully on SSL errors via the except block below.
                 ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                
+
                 with urllib.request.urlopen(robots_url, timeout=10, context=ctx) as response:
                     data = response.read().decode("utf-8", errors="ignore")
                     rp.parse(data.splitlines())
@@ -288,11 +298,13 @@ class ComplianceManager:
             logger.info("skipped_seen_url", url=url)
             return ComplianceDecision(allowed=False, reason="seen_url")
 
+        robots_reason = None
         if self.enforce_robots:
             decision = self.robots_validator.assess_fetch(url, explicit_policy=self.source_policy)
             if not decision.allowed:
                 logger.warning("blocked_by_robots_txt", url=url, reason=decision.reason)
                 return decision
-        
+            robots_reason = decision.reason
+
         self.rate_limiter.wait_for_slot(url, period_seconds=rate_limit_seconds)
-        return ComplianceDecision(allowed=True, reason=decision.reason if self.enforce_robots else None)
+        return ComplianceDecision(allowed=True, reason=robots_reason)

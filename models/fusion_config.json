@@ -1,18 +1,17 @@
 {
   "comp_cache_mode": "auto",
-  "comp_cache_path": "/Users/nirtzur/Documents/projects/property_scanner/models/comp_cache.json",
+  "comp_cache_path": null,
   "geo_split_key": "city",
-  "hidden_dim": 64,
+  "hidden_dim": 128,
+  "num_heads": 4,
+  "num_attention_layers": 2,
+  "dropout": 0.15,
   "image_dim": 512,
-  "label_source": "auto",
-  "listing_type": "sale",
+  "label_source": "ask",
+  "listing_type": "all",
   "normalize_to": "latest",
-  "num_heads": 2,
   "retriever": {
-    "index_fingerprint": {
-      "mtime": 1768844879,
-      "size": 96
-    },
+    "index_fingerprint": null,
     "index_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_index.lancedb",
     "metadata_path": "/Users/nirtzur/Documents/projects/property_scanner/data/vector_metadata.json",
     "model_name": "all-MiniLM-L6-v2",

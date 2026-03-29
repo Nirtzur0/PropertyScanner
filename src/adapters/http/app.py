@@ -19,8 +19,9 @@ from src.adapters.http.schemas import (
     WatchlistRequest,
 )
 from src.application.container import get_container
-from src.application.workbench import WorkbenchFilters
+from src.application.workbench import WorkbenchFilters, get_layers
 from src.core.runtime import load_runtime_config
+from src.platform.observability import trace_span
 from src.platform.utils.serialize import model_to_dict
 
 
@@ -87,7 +88,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "app": runtime_config.app.name,
-        "db_path": str(runtime_config.paths.db_path),
+        "db_path": Path(runtime_config.paths.db_path).name,
     }
 
 
@@ -114,6 +115,7 @@ def list_listings(
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
+    limit = min(limit, 500)
     return get_container().listings.list_listings(
         source_id=source_id,
         city=city,
@@ -150,16 +152,18 @@ def create_valuation(request: ValuationRequest) -> dict:
         for item in source_audit_report.get("sources", [])
         if item.get("source_id")
     }
+    # Use full V3 valuation when available, fall back to baseline
+    valuation_svc = container.full_valuation or container.valuation
     try:
         if request.listing_id:
-            analysis = container.valuation.evaluate_listing_id(
+            analysis = valuation_svc.evaluate_listing_id(
                 request.listing_id,
                 persist=request.persist,
                 source_status_by_source=source_status_by_source,
                 source_metrics_by_source=source_metrics_by_source,
             )
         else:
-            analysis = container.valuation.evaluate_listing(
+            analysis = valuation_svc.evaluate_listing(
                 request.listing,
                 persist=request.persist,
                 source_status_by_source=source_status_by_source,
@@ -260,6 +264,7 @@ def list_coverage_reports(limit: int = 50) -> dict:
 
 @api_router.get("/data-quality-events")
 def list_data_quality_events(limit: int = 100) -> dict:
+    limit = min(limit, 500)
     items = get_container().reporting.list_data_quality_events(limit=limit)
     return {"total": len(items), "items": items}
 
@@ -341,7 +346,7 @@ def list_comp_reviews(listing_id: str | None = None) -> dict:
 @api_router.get("/comp-reviews/{listing_id}/workspace")
 def get_comp_review_workspace(listing_id: str) -> dict:
     try:
-        return get_container().workbench.comp_review_workspace(listing_id)
+        return get_container().comp_review_service.comp_review_workspace(listing_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -378,7 +383,8 @@ def workbench_explore(
     limit: int = 150,
     offset: int = 0,
 ) -> dict:
-    return get_container().workbench.explore(
+    limit = min(limit, 500)
+    return get_container().explore.explore(
         filters=WorkbenchFilters(
             country=country,
             city=city,
@@ -402,14 +408,14 @@ def workbench_explore(
 @api_router.get("/workbench/listings/{listing_id}/context")
 def workbench_listing_context(listing_id: str) -> dict:
     try:
-        return get_container().workbench.listing_context(listing_id)
+        return get_container().listing_context_service.listing_context(listing_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @api_router.get("/workbench/layers")
 def workbench_layers() -> dict:
-    return get_container().workbench.layers()
+    return get_layers(get_container().reporting)
 
 
 app.include_router(api_router)
@@ -428,7 +434,9 @@ def frontend_spa(full_path: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="not_found")
     if not _FRONTEND_DIST.exists():
         raise HTTPException(status_code=404, detail="frontend_not_built")
-    requested = _FRONTEND_DIST / full_path
+    requested = (_FRONTEND_DIST / full_path).resolve()
+    if not str(requested).startswith(str(_FRONTEND_DIST.resolve())):
+        raise HTTPException(status_code=400, detail="invalid_path")
     if requested.exists() and requested.is_file():
         return FileResponse(requested)
     return FileResponse(_FRONTEND_DIST / "index.html")

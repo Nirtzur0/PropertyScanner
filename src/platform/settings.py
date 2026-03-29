@@ -324,6 +324,19 @@ class LLMConfig(BaseConfigModel):
         return self
 
 
+class ComplianceDefaultsConfig(BaseConfigModel):
+    """Default compliance whitelist domains (bypasses robots.txt check)."""
+
+    whitelist_domains: List[str] = Field(
+        default_factory=lambda: [
+            "photon.komoot.io",
+            "nominatim.openstreetmap.org",
+            "www.pisos.com",
+            "pisos.com",
+        ]
+    )
+
+
 class AppConfig(BaseConfigModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
@@ -340,3 +353,4 @@ class AppConfig(BaseConfigModel):
     image_selector: ImageSelectorConfig = Field(default_factory=ImageSelectorConfig)
     dataframe: DataFrameConfig = Field(default_factory=DataFrameConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    compliance: ComplianceDefaultsConfig = Field(default_factory=ComplianceDefaultsConfig)

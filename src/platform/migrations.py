@@ -8,7 +8,7 @@ from src.platform.config import DEFAULT_DB_PATH
 from src.listings.source_ids import canonical_source_map
 
 logger = structlog.get_logger(__name__)
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 def run_migrations(db_path=str(DEFAULT_DB_PATH)):
     """
@@ -660,7 +660,297 @@ def run_migrations(db_path=str(DEFAULT_DB_PATH)):
         "listing_observations",
     ):
         _canonicalize_source_ids(table_name)
-        
+
+    # =========================================================================
+    # V2: Consolidated market intelligence tables
+    # =========================================================================
+
+    # 1. market_fundamentals = market_indices + hedonic_indices
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS market_fundamentals (
+            id TEXT PRIMARY KEY,
+            region_id TEXT NOT NULL,
+            month_date DATE NOT NULL,
+            source TEXT NOT NULL,
+            price_index_sqm FLOAT,
+            rent_index_sqm FLOAT,
+            inventory_count INT,
+            new_listings_count INT,
+            sold_count INT,
+            absorption_rate FLOAT,
+            median_dom INT,
+            price_cut_share FLOAT,
+            volatility_3m FLOAT,
+            hedonic_index_sqm FLOAT,
+            raw_median_sqm FLOAT,
+            r_squared FLOAT,
+            n_observations INT,
+            n_neighborhoods INT,
+            coefficients TEXT,
+            updated_at DATETIME
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_mf_region_date "
+        "ON market_fundamentals (region_id, month_date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_mf_source "
+        "ON market_fundamentals (source, region_id, month_date)"
+    )
+
+    # 2. macro_context = macro_indicators + macro_scenarios
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS macro_context (
+            id TEXT PRIMARY KEY,
+            date DATE NOT NULL,
+            context_type TEXT NOT NULL,
+            scenario_name TEXT,
+            source_id TEXT,
+            source_url TEXT,
+            horizon_year INT,
+            euribor_12m FLOAT,
+            ecb_deposit_rate FLOAT,
+            mortgage_rate_avg FLOAT,
+            inflation FLOAT,
+            unemployment_rate FLOAT,
+            idealista_index_madrid FLOAT,
+            idealista_index_national FLOAT,
+            gdp_growth FLOAT,
+            confidence_text TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_mc_type_date "
+        "ON macro_context (context_type, date)"
+    )
+
+    # 3. area_signals = area_intelligence (rename)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS area_signals (
+            area_id TEXT PRIMARY KEY,
+            last_updated DATETIME,
+            sentiment_score FLOAT,
+            sentiment_as_of DATETIME,
+            sentiment_credibility FLOAT,
+            future_development_score FLOAT,
+            development_as_of DATETIME,
+            development_credibility FLOAT,
+            news_summary TEXT,
+            top_keywords TEXT,
+            source_urls TEXT
+        )
+    """)
+
+    # --- Migrate data from old tables into new consolidated tables ---
+
+    def _migrate_market_indices_to_fundamentals() -> None:
+        if not _table_exists("market_indices"):
+            return
+        rows = conn.execute(
+            """
+            SELECT id, region_id, month_date,
+                   price_index_sqm, rent_index_sqm, inventory_count,
+                   new_listings_count, sold_count, absorption_rate,
+                   median_dom, price_cut_share, volatility_3m, updated_at
+            FROM market_indices
+            """
+        ).fetchall()
+        if not rows:
+            return
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO market_fundamentals
+            (id, region_id, month_date, source,
+             price_index_sqm, rent_index_sqm, inventory_count,
+             new_listings_count, sold_count, absorption_rate,
+             median_dom, price_cut_share, volatility_3m, updated_at)
+            VALUES (?, ?, ?, 'market', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    def _migrate_hedonic_indices_to_fundamentals() -> None:
+        if not _table_exists("hedonic_indices"):
+            return
+        cols = [c["name"] for c in conn.execute("PRAGMA table_info(hedonic_indices)").fetchall()]
+        has_nh = "n_neighborhoods" in [c[1] for c in conn.execute("PRAGMA table_info(hedonic_indices)").fetchall()]
+        rows = conn.execute(
+            """
+            SELECT id, region_id, month_date,
+                   hedonic_index_sqm, raw_median_sqm, r_squared,
+                   n_observations, {nh}, coefficients, updated_at
+            FROM hedonic_indices
+            """.format(nh="n_neighborhoods" if has_nh else "NULL as n_neighborhoods")
+        ).fetchall()
+        if not rows:
+            return
+        for row in rows:
+            rid, region_id, month_date, hedonic, raw_med, r2, n_obs, n_nh, coeff, upd = row
+            hedonic_id = f"hedonic|{region_id}|{month_date}" if not rid.startswith("hedonic|") else rid
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO market_fundamentals
+                (id, region_id, month_date, source,
+                 hedonic_index_sqm, raw_median_sqm, r_squared,
+                 n_observations, n_neighborhoods, coefficients, updated_at)
+                VALUES (?, ?, ?, 'hedonic', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (hedonic_id, region_id, month_date, hedonic, raw_med, r2, n_obs, n_nh, coeff, upd),
+            )
+
+    def _migrate_macro_indicators_to_context() -> None:
+        if not _table_exists("macro_indicators"):
+            return
+        col_names = [c[1] for c in conn.execute("PRAGMA table_info(macro_indicators)").fetchall()]
+        has_cpi = "spain_cpi" in col_names
+        has_unemp = "unemployment_rate" in col_names
+        has_mortgage = "mortgage_rate_avg" in col_names
+        rows = conn.execute(
+            """
+            SELECT date, euribor_12m, ecb_deposit_rate,
+                   {mortgage}, {cpi}, {unemp},
+                   idealista_index_madrid, idealista_index_national,
+                   updated_at
+            FROM macro_indicators
+            """.format(
+                mortgage="mortgage_rate_avg" if has_mortgage else "NULL",
+                cpi="spain_cpi" if has_cpi else "NULL",
+                unemp="unemployment_rate" if has_unemp else "NULL",
+            )
+        ).fetchall()
+        if not rows:
+            return
+        for row in rows:
+            dt, euribor, ecb, mortgage, cpi, unemp, ideal_mad, ideal_nat, upd = row
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO macro_context
+                (id, date, context_type, euribor_12m, ecb_deposit_rate,
+                 mortgage_rate_avg, inflation, unemployment_rate,
+                 idealista_index_madrid, idealista_index_national, updated_at)
+                VALUES (?, ?, 'actual', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (f"actual|{dt}", dt, euribor, ecb, mortgage, cpi, unemp, ideal_mad, ideal_nat, upd),
+            )
+
+    def _migrate_macro_scenarios_to_context() -> None:
+        if not _table_exists("macro_scenarios"):
+            return
+        col_names = [c[1] for c in conn.execute("PRAGMA table_info(macro_scenarios)").fetchall()]
+        has_source_id = "source_id" in col_names
+        has_horizon = "horizon_year" in col_names
+        has_retrieved = "retrieved_at" in col_names
+        rows = conn.execute(
+            """
+            SELECT date, scenario_name, source_url,
+                   {source_id}, {horizon},
+                   euribor_12m_forecast, inflation_forecast,
+                   gdp_growth_forecast, confidence_text,
+                   {retrieved}
+            FROM macro_scenarios
+            """.format(
+                source_id="source_id" if has_source_id else "NULL",
+                horizon="horizon_year" if has_horizon else "NULL",
+                retrieved="retrieved_at" if has_retrieved else "fetched_at",
+            )
+        ).fetchall()
+        if not rows:
+            return
+        for row in rows:
+            dt, scenario, url, src_id, horizon, euribor, inflation, gdp, conf, retrieved = row
+            scenario = scenario or "unknown"
+            src_id = src_id or ""
+            horizon = horizon or ""
+            row_id = f"forecast|{src_id}|{scenario}|{horizon}"
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO macro_context
+                (id, date, context_type, scenario_name, source_id, source_url,
+                 horizon_year, euribor_12m, inflation, gdp_growth,
+                 confidence_text, updated_at)
+                VALUES (?, ?, 'forecast', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (row_id, dt, scenario, src_id, url, horizon, euribor, inflation, gdp, conf, retrieved),
+            )
+
+    def _migrate_area_intelligence_to_signals() -> None:
+        if not _table_exists("area_intelligence"):
+            return
+        col_names = [c[1] for c in conn.execute("PRAGMA table_info(area_intelligence)").fetchall()]
+        has_as_of = "sentiment_as_of" in col_names
+        has_cred = "sentiment_credibility" in col_names
+        has_dev_as_of = "development_as_of" in col_names
+        has_dev_cred = "development_credibility" in col_names
+        rows = conn.execute(
+            """
+            SELECT area_id, last_updated, sentiment_score,
+                   {s_as_of}, {s_cred},
+                   future_development_score,
+                   {d_as_of}, {d_cred},
+                   news_summary, top_keywords, source_urls
+            FROM area_intelligence
+            """.format(
+                s_as_of="sentiment_as_of" if has_as_of else "NULL",
+                s_cred="sentiment_credibility" if has_cred else "NULL",
+                d_as_of="development_as_of" if has_dev_as_of else "NULL",
+                d_cred="development_credibility" if has_dev_cred else "NULL",
+            )
+        ).fetchall()
+        if not rows:
+            return
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO area_signals
+            (area_id, last_updated, sentiment_score,
+             sentiment_as_of, sentiment_credibility,
+             future_development_score,
+             development_as_of, development_credibility,
+             news_summary, top_keywords, source_urls)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    if current_version < 2:
+        _migrate_market_indices_to_fundamentals()
+        _migrate_hedonic_indices_to_fundamentals()
+        _migrate_macro_indicators_to_context()
+        _migrate_macro_scenarios_to_context()
+        _migrate_area_intelligence_to_signals()
+
+        # Verify migration succeeded before dropping old tables
+        def _new_table_has_data(name: str) -> bool:
+            row = conn.execute(f"SELECT COUNT(1) FROM {name}").fetchone()
+            return bool(row and row[0] and int(row[0]) > 0)
+
+        def _old_table_has_data(name: str) -> bool:
+            if not _table_exists(name):
+                return False
+            row = conn.execute(f"SELECT COUNT(1) FROM {name}").fetchone()
+            return bool(row and row[0] and int(row[0]) > 0)
+
+        # Only drop old tables if new tables got data (or old were empty)
+        safe_to_drop = True
+        for old_name, new_name in [
+            ("market_indices", "market_fundamentals"),
+            ("hedonic_indices", "market_fundamentals"),
+            ("macro_indicators", "macro_context"),
+            ("macro_scenarios", "macro_context"),
+            ("area_intelligence", "area_signals"),
+        ]:
+            if _old_table_has_data(old_name) and not _new_table_has_data(new_name):
+                safe_to_drop = False
+                logger.warning("migration_v2_skip_drop", old=old_name, new=new_name)
+                break
+
+        if safe_to_drop:
+            for old_table in ("market_indices", "hedonic_indices", "macro_indicators", "macro_scenarios", "area_intelligence"):
+                if _table_exists(old_table):
+                    conn.execute(f"DROP TABLE IF EXISTS {old_table}")
+            logger.info("migration_v2_old_tables_dropped")
+
     conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
     conn.commit()
     conn.close()

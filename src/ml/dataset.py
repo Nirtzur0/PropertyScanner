@@ -29,7 +29,7 @@ from src.listings.services.feature_sanitizer import sanitize_listing_dict, sanit
 from src.platform.config import DEFAULT_DB_PATH, VECTOR_INDEX_PATH, VECTOR_METADATA_PATH, LANCEDB_PATH
 from src.platform.settings import AppConfig
 from src.listings.repositories.listings import ListingsRepository
-from src.market.repositories.market_indices import MarketIndicesRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 from src.platform.utils.time import utcnow
 
 logger = structlog.get_logger()
@@ -149,7 +149,7 @@ class PropertyDataset(Dataset):
         self.comp_cache_path = comp_cache_path
         self.comp_cache_mode = comp_cache_mode
         self.require_hedonic = bool(require_hedonic)
-        self.market_repo = MarketIndicesRepository(db_path=self.db_path)
+        self.market_repo = MarketFundamentalsRepository(db_path=self.db_path)
         self._market_index_cache: Dict[Tuple[str, str, str], Optional[float]] = {}
         
         # Load encoder

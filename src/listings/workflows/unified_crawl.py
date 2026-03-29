@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,17 +19,18 @@ from src.listings.crawl_contract import (
     primary_block_reason,
 )
 from src.listings.repositories.listings import ListingsRepository
-from src.listings.services.feature_fusion import FeatureFusionService
 from src.listings.services.listing_augmenter import ListingAugmentor
 from src.listings.services.observation_persistence import ObservationPersistenceService
 from src.listings.services.listing_persistence import ListingPersistenceService
 from src.listings.services.quality_gate import ListingQualityGate
 from src.listings.utils.seen_url_store import SeenUrlStore
+from src.listings.workflows.fusion_pool import FusionPool
 from src.platform.domain.models import SourceContractRun
 from src.platform.db.base import resolve_db_url
 from src.platform.domain.schema import RawListing, CanonicalListing
 from src.platform.settings import AppConfig
 from src.platform.storage import StorageService
+from src.platform.observability import trace_span
 from src.platform.utils.compliance import ComplianceManager
 from src.platform.utils.config import ConfigLoader, load_app_config_safe
 from src.platform.utils.time import utcnow
@@ -64,61 +64,6 @@ class UnifiedCrawlSettings:
     dedupe: bool = True
     persist_batch_size: int = 25
     seen_mode_prefix: str = "unified"
-
-
-class FusionPool:
-    def __init__(
-        self,
-        *,
-        app_config: AppConfig,
-        max_workers: int = 4,
-        run_vlm: bool = True,
-        vlm_concurrency: int = 1,
-    ) -> None:
-        self.run_vlm = run_vlm
-        self.max_workers = max(1, int(max_workers))
-        self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        self._local = threading.local()
-        self._vlm_semaphore = (
-            threading.BoundedSemaphore(vlm_concurrency)
-            if run_vlm and vlm_concurrency > 0
-            else None
-        )
-        self._app_config = app_config
-
-    def close(self) -> None:
-        self._executor.shutdown(wait=True)
-
-    def _fuse_one(self, listing: CanonicalListing) -> CanonicalListing:
-        service = getattr(self._local, "service", None)
-        if service is None:
-            service = FeatureFusionService(app_config=self._app_config)
-            self._local.service = service
-
-        if self.run_vlm and self._vlm_semaphore:
-            with self._vlm_semaphore:
-                return service.fuse(listing, run_vlm=True)
-        return service.fuse(listing, run_vlm=False)
-
-    def process(self, listings: List[CanonicalListing]) -> List[CanonicalListing]:
-        if not listings:
-            return []
-        if self.max_workers <= 1 or len(listings) == 1:
-            return [self._fuse_one(item) for item in listings]
-
-        indexed = list(enumerate(listings))
-        results: List[tuple[int, CanonicalListing]] = []
-        futures = {
-            self._executor.submit(self._fuse_one, item): idx for idx, item in indexed
-        }
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                results.append((idx, future.result()))
-            except Exception as exc:
-                logger.warning("fusion_failed", id=getattr(listings[idx], "id", None), error=str(exc))
-        results.sort(key=lambda item: item[0])
-        return [item[1] for item in results]
 
 
 class UnifiedCrawlRunner:
@@ -288,6 +233,10 @@ class UnifiedCrawlRunner:
         return [item for item in raw_listings if getattr(item, "url", None) in new_urls]
 
     def run_source(self, plan: UnifiedSourcePlan) -> Dict[str, Any]:
+        with trace_span("crawl.run_source", source_id=plan.source_id):
+            return self._run_source_inner(plan)
+
+    def _run_source_inner(self, plan: UnifiedSourcePlan) -> Dict[str, Any]:
         # Start from the configured source settings (config/sources.yaml), then apply any per-run overrides.
         source_cfg = next(
             (s for s in (self.app_config.sources.sources or []) if getattr(s, "id", None) == plan.source_id),

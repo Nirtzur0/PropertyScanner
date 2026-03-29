@@ -9,7 +9,7 @@ import structlog
 from src.platform.config import DEFAULT_DB_PATH
 from src.platform.db.base import resolve_db_url
 from src.listings.repositories.listings import ListingsRepository
-from src.market.repositories.market_indices import MarketIndicesRepository
+from src.market.repositories.market_fundamentals import MarketFundamentalsRepository
 from src.platform.settings import AppConfig
 from src.platform.utils.config import load_app_config_safe
 from src.platform.utils.time import utcnow
@@ -31,7 +31,7 @@ class MarketIndexService:
     ):
         self.db_url = resolve_db_url(db_url=db_url, db_path=db_path)
         self.listings_repo = ListingsRepository(db_url=self.db_url)
-        self.market_repo = MarketIndicesRepository(db_url=self.db_url)
+        self.market_repo = MarketFundamentalsRepository(db_url=self.db_url)
         self.app_config = app_config or load_app_config_safe()
         backend = self.app_config.dataframe.backend if self.app_config else "pandas"
         self._use_polars = backend == "polars"
@@ -128,7 +128,7 @@ class MarketIndexService:
                 )
 
             # Batch Upsert
-            self.market_repo.upsert_records(records)
+            self.market_repo.upsert_market_records(records)
 
             logger.info("indices_recomputed", records_count=len(records))
 
@@ -145,7 +145,6 @@ class MarketIndexService:
     ) -> List[tuple]:
         records = []
         updated_at = utcnow().isoformat()
-        has_updated = self.market_repo.has_column("market_indices", "updated_at")
 
         for region in regions:
             if not region:
@@ -202,37 +201,21 @@ class MarketIndexService:
                 dom_days = (month_end - (sale_df["listed_at"] if not sale_df.empty else month_df["listed_at"])).dt.days
                 median_dom = dom_days.median()
 
-                if has_updated:
-                    record = (
-                        f"{region}|{month_start.strftime('%Y-%m')}",
-                        region,
-                        month_start.strftime("%Y-%m-%d"),
-                        float(price_index),
-                        float(rent_index) if rent_index is not None and not pd.isna(rent_index) else None,
-                        int(inventory),
-                        int(new_count),
-                        int(sold_count),
-                        float(absorption),
-                        int(median_dom) if not pd.isna(median_dom) else 0,
-                        0.0,
-                        float(volatility),
-                        updated_at,
-                    )
-                else:
-                    record = (
-                        f"{region}|{month_start.strftime('%Y-%m')}",
-                        region,
-                        month_start.strftime("%Y-%m-%d"),
-                        float(price_index),
-                        float(rent_index) if rent_index is not None and not pd.isna(rent_index) else None,
-                        int(inventory),
-                        int(new_count),
-                        int(sold_count),
-                        float(absorption),
-                        int(median_dom) if not pd.isna(median_dom) else 0,
-                        0.0,
-                        float(volatility),
-                    )
+                record = (
+                    f"{region}|{month_start.strftime('%Y-%m')}",
+                    region,
+                    month_start.strftime("%Y-%m-%d"),
+                    float(price_index),
+                    float(rent_index) if rent_index is not None and not pd.isna(rent_index) else None,
+                    int(inventory),
+                    int(new_count),
+                    int(sold_count),
+                    float(absorption),
+                    int(median_dom) if not pd.isna(median_dom) else 0,
+                    0.0,
+                    float(volatility),
+                    updated_at,
+                )
                 records.append(record)
         return records
 
@@ -246,7 +229,6 @@ class MarketIndexService:
     ) -> List[tuple]:
         records: List[tuple] = []
         updated_at = utcnow().isoformat()
-        has_updated = self.market_repo.has_column("market_indices", "updated_at")
         df_pl = pl.from_pandas(df)
 
         for region in regions:
@@ -327,36 +309,20 @@ class MarketIndexService:
                     (pl.lit(month_end) - pl.col("listed_at")).dt.total_days().median()
                 ).item()
 
-                if has_updated:
-                    record = (
-                        f"{region}|{month_start.strftime('%Y-%m')}",
-                        region,
-                        month_start.strftime("%Y-%m-%d"),
-                        float(price_index),
-                        float(rent_index) if rent_index is not None else None,
-                        int(inventory),
-                        int(new_count),
-                        int(sold_count),
-                        float(absorption),
-                        int(median_dom) if median_dom is not None else 0,
-                        0.0,
-                        float(volatility),
-                        updated_at,
-                    )
-                else:
-                    record = (
-                        f"{region}|{month_start.strftime('%Y-%m')}",
-                        region,
-                        month_start.strftime("%Y-%m-%d"),
-                        float(price_index),
-                        float(rent_index) if rent_index is not None else None,
-                        int(inventory),
-                        int(new_count),
-                        int(sold_count),
-                        float(absorption),
-                        int(median_dom) if median_dom is not None else 0,
-                        0.0,
-                        float(volatility),
-                    )
+                record = (
+                    f"{region}|{month_start.strftime('%Y-%m')}",
+                    region,
+                    month_start.strftime("%Y-%m-%d"),
+                    float(price_index),
+                    float(rent_index) if rent_index is not None else None,
+                    int(inventory),
+                    int(new_count),
+                    int(sold_count),
+                    float(absorption),
+                    int(median_dom) if median_dom is not None else 0,
+                    0.0,
+                    float(volatility),
+                    updated_at,
+                )
                 records.append(record)
         return records

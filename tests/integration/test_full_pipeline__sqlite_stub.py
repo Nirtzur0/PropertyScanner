@@ -40,10 +40,11 @@ def pipeline_db_path(tmp_path) -> str:
         )
         conn.execute(
             """
-            CREATE TABLE market_indices (
+            CREATE TABLE market_fundamentals (
                 id TEXT PRIMARY KEY,
-                region_id TEXT,
-                month_date DATE,
+                region_id TEXT NOT NULL,
+                month_date DATE NOT NULL,
+                source TEXT NOT NULL,
                 price_index_sqm FLOAT,
                 rent_index_sqm FLOAT,
                 inventory_count INT,
@@ -53,23 +54,40 @@ def pipeline_db_path(tmp_path) -> str:
                 median_dom INT,
                 price_cut_share FLOAT,
                 volatility_3m FLOAT,
+                hedonic_index_sqm FLOAT,
+                raw_median_sqm FLOAT,
+                r_squared FLOAT,
+                n_observations INT,
+                n_neighborhoods INT,
+                coefficients TEXT,
                 updated_at DATETIME
             )
             """
         )
         conn.execute(
-            "CREATE INDEX ix_market_indices_region_date ON market_indices (region_id, month_date)"
+            "CREATE INDEX ix_mf_region_date ON market_fundamentals (region_id, month_date)"
         )
 
         conn.execute(
             """
-            CREATE TABLE macro_indicators (
-                date DATE PRIMARY KEY,
+            CREATE TABLE macro_context (
+                id TEXT PRIMARY KEY,
+                date DATE NOT NULL,
+                context_type TEXT NOT NULL,
+                scenario_name TEXT,
+                source_id TEXT,
+                source_url TEXT,
+                horizon_year INT,
                 euribor_12m FLOAT,
                 ecb_deposit_rate FLOAT,
-                spain_cpi FLOAT,
+                mortgage_rate_avg FLOAT,
+                inflation FLOAT,
+                unemployment_rate FLOAT,
                 idealista_index_madrid FLOAT,
-                idealista_index_national FLOAT
+                idealista_index_national FLOAT,
+                gdp_growth FLOAT,
+                confidence_text TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -93,11 +111,20 @@ def pipeline_db_path(tmp_path) -> str:
         )
 
         macros = [
-            ("2024-01-01", 3.6, 3.5, 3.0, 2000, 1800),
-            ("2024-02-01", 3.6, 3.5, 3.0, 2010, 1810),
-            ("2024-03-01", 3.5, 3.5, 2.9, 2020, 1820),
+            ("actual|2024-01-01", "2024-01-01", "actual", None, None, None, None, 3.6, 3.5, None, 3.0, None, 2000, 1800, None, None),
+            ("actual|2024-02-01", "2024-02-01", "actual", None, None, None, None, 3.6, 3.5, None, 3.0, None, 2010, 1810, None, None),
+            ("actual|2024-03-01", "2024-03-01", "actual", None, None, None, None, 3.5, 3.5, None, 2.9, None, 2020, 1820, None, None),
         ]
-        conn.executemany("INSERT INTO macro_indicators VALUES (?,?,?,?,?,?)", macros)
+        conn.executemany(
+            """
+            INSERT INTO macro_context (
+                id, date, context_type, scenario_name, source_id, source_url, horizon_year,
+                euribor_12m, ecb_deposit_rate, mortgage_rate_avg, inflation, unemployment_rate,
+                idealista_index_madrid, idealista_index_national, gdp_growth, confidence_text
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            macros,
+        )
 
         conn.commit()
     finally:
@@ -117,7 +144,7 @@ def test_market_indices__seeded_listings__creates_rows(pipeline_db_path):
     # Assert
     conn = sqlite3.connect(pipeline_db_path)
     try:
-        indices = pd.read_sql("SELECT * FROM market_indices WHERE region_id='madrid'", conn)
+        indices = pd.read_sql("SELECT * FROM market_fundamentals WHERE source='market' AND region_id='madrid'", conn)
     finally:
         conn.close()
 

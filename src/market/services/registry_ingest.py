@@ -363,7 +363,7 @@ class RegistryIngestService:
             if match:
                 year = int(match.group(1))
                 quarter = int(match.group(2))
-                month = quarter * 3
+                month = (quarter - 1) * 3 + 1
                 return datetime(year, month, 1)
 
         dt = pd.to_datetime(text, format="mixed", errors="coerce")

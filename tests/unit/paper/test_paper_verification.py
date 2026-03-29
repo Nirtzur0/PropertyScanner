@@ -36,10 +36,20 @@ def _make_temp_hedonic_db(path: Path, rows) -> None:
     cur = conn.cursor()
     cur.execute(
         """
-        CREATE TABLE hedonic_indices (
+        CREATE TABLE market_fundamentals (
             id TEXT PRIMARY KEY,
-            region_id TEXT,
-            month_date DATE,
+            region_id TEXT NOT NULL,
+            month_date DATE NOT NULL,
+            source TEXT NOT NULL,
+            price_index_sqm FLOAT,
+            rent_index_sqm FLOAT,
+            inventory_count INT,
+            new_listings_count INT,
+            sold_count INT,
+            absorption_rate FLOAT,
+            median_dom INT,
+            price_cut_share FLOAT,
+            volatility_3m FLOAT,
             hedonic_index_sqm FLOAT,
             raw_median_sqm FLOAT,
             r_squared FLOAT,
@@ -50,11 +60,24 @@ def _make_temp_hedonic_db(path: Path, rows) -> None:
         )
         """
     )
+    # Convert old hedonic_indices rows (id, region_id, month_date, hedonic_index_sqm,
+    # raw_median_sqm, r_squared, n_observations, n_neighborhoods, coefficients, updated_at)
+    # to market_fundamentals with source='hedonic' and hedonic| id prefix
+    new_rows = []
+    for r in rows:
+        rid = r[0] if r[0].startswith("hedonic|") else f"hedonic|{r[0]}"
+        new_rows.append((rid, r[1], r[2], "hedonic", None, None, None, None, None, None, None, None, None, r[3], r[4], r[5], r[6], r[7], r[8], r[9]))
     cur.executemany(
         """
-        INSERT INTO hedonic_indices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO market_fundamentals (
+            id, region_id, month_date, source, price_index_sqm, rent_index_sqm,
+            inventory_count, new_listings_count, sold_count, absorption_rate,
+            median_dom, price_cut_share, volatility_3m, hedonic_index_sqm,
+            raw_median_sqm, r_squared, n_observations, n_neighborhoods,
+            coefficients, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        rows,
+        new_rows,
     )
     conn.commit()
     conn.close()

@@ -1,113 +1,84 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { Navigate, Route, Routes, Link, useParams } from "react-router-dom";
+import { Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 
-import { api } from "./api";
-import {
-  CompReviewPage,
-  DecisionsPage,
-  ListingPage,
-  PipelinePage,
-  WorkbenchPage,
-} from "./pages";
-import { track } from "./track";
-import "./styles.css";
+import { TopBar } from "./components/layout/TopBar";
+import { ExplorePage } from "./pages/ExplorePage";
+import { ListingDetailPage } from "./pages/ListingDetailPage";
+import { CompReviewPage } from "./pages/CompReviewPage";
+import { LibraryPage } from "./pages/LibraryPage";
+import { SystemPage } from "./pages/SystemPage";
 
-const NAV_ITEMS = [
-  { to: "/workbench", label: "Workbench" },
-  { to: "/watchlists", label: "Decisions" },
-  { to: "/pipeline", label: "Pipeline" },
-] as const;
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
 
-function CommandCenterRedirect() {
-  useEffect(() => {
-    track({
-      event_name: "command_center_redirected",
-      route: "/command-center",
-      subject_type: "route",
-      subject_id: "pipeline",
-      context: { destination: "/pipeline" },
-    });
-  }, []);
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
 
-  return <Navigate replace to="/pipeline" />;
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Uncaught error in React tree:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="card" style={{ margin: "2rem auto", maxWidth: 640, textAlign: "center" }}>
+          <strong>Something went wrong</strong>
+          <p style={{ color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>{this.state.error.message}</p>
+          <Link className="btn btn-secondary" to="/" onClick={() => this.setState({ error: null })} style={{ marginTop: "var(--space-3)" }}>
+            Back to map
+          </Link>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
-function AppChrome() {
-  const healthQuery = useQuery({
-    queryKey: ["health"],
-    queryFn: api.health,
-    staleTime: 30_000,
-  });
-  const jobsQuery = useQuery({
-    queryKey: ["jobs"],
-    queryFn: api.jobs,
-    staleTime: 15_000,
-  });
-  const pipelineQuery = useQuery({
-    queryKey: ["pipeline"],
-    queryFn: api.pipeline,
-    staleTime: 15_000,
-  });
+function CompReviewRedirect() {
+  const { listingId } = useParams();
+  return <Navigate replace to={`/listings/${listingId}/comps`} />;
+}
 
-  const pendingJobs = (jobsQuery.data?.items ?? []).filter(
-    (job) => String(job.status ?? "").toLowerCase() === "running",
-  ).length;
-  const failedJobs = (jobsQuery.data?.items ?? []).filter(
-    (job) => String(job.status ?? "").toLowerCase() === "failed",
-  ).length;
-  const needsRefresh = Boolean(pipelineQuery.data?.needs_refresh);
-
+export default function App() {
   return (
     <div className="app-shell">
-      <header className="chrome-header">
-        <div className="brand-lockup">
-          <div className="brand-mark" />
-          <div>
-            <p className="eyebrow">Local-first analyst platform</p>
-            <h1>Property Scanner</h1>
-          </div>
-        </div>
-        <nav className="global-nav" aria-label="Primary">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              className={({ isActive }) => `global-nav-link${isActive ? " is-active" : ""}`}
-              to={item.to}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="status-tray">
-          <div className="status-card">
-            <span className="tray-label">API</span>
-            <strong>{String(healthQuery.data?.status ?? "loading")}</strong>
-          </div>
-          <div className="status-card">
-            <span className="tray-label">Jobs</span>
-            <strong>{pendingJobs}</strong>
-            <p>{failedJobs} failed</p>
-          </div>
-          <div className={`status-card${needsRefresh ? " is-warn" : ""}`}>
-            <span className="tray-label">Pipeline</span>
-            <strong>{needsRefresh ? "Refresh" : "Fresh"}</strong>
-          </div>
-        </div>
-      </header>
+      <TopBar />
+      <main style={{ padding: "var(--space-4) var(--space-5)" }}>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<ExplorePage />} />
+            <Route path="/explore" element={<Navigate replace to="/" />} />
+            <Route path="/listings/:listingId" element={<ListingDetailPage />} />
+            <Route path="/listings/:listingId/comps" element={<CompReviewPage />} />
+            <Route path="/library" element={<LibraryPage />} />
+            <Route path="/system" element={<SystemPage />} />
 
-      <Routes>
-        <Route path="/" element={<Navigate replace to="/workbench" />} />
-        <Route path="/workbench" element={<WorkbenchPage />} />
-        <Route path="/listings/:listingId" element={<ListingPage />} />
-        <Route path="/comp-reviews/:listingId" element={<CompReviewPage />} />
-        <Route path="/memos" element={<Navigate replace to="/watchlists?tab=memos" />} />
-        <Route path="/watchlists" element={<DecisionsPage />} />
-        <Route path="/pipeline" element={<PipelinePage />} />
-        <Route path="/command-center" element={<CommandCenterRedirect />} />
-      </Routes>
+            {/* Redirects from old routes */}
+            <Route path="/workbench" element={<Navigate replace to="/" />} />
+            <Route path="/watchlists" element={<Navigate replace to="/library" />} />
+            <Route path="/pipeline" element={<Navigate replace to="/system" />} />
+            <Route path="/command-center" element={<Navigate replace to="/system" />} />
+            <Route path="/comp-reviews/:listingId" element={<CompReviewRedirect />} />
+            <Route path="/memos" element={<Navigate replace to="/library?tab=memos" />} />
+
+            <Route
+              path="*"
+              element={
+                <div className="card" style={{ margin: "2rem auto", maxWidth: 640, textAlign: "center" }}>
+                  <strong>Page not found</strong>
+                  <p style={{ color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>The page you are looking for does not exist.</p>
+                  <Link className="btn btn-secondary" to="/" style={{ marginTop: "var(--space-3)", display: "inline-block" }}>Back to map</Link>
+                </div>
+              }
+            />
+          </Routes>
+        </ErrorBoundary>
+      </main>
     </div>
   );
 }
-
-export default AppChrome;

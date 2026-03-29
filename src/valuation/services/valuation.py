@@ -35,7 +35,6 @@ from src.platform.domain.schema import (
     CompEvidence,
     EvidencePack,
     ValuationProjection,
-    GeoLocation,
     CompListing,
 )
 from src.platform.domain.models import DBListing
@@ -44,8 +43,19 @@ from src.market.services.market_analytics import MarketAnalyticsService
 from src.market.services.hedonic_index import HedonicIndexService
 from src.valuation.services.conformal_calibrator import StratifiedCalibratorRegistry
 from src.listings.services.feature_sanitizer import sanitize_listing_features
+from src.listings.services.listing_adapter import db_listing_to_canonical
 from src.ml.services.fusion_model import FusionModelService, FusionOutput
 from src.ml.services.encoders import MultimodalEncoder
+from src.platform.observability import record_exception, trace_span
+from src.valuation.services.deal_scorer import compute_deal_score
+from src.valuation.services.embedding_helpers import (
+    build_tabular_features,
+    build_text_for_embedding,
+    get_embeddings,
+    get_image_embedding,
+    is_vlm_safe,
+    robust_comp_baseline,
+)
 from src.valuation.services.retrieval import build_retriever
 from src.market.services.eri_signals import ERISignalsService
 from src.market.services.area_intelligence import AreaIntelligenceService
@@ -182,38 +192,6 @@ class ValuationService:
                 window_size=self.config.conformal_window
             )
 
-    def _normalize_property_type(self, value: Optional[str]) -> str:
-        if value is None:
-            return "apartment"
-        text = str(value).strip()
-        if "." in text:
-            text = text.split(".")[-1]
-        return text.lower() or "apartment"
-
-    def _to_int(self, value: Optional[object]) -> Optional[int]:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in ("", "null", "none"):
-                return None
-        try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return None
-
-    def _to_float(self, value: Optional[object]) -> Optional[float]:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in ("", "null", "none"):
-                return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
     def _apply_interval_policy(
         self,
         *,
@@ -251,50 +229,9 @@ class ValuationService:
         }
         return cal_q10, cal_q50, cal_q90, decision, diagnostics
 
-    def _db_to_canonical(self, db_item: DBListing) -> CanonicalListing:
-        loc = None
-        if db_item.city or db_item.lat or db_item.lon:
-            loc = GeoLocation(
-                lat=db_item.lat,
-                lon=db_item.lon,
-                address_full=db_item.address_full or db_item.title,
-                city=db_item.city or "Unknown",
-                zip_code=getattr(db_item, "zip_code", None),
-                country=db_item.country or "ES",
-            )
-
-        listing = CanonicalListing(
-            id=db_item.id,
-            source_id=db_item.source_id,
-            external_id=db_item.external_id,
-            url=str(db_item.url),
-            title=db_item.title,
-            description=db_item.description,
-            price=db_item.price,
-            currency=db_item.currency,
-            listing_type=getattr(db_item, "listing_type", "sale") or "sale",
-            property_type=self._normalize_property_type(db_item.property_type),
-            bedrooms=self._to_int(db_item.bedrooms),
-            bathrooms=self._to_int(db_item.bathrooms),
-            surface_area_sqm=self._to_float(db_item.surface_area_sqm),
-            plot_area_sqm=self._to_float(getattr(db_item, "plot_area_sqm", None)),
-            floor=self._to_int(db_item.floor),
-            has_elevator=db_item.has_elevator,
-            location=loc,
-            image_urls=db_item.image_urls or [],
-            vlm_description=db_item.vlm_description,
-            text_sentiment=db_item.text_sentiment,
-            image_sentiment=db_item.image_sentiment,
-            analysis_meta=db_item.analysis_meta,
-            image_embeddings=getattr(db_item, "image_embeddings", None),
-            listed_at=db_item.listed_at,
-            updated_at=db_item.updated_at,
-            status=db_item.status,
-            sold_price=getattr(db_item, "sold_price", None),
-            sold_at=getattr(db_item, "sold_at", None),
-            tags=db_item.tags or [],
-        )
-        return sanitize_listing_features(listing)
+    @staticmethod
+    def _db_to_canonical(db_item: DBListing) -> CanonicalListing:
+        return db_listing_to_canonical(db_item)
 
     def _retrieve_comps(
         self,
@@ -662,7 +599,8 @@ class ValuationService:
                     **(evidence.external_signals or {}),
                     **adjustment_info
                 }
-                rental_yield = (rent_est * 12 / fair_value * 100)
+                if fair_value > 0:
+                    rental_yield = (rent_est * 12 / fair_value * 100)
 
             # =====================================================================
             # STAGE 3: DEAL SCORING
@@ -810,53 +748,16 @@ class ValuationService:
         )
 
     def _is_vlm_safe(self, text: Optional[str]) -> bool:
-        if not text:
-            return False
-        cleaned = str(text).strip()
-        if len(cleaned) < 30 or len(cleaned) > 600:
-            return False
-        lower = cleaned.lower()
-        for bad in ("no image", "image not available", "unknown", "n/a", "not provided", "no description"):
-            if bad in lower:
-                return False
-        tokens = [t for t in re.split(r"[^a-z0-9]+", lower) if t]
-        if len(tokens) < 5:
-            return False
-        uniq_ratio = len(set(tokens)) / max(len(tokens), 1)
-        return uniq_ratio >= 0.4
+        return is_vlm_safe(text)
 
     def _build_text_for_embedding(self, listing: CanonicalListing, include_vlm: bool) -> str:
-        text_parts = [listing.title]
-        if listing.description:
-            text_parts.append(listing.description)
-        if include_vlm and listing.vlm_description and self.config.retriever_vlm_policy != "off":
-            if self._is_vlm_safe(listing.vlm_description):
-                text_parts.append(listing.vlm_description)
-        return " ".join(part for part in text_parts if part)
+        return build_text_for_embedding(listing, include_vlm, vlm_policy=self.config.retriever_vlm_policy)
 
     def _build_tabular_features(self, listing: CanonicalListing) -> Dict[str, float]:
-        price_sqm = 0.0
-        return {
-            'bedrooms': listing.bedrooms or 0,
-            'bathrooms': listing.bathrooms or 0,
-            'surface_area_sqm': listing.surface_area_sqm or 0,
-            'year_built': 0,
-            'floor': listing.floor or 0,
-            'lat': listing.location.lat if listing.location else 0,
-            'lon': listing.location.lon if listing.location else 0,
-            'price_per_sqm': price_sqm,
-            'text_sentiment': listing.text_sentiment or 0.5,
-            'image_sentiment': listing.image_sentiment or 0.5,
-            'has_elevator': 1.0 if listing.has_elevator else 0.0
-        }
+        return build_tabular_features(listing)
 
     def _get_image_embedding(self, listing: CanonicalListing) -> Optional[np.ndarray]:
-        if listing.image_embeddings and len(listing.image_embeddings) > 0:
-            try:
-                return np.array(listing.image_embeddings[0], dtype='float32')
-            except Exception:
-                return None
-        return None
+        return get_image_embedding(listing)
     
     def _try_fusion_valuation(
         self,
@@ -1117,56 +1018,21 @@ class ValuationService:
     def _get_embeddings(
         self,
         listing: CanonicalListing,
-        include_vlm: bool = True
+        include_vlm: bool = True,
     ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
-        """
-        Helper to extract embeddings and features for a listing.
-        Returns: (text_embedding, tabular_features, image_embedding)
-        """
-        sanitize_listing_features(listing)
-        text = self._build_text_for_embedding(listing, include_vlm=include_vlm)
-        text_emb = self.encoder.text_encoder.encode_single(text)
-        tab_vec = self.encoder.tabular_encoder.encode(self._build_tabular_features(listing))
-        img_emb = self._get_image_embedding(listing)
-        return text_emb, tab_vec, img_emb
+        return get_embeddings(
+            listing, self.encoder, include_vlm=include_vlm,
+            vlm_policy=self.config.retriever_vlm_policy,
+        )
 
     def _robust_comp_baseline(
         self,
         prices: List[float],
-        weights: Optional[List[float]] = None
+        weights: Optional[List[float]] = None,
     ) -> float:
-        if not prices:
-            raise ValueError("missing_comp_prices")
-        values = np.array(prices, dtype=float)
-        if np.any(values <= 0):
-            values = values[values > 0]
-        if len(values) == 0:
-            raise ValueError("invalid_comp_prices")
-
-        median = float(np.median(values))
-        mad = float(np.median(np.abs(values - median)))
-        if mad <= 0:
-            mad = max(median * 0.05, 1.0)
-
-        mask = np.abs(values - median) <= (3.0 * mad)
-        values = values[mask]
-        if len(values) < self.config.min_comps_for_baseline:
-            raise ValueError("insufficient_baseline_comps")
-
-        if weights is None:
-            weights_arr = np.ones_like(values) / len(values)
-        else:
-            weights_arr = np.array(weights, dtype=float)
-            weights_arr = weights_arr[mask] if len(weights_arr) >= len(mask) else weights_arr
-            if weights_arr.sum() <= 0:
-                weights_arr = np.ones_like(values) / len(values)
-            else:
-                weights_arr = weights_arr / weights_arr.sum()
-
-        order = np.argsort(values)
-        cum = np.cumsum(weights_arr[order])
-        idx = int(np.searchsorted(cum, 0.5))
-        return float(values[order][min(idx, len(values) - 1)])
+        return robust_comp_baseline(
+            prices, weights, min_comps=self.config.min_comps_for_baseline,
+        )
 
     # =========================================================================
     # PROJECTIONS (Market Drift Only - No Double Counting)
@@ -1486,96 +1352,11 @@ class ValuationService:
         uncertainty: float,
         evidence: EvidencePack,
         market_signals: Dict[str, float],
-        rental_yield: float
+        rental_yield: float,
     ) -> Tuple[float, List[str]]:
-        """
-        Compute deal score from value, yield, and market regime signals.
-        """
-        flags = []
-
-        if not listing.price or listing.price <= 0:
-            raise ValueError("invalid_listing_price")
-        if rental_yield is None or rental_yield <= 0:
-            raise ValueError("missing_rental_yield")
-
-        market_yield = market_signals.get("market_yield")
-        momentum = market_signals.get("momentum")
-        liquidity = market_signals.get("liquidity")
-        catchup = market_signals.get("catchup")
-        area_sentiment = market_signals.get("area_sentiment")
-        area_development = market_signals.get("area_development")
-        area_confidence = market_signals.get("area_confidence")
-        if market_yield is None or market_yield <= 0:
-            raise ValueError("missing_market_yield")
-        if momentum is None or liquidity is None or catchup is None:
-            raise ValueError("missing_market_signals")
-
-        diff_pct = (fair_value - listing.price) / listing.price
-        yield_spread = (rental_yield - market_yield) / market_yield
-
-        value_component = float(np.tanh(diff_pct / 0.15))
-        yield_component = float(np.tanh(yield_spread / 0.03))
-        momentum_component = float(np.tanh(momentum / 0.05))
-        liquidity_component = float((liquidity - 0.5) / 0.5)
-        catchup_component = float((catchup - 0.5) / 0.5)
-        if area_sentiment is not None and area_development is not None:
-            sent_component = (float(area_sentiment) - 0.5) / 0.5
-            dev_component = (float(area_development) - 0.5) / 0.5
-            area_component = float(0.5 * (sent_component + dev_component))
-            if area_confidence is not None:
-                area_component = float(area_component * max(0.0, min(1.0, float(area_confidence))))
-        else:
-            area_component = 0.0
-
-        raw_score = (
-            0.32 * value_component +
-            0.23 * yield_component +
-            0.18 * momentum_component +
-            0.09 * liquidity_component +
-            0.08 * catchup_component +
-            0.10 * area_component
+        return compute_deal_score(
+            listing, fair_value, uncertainty, evidence, market_signals, rental_yield,
         )
-
-        conviction = max(0.0, 1.0 - (uncertainty / 0.35))
-        score = (0.5 + 0.5 * raw_score) * conviction
-        score = max(0.0, min(1.0, score))
-
-        if uncertainty > 0.25:
-            flags.append("high_uncertainty")
-
-        if diff_pct > 0.15:
-            flags.append("undervalued")
-        if diff_pct > 0.25:
-            flags.append("deep_value")
-        if diff_pct < -0.15:
-            flags.append("overpriced")
-
-        if yield_spread > 0.01:
-            flags.append("yield_advantage")
-        if yield_spread < -0.01:
-            flags.append("yield_disadvantage")
-
-        if momentum > 0.03:
-            flags.append("strong_momentum")
-        if momentum < -0.03:
-            flags.append("negative_momentum")
-
-        if liquidity < 0.3:
-            flags.append("low_liquidity")
-
-        if area_sentiment is not None:
-            if area_sentiment > 0.65:
-                flags.append("positive_area_sentiment")
-            if area_sentiment < 0.35:
-                flags.append("negative_area_sentiment")
-
-        if area_development is not None and area_development > 0.65:
-            flags.append("strong_development")
-
-        if evidence.calibration_status != "calibrated":
-            flags.append("uncalibrated")
-
-        return score, flags
     
     # =========================================================================
     # HELPERS
@@ -1917,8 +1698,9 @@ class ValuationService:
         query = text(
             f"""
             SELECT {column}
-            FROM market_indices
-            WHERE region_id = :region_id AND month_date LIKE :month_key
+            FROM market_fundamentals
+            WHERE source = 'market'
+              AND region_id = :region_id AND month_date LIKE :month_key
             ORDER BY month_date DESC
             LIMIT 1
             """
@@ -1949,7 +1731,7 @@ class ValuationService:
 
     def _get_index_yoy(
         self,
-        table: str,
+        source: str,
         column: str,
         region_id: str,
         valuation_date: datetime
@@ -1963,8 +1745,8 @@ class ValuationService:
         query = text(
             f"""
             SELECT month_date, {column}
-            FROM {table}
-            WHERE region_id = :region_id AND month_date LIKE :month_key
+            FROM market_fundamentals
+            WHERE source = :source AND region_id = :region_id AND month_date LIKE :month_key
             ORDER BY month_date DESC
             LIMIT 1
             """
@@ -1972,19 +1754,19 @@ class ValuationService:
         prev_query = text(
             f"""
             SELECT month_date, {column}
-            FROM {table}
-            WHERE region_id = :region_id AND month_date LIKE :month_key
+            FROM market_fundamentals
+            WHERE source = :source AND region_id = :region_id AND month_date LIKE :month_key
             ORDER BY month_date DESC
             LIMIT 1
             """
         )
 
         with self.storage.engine.connect() as conn:
-            row = conn.execute(query, {"region_id": region_id, "month_key": f"{month_key}%"}).fetchone()
-            prev = conn.execute(prev_query, {"region_id": region_id, "month_key": f"{prev_date}%"}).fetchone()
+            row = conn.execute(query, {"source": source, "region_id": region_id, "month_key": f"{month_key}%"}).fetchone()
+            prev = conn.execute(prev_query, {"source": source, "region_id": region_id, "month_key": f"{prev_date}%"}).fetchone()
             if (not row or not prev) and region_id != "all":
-                row = conn.execute(query, {"region_id": "all", "month_key": f"{month_key}%"}).fetchone()
-                prev = conn.execute(prev_query, {"region_id": "all", "month_key": f"{prev_date}%"}).fetchone()
+                row = conn.execute(query, {"source": source, "region_id": "all", "month_key": f"{month_key}%"}).fetchone()
+                prev = conn.execute(prev_query, {"source": source, "region_id": "all", "month_key": f"{prev_date}%"}).fetchone()
 
         if not row or not prev:
             return None
@@ -2022,8 +1804,8 @@ class ValuationService:
                 effective_date = valuation_date
 
         eri_yoy = eri_signals.get("registral_price_sqm_change")
-        hedonic_yoy = self._get_index_yoy("hedonic_indices", "hedonic_index_sqm", region_id, effective_date)
-        market_yoy = self._get_index_yoy("market_indices", "price_index_sqm", region_id, effective_date)
+        hedonic_yoy = self._get_index_yoy("hedonic", "hedonic_index_sqm", region_id, effective_date)
+        market_yoy = self._get_index_yoy("market", "price_index_sqm", region_id, effective_date)
 
         details: Dict[str, float] = {}
         disagree = False
@@ -2046,6 +1828,8 @@ class ValuationService:
         month_key = valuation_date.strftime("%Y-%m")
         price_index = self._get_market_index_value(region_id, month_key, "price_index_sqm")
         rent_index = self._get_market_index_value(region_id, month_key, "rent_index_sqm")
+        if price_index <= 0:
+            raise ValueError("invalid_price_index")
         return (rent_index * 12 / price_index) * 100
 
     def _get_yield_distribution(
@@ -2067,8 +1851,9 @@ class ValuationService:
             query = text(
                 """
                 SELECT price_index_sqm, rent_index_sqm
-                FROM market_indices
-                WHERE region_id = :region_id
+                FROM market_fundamentals
+                WHERE source = 'market'
+                  AND region_id = :region_id
                   AND substr(month_date, 1, 7) >= :start_key
                   AND substr(month_date, 1, 7) <= :end_key
                 ORDER BY month_date DESC
@@ -2418,3 +2203,57 @@ class ValuationService:
             "rent_source_circular": False,
         }
         return est_rent, uncertainty, comps_used, meta
+
+    # ------------------------------------------------------------------
+    # Protocol-compatible interface (matches ValuationProtocol)
+    # ------------------------------------------------------------------
+
+    def evaluate_listing(
+        self,
+        target: CanonicalListing,
+        *,
+        persist: bool = False,
+        model_version: str = "fusion-v3",
+        source_status_by_source: Optional[Dict[str, str]] = None,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> DealAnalysis:
+        """Protocol-compatible wrapper around evaluate_deal."""
+        from src.valuation.services.valuation_persister import ValuationPersister
+
+        with trace_span("valuation.evaluate_listing", listing_id=target.id):
+            analysis = self.evaluate_deal(target)
+        if persist:
+            session = self.storage.get_session()
+            try:
+                ValuationPersister(session).save_valuation(
+                    target.id, analysis, model_version=model_version,
+                )
+            finally:
+                session.close()
+        return analysis
+
+    def evaluate_listing_id(
+        self,
+        listing_id: str,
+        *,
+        persist: bool = False,
+        source_status_by_source: Optional[Dict[str, str]] = None,
+        source_metrics_by_source: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> DealAnalysis:
+        """Protocol-compatible wrapper: loads listing by ID, then evaluates."""
+        from src.listings.services.listing_adapter import db_listing_to_canonical
+
+        session = self.storage.get_session()
+        try:
+            row = session.query(DBListing).filter(DBListing.id == listing_id).first()
+            if row is None:
+                raise ValueError("listing_not_found")
+            target = db_listing_to_canonical(row)
+        finally:
+            session.close()
+        return self.evaluate_listing(
+            target,
+            persist=persist,
+            source_status_by_source=source_status_by_source,
+            source_metrics_by_source=source_metrics_by_source,
+        )

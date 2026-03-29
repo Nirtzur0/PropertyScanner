@@ -1,40 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
-
-:root {
-  font-family: "IBM Plex Sans", sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color: #1f2528;
-  background:
-    radial-gradient(circle at top left, rgba(197, 107, 55, 0.18), transparent 26%),
-    radial-gradient(circle at top right, rgba(45, 124, 130, 0.14), transparent 22%),
-    linear-gradient(180deg, #f8f2e8 0%, #efe5d5 100%);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-body {
-  margin: 0;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+@import "./styles/tokens.css";
+@import "./styles/reset.css";
+@import "./styles/components.css";
+@import "./styles/layout.css";

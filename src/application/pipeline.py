@@ -57,6 +57,12 @@ class PipelineApplicationService:
             source_audit=source_audit,
         )
 
+    # NOTE: Workflow methods use lazy imports intentionally. The workflow
+    # modules (listings.workflows, market.workflows, valuation.workflows,
+    # ml.training) pull in heavyweight dependencies (Playwright, torch,
+    # sentence-transformers, etc.) that should not load at container init.
+    # This is NOT hiding circular dependencies — it's deferred loading.
+
     def run_crawl(
         self,
         *,
